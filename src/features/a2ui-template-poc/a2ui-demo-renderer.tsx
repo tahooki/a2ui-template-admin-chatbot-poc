@@ -32,6 +32,17 @@ function booleanLabel(path: string) {
   return booleanLabels[key] ?? key;
 }
 
+function textValue(row: Record<string, unknown>, path?: string) {
+  const fieldValue = value(row, path);
+  return typeof fieldValue === "string" && fieldValue.trim() ? fieldValue : "";
+}
+
+function surfaceTitle(viewType: string) {
+  if (viewType === "statusBooleanList") return "장비 상태";
+  if (viewType === "imageCardList") return "장비 목록";
+  return "장비 목록";
+}
+
 export function A2UIDemoRenderer({
   data,
   profile,
@@ -42,54 +53,69 @@ export function A2UIDemoRenderer({
   renderPlan: A2UIRenderPlan;
 }) {
   const rows = rowsFromData(data);
-  const maxItems = renderPlan.maxItems ?? (renderPlan.viewType === "imageCardList" ? 8 : 10);
+  const maxItems = renderPlan.maxItems ?? 6;
   const visibleRows = rows.slice(0, maxItems);
+  const booleanFlags = renderPlan.fieldMapping.booleanFlags?.slice(0, 5) ?? [];
 
   return (
-    <div className={styles.surface}>
+    <div className={`${styles.surface} ${styles[`surface_${renderPlan.viewType}`]}`}>
       <div className={styles.surfaceHeader}>
         <div>
-          <span className={styles.surfaceLabel}>A2UI Surface</span>
-          <h4>{renderPlan.selectedComponentId}</h4>
-        </div>
-        <div className={styles.surfaceMeta}>
-          <span>score {renderPlan.score}</span>
-          <span>v{renderPlan.registryVersion}</span>
+          <span className={styles.surfaceLabel}>A2UI</span>
+          <h4>{surfaceTitle(renderPlan.viewType)}</h4>
         </div>
       </div>
 
       {renderPlan.viewType === "statusBooleanList" ? (
-        <div className={styles.statusList}>
+        <div className={styles.statusTable} role="table" aria-label="Equipment status boolean list">
+          <div className={styles.statusHeader} role="row">
+            <span>장비</span>
+            {booleanFlags.map((flagPath) => (
+              <span key={flagPath}>{booleanLabel(flagPath)}</span>
+            ))}
+          </div>
           {visibleRows.map((row) => (
-            <div className={styles.statusRow} key={String(row.id)}>
-              <div>
+            <div className={styles.statusDataRow} key={String(row.id)} role="row">
+              <div className={styles.statusEquipment}>
                 <strong>{String(value(row, renderPlan.fieldMapping.title))}</strong>
                 <span>{String(row.id)}</span>
               </div>
-              <div className={styles.flagGrid}>
-                {renderPlan.fieldMapping.booleanFlags?.slice(0, 5).map((flagPath) => {
-                  const active = Boolean(value(row, flagPath));
-                  return (
-                    <span className={`${styles.flagPill} ${active ? styles.flagOn : styles.flagOff}`} key={flagPath}>
-                      {booleanLabel(flagPath)}
-                    </span>
-                  );
-                })}
-              </div>
+              {booleanFlags.map((flagPath) => {
+                const active = Boolean(value(row, flagPath));
+                return (
+                  <span className={`${styles.flagCell} ${active ? styles.flagOn : styles.flagOff}`} key={flagPath}>
+                    {active ? "ON" : "OFF"}
+                  </span>
+                );
+              })}
             </div>
           ))}
         </div>
       ) : null}
 
       {renderPlan.viewType === "simpleTextList" ? (
-        <div className={styles.textList}>
-          {visibleRows.map((row) => (
-            <div className={styles.textListItem} key={String(row.id)}>
-              <strong>{String(value(row, renderPlan.fieldMapping.title))}</strong>
-              <span>{String(value(row, renderPlan.fieldMapping.content) || row.category || row.location || "표시 가능한 본문 필드가 없습니다.")}</span>
+        <>
+          {renderPlan.isFallback && profile.hasImageField ? (
+            <div className={styles.fallbackNotice}>
+              <strong>이미지 화면이 아직 등록되지 않았습니다.</strong>
+              <span>우선 텍스트 목록으로 보여드립니다.</span>
             </div>
-          ))}
-        </div>
+          ) : null}
+          <div className={styles.textList}>
+            {visibleRows.map((row) => {
+              const content =
+                textValue(row, renderPlan.fieldMapping.content) ||
+                String(row.category ?? row.location ?? "표시 가능한 본문 필드가 없습니다.");
+
+              return (
+                <div className={styles.textListItem} key={String(row.id)}>
+                  <strong>{String(value(row, renderPlan.fieldMapping.title))}</strong>
+                  <span>{content}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
       ) : null}
 
       {renderPlan.viewType === "imageCardList" ? (
@@ -106,12 +132,6 @@ export function A2UIDemoRenderer({
         </div>
       ) : null}
 
-      <div className={styles.surfaceFooter}>
-        <span>
-          rows {visibleRows.length}/{profile.rowCount}
-        </span>
-        <span>{profile.hasImageField ? "image field detected" : "no image field"}</span>
-      </div>
     </div>
   );
 }

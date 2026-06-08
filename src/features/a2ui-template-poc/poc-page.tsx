@@ -8,9 +8,9 @@ import { useTemplateRegistry } from "./template-store";
 import styles from "./styles.module.css";
 
 export function A2UITemplatePocPage() {
-  const { templates, version, registeredCount, lastSavedComponentId, saveTemplate, resetRegistry } = useTemplateRegistry();
+  const { templates, version, saveTemplate, resetRegistry } = useTemplateRegistry();
   const [selectedId, setSelectedId] = useState("equipment.statusBooleanList");
-  const [chatWidth, setChatWidth] = useState(480);
+  const [chatWidth, setChatWidth] = useState(540);
   const [chatResetKey, setChatResetKey] = useState(0);
   const draggingRef = useRef(false);
 
@@ -46,28 +46,25 @@ export function A2UITemplatePocPage() {
     <main className={styles.pageShell}>
       <header className={styles.topBar}>
         <div>
-          <p className={styles.eyebrow}>Standalone Next.js POC</p>
-          <h1>A2UI Template Admin + Chatbot</h1>
+          <p className={styles.eyebrow}>A2UI Product Console</p>
+          <h1>A2UI Studio</h1>
         </div>
         <div className={styles.topMeta}>
-          <span>{registeredCount} registered</span>
-          <span>registry v{version}</span>
+          <span>v{version}</span>
           <button className={styles.secondaryButton} type="button" onClick={resetDemo}>
-            Reset
+            Reset demo
           </button>
         </div>
       </header>
 
       <div className={styles.workspace}>
         <AdminPanel
-          onReset={resetDemo}
           onSave={saveTemplate}
           onSelect={setSelectedId}
           selectedId={selectedId}
           templates={templates}
         />
         <ChatbotPanel
-          lastSavedComponentId={lastSavedComponentId}
           onResizeStart={startResize}
           registryVersion={version}
           resetKey={chatResetKey}

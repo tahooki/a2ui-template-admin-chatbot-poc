@@ -26,35 +26,33 @@ type ChatMessage = {
 const introMessage: ChatMessage = {
   id: "intro",
   role: "assistant",
-  content: "장비 데이터를 조회하면 Admin registry와 비교해서 A2UI 컴포넌트를 선택합니다.",
+  content: "보고 싶은 장비 데이터를 말하면 등록된 A2UI 화면으로 정리합니다.",
 };
+
+const quickPrompts = [
+  {
+    label: "상태 목록",
+    prompt: "장비 상태 목록 보여줘",
+  },
+  {
+    label: "이미지 목록",
+    prompt: "이미지 있는 장비 리스트 보여줘",
+  },
+];
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function summarizeProfile(profile: A2UIDataProfile) {
-  const roles = [
-    profile.hasImageField ? "image" : null,
-    profile.hasContentField ? "content" : null,
-    profile.booleanFieldCount > 0 ? `${profile.booleanFieldCount} boolean fields` : null,
-  ]
-    .filter(Boolean)
-    .join(", ");
-  return `${profile.rowCount} rows, ${profile.fields.length} fields${roles ? `, ${roles}` : ""}`;
-}
-
 export function ChatbotPanel({
   templates,
   registryVersion,
-  lastSavedComponentId,
   resetKey,
   width,
   onResizeStart,
 }: {
   templates: A2UITemplateRegistration[];
   registryVersion: number;
-  lastSavedComponentId: string | null;
   resetKey: number;
   width: number;
   onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
@@ -65,7 +63,7 @@ export function ChatbotPanel({
   const [isRunning, setIsRunning] = useState(false);
   const versionRef = useRef(registryVersion);
   const resetKeyRef = useRef(resetKey);
-  const endRef = useRef<HTMLDivElement | null>(null);
+  const messageListRef = useRef<HTMLDivElement | null>(null);
 
   const runQuery = useCallback(
     async (query: string, mode: "manual" | "auto" = "manual") => {
@@ -81,7 +79,7 @@ export function ChatbotPanel({
           {
             id: newId(),
             role: "system",
-            content: `Registry v${registryVersion} 변경을 감지했습니다. 마지막 질문을 다시 계산합니다.`,
+            content: "템플릿이 바뀌어 마지막 요청을 다시 그렸습니다.",
           },
         ]);
       }
@@ -102,8 +100,8 @@ export function ChatbotPanel({
             id: newId(),
             role: "assistant",
             content: renderPlan.isFallback
-              ? `${result.title}를 호출했습니다. ${renderPlan.reason}`
-              : `${result.title}를 호출했습니다. ${renderPlan.selectedComponentId}로 표시합니다.`,
+              ? `${result.title}입니다. 이미지 화면이 없어 텍스트로 먼저 보여드립니다.`
+              : `${result.title}입니다. 화면으로 정리했습니다.`,
             surface: {
               apiTitle: result.title,
               apiId: result.apiId,
@@ -148,7 +146,25 @@ export function ChatbotPanel({
   }, [lastQuery, registryVersion, runQuery]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
+    const list = messageListRef.current;
+    if (!list) return;
+
+    function scrollToLatest() {
+      const target =
+        list.querySelector<HTMLElement>("[data-latest-surface='true']") ??
+        list.querySelector<HTMLElement>("[data-latest-message='true']");
+      if (!target) return;
+      const listTop = list.getBoundingClientRect().top;
+      const targetTop = target.getBoundingClientRect().top;
+      list.scrollTop += targetTop - listTop - 12;
+    }
+
+    const animationFrame = window.requestAnimationFrame(scrollToLatest);
+    const timeout = window.setTimeout(scrollToLatest, 120);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.clearTimeout(timeout);
+    };
   }, [messages]);
 
   return (
@@ -156,52 +172,52 @@ export function ChatbotPanel({
       <div className={styles.resizeHandle} onPointerDown={onResizeStart} aria-hidden="true" />
       <div className={styles.chatHeader}>
         <div>
-          <p className={styles.eyebrow}>Chatbot Runtime</p>
-          <h2>A2UI Agent Preview</h2>
+          <p className={styles.eyebrow}>Chat</p>
+          <h2>A2UI Chat</h2>
         </div>
-        <div className={styles.versionPill}>registry v{registryVersion}</div>
+        <div className={styles.chatStatusStack}>
+          <span className={styles.liveStatus}>v{registryVersion}</span>
+        </div>
       </div>
-      {lastSavedComponentId ? <div className={styles.registryNotice}>Updated: {lastSavedComponentId}</div> : null}
 
-      <div className={styles.quickPrompts}>
-        {["장비 상태 목록 보여줘", "이미지 있는 장비 리스트 보여줘"].map((prompt) => (
-          <button disabled={isRunning} key={prompt} type="button" onClick={() => runQuery(prompt)}>
-            {prompt}
+      <div className={styles.scenarioControls} aria-label="Demo scenarios">
+        {quickPrompts.map((item) => (
+          <button className={styles.scenarioButton} disabled={isRunning} key={item.prompt} type="button" onClick={() => runQuery(item.prompt)}>
+            <span className={styles.scenarioTitle}>{item.label}</span>
           </button>
         ))}
-        <button disabled={!lastQuery || isRunning} type="button" onClick={() => lastQuery && runQuery(lastQuery)}>
-          다시 실행
+        <button className={styles.rerunButton} disabled={!lastQuery || isRunning} type="button" onClick={() => lastQuery && runQuery(lastQuery)}>
+          <span className={styles.scenarioTitle}>다시 실행</span>
         </button>
       </div>
 
-      <div className={styles.messageList}>
-        {messages.map((message) => (
-          <div className={`${styles.message} ${styles[`message_${message.role}`]}`} key={message.id}>
+      <div className={styles.messageList} ref={messageListRef}>
+        {messages.map((message, index) => (
+          <div
+            className={`${styles.message} ${styles[`message_${message.role}`]}`}
+            data-latest-message={index === messages.length - 1 ? "true" : undefined}
+            key={message.id}
+          >
+            <span className={styles.messageRole}>
+              {message.role === "user" ? "You" : message.role === "system" ? "Registry" : "A2UI Agent"}
+            </span>
             <p>{message.content}</p>
             {message.surface ? (
               <>
-                <div className={styles.stageTrail} aria-label="A2UI agent stages">
-                  <span>API 호출</span>
-                  <span>Data Profile</span>
-                  <span>스펙 비교</span>
-                  <span>Render</span>
+                <div
+                  className={styles.resultFrame}
+                  data-latest-surface={index === messages.length - 1 ? "true" : undefined}
+                >
+                  <A2UIDemoRenderer
+                    data={message.surface.data}
+                    profile={message.surface.profile}
+                    renderPlan={message.surface.renderPlan}
+                  />
                 </div>
-                <div className={styles.stepGrid}>
-                  <span>API: {message.surface.apiId}</span>
-                  <span>Profile: {summarizeProfile(message.surface.profile)}</span>
-                  <span>Selected: {message.surface.renderPlan.selectedComponentId}</span>
-                  <span>Reason: {message.surface.renderPlan.reason}</span>
-                </div>
-                <A2UIDemoRenderer
-                  data={message.surface.data}
-                  profile={message.surface.profile}
-                  renderPlan={message.surface.renderPlan}
-                />
               </>
             ) : null}
           </div>
         ))}
-        <div ref={endRef} />
       </div>
 
       <form
