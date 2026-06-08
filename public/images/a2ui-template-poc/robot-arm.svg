@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-label="Robot arm equipment">
+  <rect width="640" height="480" fill="#f3f6f9"/>
+  <circle cx="198" cy="346" r="64" fill="#173b57"/>
+  <rect x="154" y="344" width="182" height="28" rx="14" fill="#1f7a6d"/>
+  <rect x="304" y="196" width="42" height="176" rx="21" fill="#173b57" transform="rotate(38 325 284)"/>
+  <rect x="388" y="126" width="42" height="164" rx="21" fill="#1f7a6d" transform="rotate(64 409 208)"/>
+  <circle cx="324" cy="280" r="34" fill="#ffffff" stroke="#173b57" stroke-width="10"/>
+  <circle cx="452" cy="174" r="30" fill="#ffffff" stroke="#173b57" stroke-width="10"/>
+  <path d="M485 156h74v48h-74z" fill="#15202b"/>
+  <rect x="90" y="390" width="470" height="18" rx="9" fill="#c9d4e0"/>
+</svg>

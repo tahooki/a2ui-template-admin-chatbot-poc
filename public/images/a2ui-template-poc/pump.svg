@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-label="Pump equipment">
+  <rect width="640" height="480" fill="#e4f3f0"/>
+  <circle cx="296" cy="238" r="116" fill="#ffffff" stroke="#173b57" stroke-width="12"/>
+  <circle cx="296" cy="238" r="54" fill="#1f7a6d"/>
+  <path d="M408 210h92c30 0 54 24 54 54v28h-94v-16c0-13-10-23-23-23h-29z" fill="#173b57"/>
+  <path d="M78 210h104v84H78z" fill="#173b57"/>
+  <rect x="188" y="360" width="224" height="24" rx="12" fill="#15202b"/>
+  <rect x="146" y="386" width="304" height="18" rx="9" fill="#c9d4e0"/>
+  <path d="M270 198l80 40-80 40z" fill="#ffffff"/>
+</svg>

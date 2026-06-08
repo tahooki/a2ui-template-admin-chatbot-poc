@@ -1,26 +1,43 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --a2ui-bg: #f3f6f9;
+  --a2ui-surface: #ffffff;
+  --a2ui-panel: #f8fafc;
+  --a2ui-ink: #0f1722;
+  --a2ui-text: #111827;
+  --a2ui-muted: #4b5565;
+  --a2ui-line: #c9d4e0;
+  --a2ui-line-soft: #d8dee8;
+  --a2ui-primary: #173b57;
+  --a2ui-primary-soft: #e7eef5;
+  --a2ui-teal: #1f7a6d;
+  --a2ui-teal-soft: #e4f3f0;
+  --a2ui-code: #15202b;
+  --a2ui-shadow: 0 18px 42px rgba(20, 35, 52, 0.12);
+  --background: var(--a2ui-bg);
+  --foreground: var(--a2ui-text);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), "Apple SD Gothic Neo", "Pretendard", ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+textarea {
+  letter-spacing: 0;
 }

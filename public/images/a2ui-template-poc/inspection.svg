@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-label="Inspection equipment">
+  <rect width="640" height="480" fill="#f8fafc"/>
+  <rect x="94" y="110" width="448" height="266" rx="18" fill="#ffffff" stroke="#173b57" stroke-width="10"/>
+  <rect x="132" y="148" width="230" height="150" rx="10" fill="#e7eef5"/>
+  <circle cx="247" cy="223" r="48" fill="#1f7a6d"/>
+  <circle cx="247" cy="223" r="20" fill="#15202b"/>
+  <rect x="394" y="150" width="96" height="18" rx="9" fill="#173b57"/>
+  <rect x="394" y="188" width="96" height="18" rx="9" fill="#c9d4e0"/>
+  <rect x="394" y="226" width="96" height="18" rx="9" fill="#c9d4e0"/>
+  <rect x="142" y="326" width="348" height="20" rx="10" fill="#173b57"/>
+</svg>

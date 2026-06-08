@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-label="CNC equipment">
+  <rect width="640" height="480" fill="#e7eef5"/>
+  <rect x="84" y="92" width="468" height="300" rx="18" fill="#ffffff" stroke="#173b57" stroke-width="10"/>
+  <rect x="122" y="132" width="186" height="190" rx="10" fill="#d8dee8"/>
+  <rect x="338" y="132" width="120" height="190" rx="10" fill="#15202b"/>
+  <circle cx="496" cy="158" r="18" fill="#1f7a6d"/>
+  <circle cx="496" cy="214" r="18" fill="#c9d4e0"/>
+  <rect x="142" y="344" width="350" height="20" rx="10" fill="#173b57"/>
+  <rect x="178" y="174" width="92" height="24" rx="12" fill="#1f7a6d"/>
+</svg>
