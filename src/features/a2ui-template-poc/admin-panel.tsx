@@ -79,6 +79,7 @@ export function AdminPanel({
       });
       onSelect(componentId.trim());
       setError(null);
+      setIsDetailOpen(false);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Save failed");
     }

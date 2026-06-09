@@ -196,7 +196,7 @@ Related:
 
 - 시연 버튼은 기능 버튼이 아니라 scenario button처럼 보여야 한다.
 - fallback과 imageCard 결과 차이가 한눈에 보여야 한다.
-- Admin 등록 직후 Chatbot에서 "템플릿이 바뀌어 마지막 요청을 다시 그렸습니다."가 짧게 보인다.
+- Admin 등록 직후 Chatbot은 별도 안내 메시지 없이 마지막 요청을 조용히 다시 렌더링한다.
 
 ## 8. 구현 전략
 
@@ -265,7 +265,7 @@ Related:
 - [x] 메시지 list를 Agent run timeline이 아니라 chat transcript처럼 정리한다.
 - [x] stage chip과 metadata panel을 제거한다.
 - [x] API/Profile/Selected/Reason debug 정보는 기본 노출하지 않는다.
-- [x] registry update notice를 짧은 system message로 표현한다.
+- [x] registry update notice를 제거하고 최신 결과만 조용히 추가한다.
 - [x] 최신 result가 명확히 보이도록 message list scroll target을 직접 계산한다.
 
 ### Phase 5. A2UI Surface Polish
@@ -336,7 +336,7 @@ Related:
 - Detail Editor를 좌측 패널 내부 drill-in 화면으로 바꾸고 JSON editor는 접힌 dark code panel로 변경했다.
 - Agent Preview의 quick prompt 영역을 scenario control로 재정리하고 metadata block을 압축했다.
 - `simpleTextList`, `statusBooleanList`, `imageCardList` surface를 각각 fallback state, 업무 테이블, 이미지 카드 그리드로 차별화했다.
-- Registry 변경 후 마지막 질문이 자동 re-render되는 흐름을 notice와 system message로 명확히 표시했다.
+- Registry 변경 후 마지막 질문이 자동 re-render되되, 별도 system message는 표시하지 않도록 정리했다.
 - 최신 result가 길어도 result header부터 보이도록 chat scroll 기준을 latest message 상단으로 조정했다.
 
 검증 기록:
@@ -360,7 +360,7 @@ Related:
 
 재검증 기록:
 
-- 이미지 API fallback 후 `템플릿 추가`를 누르면 짧은 system message와 `equipment.imageCardList` result surface가 즉시 보이는 것을 확인했다.
+- 이미지 API fallback 후 `템플릿 추가`를 누르면 별도 system message 없이 `equipment.imageCardList` result surface가 즉시 보이는 것을 확인했다.
 - 상태 API result table은 기본 desktop, 1440px, 1280px, 980px, 560px viewport에서 horizontal overflow 없이 표시되는 것을 확인했다.
 - 1440px, 1280px, 980px, 560px viewport에서 body overflow와 버튼 텍스트 넘침이 없고, 980px 이하에서 resize handle이 숨겨지는 것을 재확인했다.
 - 브라우저 error log는 비어 있었다.
@@ -445,4 +445,27 @@ Related:
 - 템플릿 상세 drill-in 화면 진입과 가로 overflow 없음도 확인했다.
 - 목록 버튼 배치 스크린샷: `/Users/tahooki/Documents/git/a2ui-template-admin-chatbot-poc/docs/a2ui-template-list-add-button-bottom-20260609.png`
 - 템플릿 상세 스크린샷: `/Users/tahooki/Documents/git/a2ui-template-admin-chatbot-poc/docs/a2ui-template-detail-status-20260609.png`
+- AGENTS 제약에 따라 build/test command는 실행하지 않았다.
+
+## 18. 저장 복귀와 Fallback 응답 수정
+
+수정일: 2026-06-09
+
+사용자 피드백:
+
+- 템플릿 상세에서 `저장`하면 리스트로 돌아가야 한다.
+- A2UI가 없는 fallback 상황에서는 A2UI surface가 아니라 에이전트가 마크다운처럼 작성한 리스트가 보여야 한다.
+
+반영 내용:
+
+- 템플릿 상세 저장 성공 후 좌측 Admin이 템플릿 목록 화면으로 돌아가도록 수정했다.
+- `renderPlan.isFallback`일 때는 `A2UIDemoRenderer`를 붙이지 않는다.
+- fallback 응답은 assistant message 본문에 `- 장비명: 설명` 형태의 마크다운식 목록으로 표시한다.
+- 채팅 본문은 줄바꿈을 유지하도록 `white-space: pre-line`을 적용했다.
+
+검증 기록:
+
+- 이미지 목록 시나리오에서 템플릿 등록 전 fallback이 A2UI surface 없이 마크다운식 bullet list로 표시되는 것을 확인했다.
+- `템플릿 추가` 후 상세에서 `저장`하면 Admin이 리스트 화면으로 복귀하는 것을 확인했다.
+- 이미지 카드 A2UI 등록 후 자동 re-render는 계속 정상 동작하는 것을 확인했다.
 - AGENTS 제약에 따라 build/test command는 실행하지 않았다.

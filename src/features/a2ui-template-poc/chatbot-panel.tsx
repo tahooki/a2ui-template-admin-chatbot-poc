@@ -44,6 +44,43 @@ function newId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function keyFromPath(path?: string) {
+  return path?.split(".").pop() ?? "";
+}
+
+function rowsFromData(data: EquipmentApiResponse<unknown>) {
+  return data.items.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)));
+}
+
+function value(row: Record<string, unknown>, path?: string) {
+  if (!path) return "";
+  return row[keyFromPath(path)] ?? "";
+}
+
+function textValue(row: Record<string, unknown>, path?: string) {
+  const fieldValue = value(row, path);
+  return typeof fieldValue === "string" && fieldValue.trim() ? fieldValue : "";
+}
+
+function buildFallbackMarkdownList({
+  apiTitle,
+  data,
+  renderPlan,
+}: {
+  apiTitle: string;
+  data: EquipmentApiResponse<unknown>;
+  renderPlan: A2UIRenderPlan;
+}) {
+  const visibleRows = rowsFromData(data).slice(0, renderPlan.maxItems ?? 6);
+  const lines = visibleRows.map((row) => {
+    const title = String(value(row, renderPlan.fieldMapping.title) || row.name || row.title || row.id || "항목");
+    const content = textValue(row, renderPlan.fieldMapping.content) || String(row.description ?? row.category ?? row.location ?? "");
+    return content ? `- ${title}: ${content}` : `- ${title}`;
+  });
+
+  return `${apiTitle}입니다. 아직 맞는 A2UI 화면이 없어 텍스트 목록으로 정리했습니다.\n\n${lines.join("\n")}`;
+}
+
 export function ChatbotPanel({
   templates,
   registryVersion,
@@ -73,15 +110,6 @@ export function ChatbotPanel({
       if (mode === "manual") {
         setMessages((current) => [...current, { id: newId(), role: "user", content: trimmed }]);
         setLastQuery(trimmed);
-      } else {
-        setMessages((current) => [
-          ...current,
-          {
-            id: newId(),
-            role: "system",
-            content: "템플릿이 바뀌어 마지막 요청을 다시 그렸습니다.",
-          },
-        ]);
       }
 
       try {
@@ -100,15 +128,17 @@ export function ChatbotPanel({
             id: newId(),
             role: "assistant",
             content: renderPlan.isFallback
-              ? `${result.title}입니다. 이미지 화면이 없어 텍스트로 먼저 보여드립니다.`
+              ? buildFallbackMarkdownList({ apiTitle: result.title, data: result.data, renderPlan })
               : `${result.title}입니다. 화면으로 정리했습니다.`,
-            surface: {
-              apiTitle: result.title,
-              apiId: result.apiId,
-              data: result.data,
-              profile,
-              renderPlan,
-            },
+            surface: renderPlan.isFallback
+              ? undefined
+              : {
+                  apiTitle: result.title,
+                  apiId: result.apiId,
+                  data: result.data,
+                  profile,
+                  renderPlan,
+                },
           },
         ]);
       } catch (error) {
