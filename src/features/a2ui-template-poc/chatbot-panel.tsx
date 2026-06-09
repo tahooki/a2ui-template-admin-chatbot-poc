@@ -62,8 +62,40 @@ function textValue(row: Record<string, unknown>, path?: string) {
   return typeof fieldValue === "string" && fieldValue.trim() ? fieldValue : "";
 }
 
+function stringField(row: Record<string, unknown>, key: string) {
+  const fieldValue = row[key];
+  return typeof fieldValue === "string" ? fieldValue : "";
+}
+
+function describeEquipmentRole({
+  category,
+  location,
+}: {
+  category: string;
+  location: string;
+}) {
+  if (category === "가공") {
+    if (location.includes("실험실")) {
+      return "실험실 또는 테스트 공정에서 사용하는 가공 장비로 보입니다.";
+    }
+    return "생산 공정의 핵심 가공 작업을 담당하는 장비로 보입니다.";
+  }
+  if (category === "이송") {
+    if (location === "A동 1층") {
+      return "A동 1층 공정 안에서 장비 간 이동 작업을 보조하는 장비로 보입니다.";
+    }
+    return "공정 사이에서 자재나 부품을 옮기는 역할에 가까운 장비입니다.";
+  }
+  if (category === "유틸리티") {
+    return "설비 운전에 필요한 순환 계통을 담당하는 장비로 분류되어 있습니다.";
+  }
+  if (category === "검사") {
+    return "생산 결과물의 품질 확인이나 이상 감지에 쓰이는 장비로 볼 수 있습니다.";
+  }
+  return "카탈로그에서 기본 정보와 배치 위치를 확인할 수 있는 장비입니다.";
+}
+
 function buildFallbackMarkdownList({
-  apiTitle,
   data,
   renderPlan,
 }: {
@@ -74,15 +106,19 @@ function buildFallbackMarkdownList({
   const visibleRows = rowsFromData(data).slice(0, renderPlan.maxItems ?? 6);
   const lines = visibleRows.map((row) => {
     const title = String(value(row, renderPlan.fieldMapping.title) || row.name || row.title || row.id || "항목");
-    const content = textValue(row, renderPlan.fieldMapping.content) || String(row.description ?? "");
-    const category = typeof row.category === "string" ? `${row.category} 라인` : "";
-    const location = typeof row.location === "string" ? row.location : "";
-    const context = [category, location].filter(Boolean).join(", ");
-    const summary = content || "카탈로그에서 확인된 장비입니다.";
-    return context ? `- ${title}: ${context}에 있는 장비입니다. ${summary}` : `- ${title}: ${summary}`;
+    const category = stringField(row, "category");
+    const location = stringField(row, "location");
+    const content = textValue(row, renderPlan.fieldMapping.content);
+    const locationLine =
+      location && category
+        ? `${location}에 있는 ${category} 라인 장비입니다.`
+        : content || "카탈로그에 등록된 장비입니다.";
+    const roleLine = describeEquipmentRole({ category, location });
+    return `- ${title}\n  ${locationLine} ${roleLine}`;
   });
+  const total = typeof data.total === "number" ? data.total : data.items.length;
 
-  return `${apiTitle}를 확인했어요. 아직 이 데이터에 맞는 A2UI 화면이 없어서, 우선 제가 주요 장비를 글로 정리해드릴게요.\n\n${lines.join("\n")}`;
+  return `장비 카탈로그를 확인했어요. 현재 등록된 장비는 총 ${total}대입니다.\n\n${lines.join("\n\n")}`;
 }
 
 export function ChatbotPanel({
