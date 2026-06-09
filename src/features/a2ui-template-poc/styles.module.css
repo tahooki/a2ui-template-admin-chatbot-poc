@@ -368,7 +368,6 @@
 .primaryButton,
 .secondaryButton,
 .scenarioButton,
-.rerunButton,
 .composer button {
   min-height: 34px;
   border: 1px solid var(--a2ui-primary);
@@ -382,15 +381,13 @@
 }
 
 .secondaryButton,
-.scenarioButton,
-.rerunButton {
+.scenarioButton {
   background: #fff;
   color: var(--a2ui-primary);
 }
 
 .primaryButton:disabled,
 .scenarioButton:disabled,
-.rerunButton:disabled,
 .composer button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -450,8 +447,7 @@
   text-transform: uppercase;
 }
 
-.scenarioButton,
-.rerunButton {
+.scenarioButton {
   flex: 0 1 auto;
   min-height: 30px;
   display: inline-flex;

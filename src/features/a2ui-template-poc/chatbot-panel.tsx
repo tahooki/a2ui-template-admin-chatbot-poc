@@ -100,21 +100,16 @@ export function ChatbotPanel({
 }) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([introMessage]);
-  const [lastQuery, setLastQuery] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
-  const versionRef = useRef(registryVersion);
   const resetKeyRef = useRef(resetKey);
   const messageListRef = useRef<HTMLDivElement | null>(null);
 
   const runQuery = useCallback(
-    async (query: string, mode: "manual" | "auto" = "manual") => {
+    async (query: string) => {
       const trimmed = query.trim();
       if (!trimmed) return;
       setIsRunning(true);
-      if (mode === "manual") {
-        setMessages((current) => [...current, { id: newId(), role: "user", content: trimmed }]);
-        setLastQuery(trimmed);
-      }
+      setMessages((current) => [...current, { id: newId(), role: "user", content: trimmed }]);
 
       try {
         const apiId = chooseApiForPrompt(trimmed);
@@ -164,20 +159,10 @@ export function ChatbotPanel({
   useEffect(() => {
     if (resetKeyRef.current === resetKey) return;
     resetKeyRef.current = resetKey;
-    versionRef.current = registryVersion;
     setMessages([introMessage]);
-    setLastQuery(null);
     setInput("");
     setIsRunning(false);
-  }, [registryVersion, resetKey]);
-
-  useEffect(() => {
-    if (versionRef.current === registryVersion) return;
-    versionRef.current = registryVersion;
-    if (lastQuery) {
-      void runQuery(lastQuery, "auto");
-    }
-  }, [lastQuery, registryVersion, runQuery]);
+  }, [resetKey]);
 
   useEffect(() => {
     const list = messageListRef.current;
@@ -220,9 +205,6 @@ export function ChatbotPanel({
             <span className={styles.scenarioTitle}>{item.label}</span>
           </button>
         ))}
-        <button className={styles.rerunButton} disabled={!lastQuery || isRunning} type="button" onClick={() => lastQuery && runQuery(lastQuery)}>
-          <span className={styles.scenarioTitle}>다시 실행</span>
-        </button>
       </div>
 
       <div className={styles.messageList} ref={messageListRef}>

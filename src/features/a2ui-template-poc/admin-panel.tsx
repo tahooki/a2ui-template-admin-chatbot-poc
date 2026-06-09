@@ -55,8 +55,6 @@ export function AdminPanel({
     setError(null);
   }, [selected]);
 
-  const imageCardRegistered = templates.some((template) => template.componentId === "equipment.imageCardList");
-
   function openTemplate(componentId: string) {
     setDraftTemplate(null);
     onSelect(componentId);
@@ -195,7 +193,6 @@ export function AdminPanel({
         </div>
         <button
           className={styles.addTemplateButton}
-          disabled={imageCardRegistered}
           type="button"
           onClick={() => {
             setDraftTemplate(IMAGE_CARD_REGISTRATION_PRESET);
