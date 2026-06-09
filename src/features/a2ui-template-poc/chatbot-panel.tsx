@@ -35,8 +35,8 @@ const quickPrompts = [
     prompt: "장비 상태 목록 보여줘",
   },
   {
-    label: "이미지 목록",
-    prompt: "이미지 있는 장비 리스트 보여줘",
+    label: "장비 보여줘",
+    prompt: "장비 보여줘",
   },
 ];
 

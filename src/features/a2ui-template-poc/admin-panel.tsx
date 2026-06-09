@@ -107,10 +107,6 @@ export function AdminPanel({
             설명
             <textarea rows={3} value={description} onChange={(event) => setDescription(event.target.value)} />
           </label>
-          <label className={styles.fieldLabel}>
-            판단 기준
-            <textarea rows={4} value={selectionGuide} onChange={(event) => setSelectionGuide(event.target.value)} />
-          </label>
         </div>
 
         <details className={styles.specDisclosure}>

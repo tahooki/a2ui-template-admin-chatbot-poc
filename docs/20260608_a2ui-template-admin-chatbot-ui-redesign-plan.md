@@ -145,7 +145,7 @@ Related:
 개선:
 
 - 목록과 상세를 동시에 보여주지 않고, 상세는 좌측 패널 내부 drill-in 화면으로 전환한다.
-- 기본 상세에는 `이름`, `설명`, `판단 기준`만 노출한다.
+- 기본 상세에는 `이름`, `설명`만 노출하고 판단 기준은 화면에서 숨긴다.
 - `매칭 규칙`, `스키마`는 접힌 disclosure로 둔다.
 - JSON editor는 필요할 때만 열리는 `--a2ui-code` dark code panel로 둔다.
 - Save action은 상세 하단에 짧게 배치한다.
@@ -159,7 +159,7 @@ Related:
 
 개선:
 
-- Chatbot panel 상단에는 `상태 목록`, `이미지 목록`, `다시 실행` prompt chip만 둔다.
+- Chatbot panel 상단에는 `상태 목록`, `장비 보여줘`, `다시 실행` prompt chip만 둔다.
 - 메시지 로그는 Agent trace가 아니라 채팅 transcript처럼 읽히게 한다.
 - API/Profile/Selected/Reason/debug는 기본 화면에서 제거한다.
 - 최종 A2UI surface는 assistant message 안의 업무 화면처럼 삽입한다.
@@ -252,7 +252,7 @@ Related:
 ### Phase 3. Detail Editor Drill-in
 
 - [x] Detail editor를 목록 옆이 아니라 좌측 패널 내부 drill-in 화면으로 전환한다.
-- [x] 기본 상세에는 이름/설명/판단 기준만 둔다.
+- [x] 기본 상세에는 이름/설명만 두고 판단 기준은 숨긴다.
 - [x] 매칭 규칙과 스키마는 disclosure로 접어둔다.
 - [x] schemaSpec/surfaceConfig JSON editor를 dark code panel 스타일로 유지한다.
 - [x] JSON parse error를 상세 하단에 선명하게 표시한다.
@@ -261,7 +261,7 @@ Related:
 ### Phase 4. Agent Preview Redesign
 
 - [x] Quick prompt 영역을 chat prompt chip으로 정리한다.
-- [x] quick prompt button copy를 `상태 목록`, `이미지 목록`, `다시 실행`으로 줄인다.
+- [x] quick prompt button copy를 `상태 목록`, `장비 보여줘`, `다시 실행`으로 줄인다.
 - [x] 메시지 list를 Agent run timeline이 아니라 chat transcript처럼 정리한다.
 - [x] stage chip과 metadata panel을 제거한다.
 - [x] API/Profile/Selected/Reason debug 정보는 기본 노출하지 않는다.
@@ -381,7 +381,7 @@ Related:
 - Top bar를 `A2UI Studio`로 줄이고 설명 문장을 제거해 제품 콘솔 톤으로 정리했다.
 - Admin을 목록 화면과 상세 drill-in 화면으로 분리했다.
 - 템플릿 목록에는 제목과 설명만 남기고, componentId/viewType/roles/status는 기본 목록에서 제거했다.
-- 상세 화면에는 이름/설명/판단 기준만 기본 노출하고, 매칭 규칙과 스키마는 접힌 영역으로 이동했다.
+- 상세 화면에는 이름/설명만 기본 노출하고, 판단 기준은 숨겼으며 매칭 규칙과 스키마는 접힌 영역으로 이동했다.
 - Chatbot을 `A2UI Chat` 중심으로 바꾸고, 추천 시나리오는 채팅용 prompt chip으로 정리했다.
 - API/Profile/Selected/Reason debug 정보와 Agent trace UI는 기본 화면에서 제거했다.
 - 최종 A2UI 결과는 assistant message의 attachment처럼 보이게 하고, 채팅 입력창은 하단에 유지했다.
@@ -417,7 +417,7 @@ Related:
 최종 검증 기록:
 
 - 상태 목록 시나리오에서 `statusBooleanList`가 헤더 포함 7줄로 표시되고 가로 overflow가 없는 것을 확인했다.
-- 이미지 목록 시나리오에서 등록 전 fallback이 보이고, `템플릿 추가` 후 `imageCardList` 이미지 카드 6개가 자동 re-render되는 것을 확인했다.
+- `장비 보여줘` 시나리오에서 등록 전 fallback이 보이고, `템플릿 추가` 후 `imageCardList` 이미지 카드 6개가 자동 re-render되는 것을 확인했다.
 - 이미지 카드 자동 re-render 후 최신 이미지 카드 surface가 viewport 안에 보이는 것을 DOM 좌표와 새 viewport screenshot으로 확인했다.
 - 최신 상태 화면 스크린샷: `/Users/tahooki/Documents/git/a2ui-template-admin-chatbot-poc/docs/a2ui-template-studio-final-reduced-status-20260608.png`
 - 이미지 카드 전환 스크린샷: `/Users/tahooki/Documents/git/a2ui-template-admin-chatbot-poc/docs/a2ui-template-studio-image-card-visible-unique-20260608-01.png`
@@ -465,7 +465,7 @@ Related:
 
 검증 기록:
 
-- 이미지 목록 시나리오에서 템플릿 등록 전 fallback이 A2UI surface 없이 마크다운식 bullet list로 표시되는 것을 확인했다.
+- `장비 보여줘` 시나리오에서 템플릿 등록 전 fallback이 A2UI surface 없이 마크다운식 bullet list로 표시되는 것을 확인했다.
 - `템플릿 추가` 후 상세에서 `저장`하면 Admin이 리스트 화면으로 복귀하는 것을 확인했다.
 - 이미지 카드 A2UI 등록 후 자동 re-render는 계속 정상 동작하는 것을 확인했다.
 - AGENTS 제약에 따라 build/test command는 실행하지 않았다.
