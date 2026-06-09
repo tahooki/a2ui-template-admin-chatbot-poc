@@ -19,6 +19,7 @@ export type DemoApiResult =
     };
 
 export function chooseApiForPrompt(prompt: string): DemoApiId {
+  if (/장비\s*목록\s*보여줘/i.test(prompt)) return "equipment-catalog";
   if (/장비\s*보여줘/i.test(prompt)) return "equipment-catalog";
   if (/이미지|사진|카탈로그|설비|그림/i.test(prompt)) return "equipment-catalog";
   return "equipment-status";

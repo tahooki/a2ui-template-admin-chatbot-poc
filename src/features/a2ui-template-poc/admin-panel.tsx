@@ -33,7 +33,9 @@ export function AdminPanel({
   onSelect: (componentId: string) => void;
   onSave: (template: A2UITemplateRegistration) => void;
 }) {
-  const selected = templates.find((template) => template.componentId === selectedId) ?? templates[0];
+  const registeredSelected = templates.find((template) => template.componentId === selectedId) ?? templates[0];
+  const [draftTemplate, setDraftTemplate] = useState<A2UITemplateRegistration | null>(null);
+  const selected = draftTemplate ?? registeredSelected;
   const [componentId, setComponentId] = useState(selected.componentId);
   const [title, setTitle] = useState(selected.title);
   const [description, setDescription] = useState(selected.description);
@@ -56,6 +58,7 @@ export function AdminPanel({
   const imageCardRegistered = templates.some((template) => template.componentId === "equipment.imageCardList");
 
   function openTemplate(componentId: string) {
+    setDraftTemplate(null);
     onSelect(componentId);
     setIsDetailOpen(true);
   }
@@ -78,6 +81,7 @@ export function AdminPanel({
         updatedAt: new Date().toISOString(),
       });
       onSelect(componentId.trim());
+      setDraftTemplate(null);
       setError(null);
       setIsDetailOpen(false);
     } catch (saveError) {
@@ -88,7 +92,14 @@ export function AdminPanel({
   if (isDetailOpen) {
     return (
       <section className={styles.adminPanel} aria-label="A2UI template admin">
-        <button className={styles.backButton} type="button" onClick={() => setIsDetailOpen(false)}>
+        <button
+          className={styles.backButton}
+          type="button"
+          onClick={() => {
+            setDraftTemplate(null);
+            setIsDetailOpen(false);
+          }}
+        >
           템플릿으로 돌아가기
         </button>
 
@@ -187,8 +198,8 @@ export function AdminPanel({
           disabled={imageCardRegistered}
           type="button"
           onClick={() => {
-            onSave(IMAGE_CARD_REGISTRATION_PRESET);
-            onSelect(IMAGE_CARD_REGISTRATION_PRESET.componentId);
+            setDraftTemplate(IMAGE_CARD_REGISTRATION_PRESET);
+            setError(null);
             setIsDetailOpen(true);
           }}
         >

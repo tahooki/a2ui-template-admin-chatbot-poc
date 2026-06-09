@@ -35,8 +35,8 @@ const quickPrompts = [
     prompt: "장비 상태 목록 보여줘",
   },
   {
-    label: "장비 보여줘",
-    prompt: "장비 보여줘",
+    label: "장비 목록",
+    prompt: "장비 목록보여줘",
   },
 ];
 
@@ -74,11 +74,15 @@ function buildFallbackMarkdownList({
   const visibleRows = rowsFromData(data).slice(0, renderPlan.maxItems ?? 6);
   const lines = visibleRows.map((row) => {
     const title = String(value(row, renderPlan.fieldMapping.title) || row.name || row.title || row.id || "항목");
-    const content = textValue(row, renderPlan.fieldMapping.content) || String(row.description ?? row.category ?? row.location ?? "");
-    return content ? `- ${title}: ${content}` : `- ${title}`;
+    const content = textValue(row, renderPlan.fieldMapping.content) || String(row.description ?? "");
+    const category = typeof row.category === "string" ? `${row.category} 라인` : "";
+    const location = typeof row.location === "string" ? row.location : "";
+    const context = [category, location].filter(Boolean).join(", ");
+    const summary = content || "카탈로그에서 확인된 장비입니다.";
+    return context ? `- ${title}: ${context}에 있는 장비입니다. ${summary}` : `- ${title}: ${summary}`;
   });
 
-  return `${apiTitle}입니다. 아직 맞는 A2UI 화면이 없어 텍스트 목록으로 정리했습니다.\n\n${lines.join("\n")}`;
+  return `${apiTitle}를 확인했어요. 아직 이 데이터에 맞는 A2UI 화면이 없어서, 우선 제가 주요 장비를 글로 정리해드릴게요.\n\n${lines.join("\n")}`;
 }
 
 export function ChatbotPanel({

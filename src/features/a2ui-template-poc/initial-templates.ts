@@ -35,30 +35,4 @@ export const INITIAL_TEMPLATES: A2UITemplateRegistration[] = [
     status: "registered",
     updatedAt: now,
   },
-  {
-    componentId: "simpleTextList",
-    title: "텍스트 목록",
-    description: "적합한 A2UI 컴포넌트가 없을 때 이름과 본문만 안전하게 보여준다.",
-    selectionGuide:
-      "등록된 A2UI 컴포넌트가 데이터 형태를 만족하지 못할 때 fallback으로 사용한다. 이미지 필드는 표시하지 않는다.",
-    schemaSpec: {
-      dataShape: "array<object>",
-      listPath: "items",
-      requiredRoles: ["title"],
-      optionalRoles: ["content", "description", "category", "location"],
-      fieldHints: {
-        title: ["name", "title"],
-        content: ["description", "content", "summary"],
-      },
-      intentKeywords: ["목록", "리스트", "보여줘"],
-    },
-    surfaceConfig: {
-      viewType: "simpleTextList",
-      titleBinding: "items[].name",
-      contentBinding: "items[].description",
-      maxItems: 6,
-    },
-    status: "registered",
-    updatedAt: now,
-  },
 ];

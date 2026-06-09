@@ -15,6 +15,10 @@ function cloneInitial(): A2UITemplateRegistration[] {
   return INITIAL_TEMPLATES.map((template) => ({ ...template }));
 }
 
+function withoutDeprecatedTemplates(templates: A2UITemplateRegistration[]) {
+  return templates.filter((template) => template.componentId !== "simpleTextList");
+}
+
 function parseRegistry(value: string | null): PersistedRegistry | null {
   if (!value) return null;
   try {
@@ -35,7 +39,8 @@ export function useTemplateRegistry() {
   useEffect(() => {
     const persisted = parseRegistry(window.localStorage.getItem(storageKey));
     if (persisted) {
-      setTemplates(persisted.templates);
+      const templates = withoutDeprecatedTemplates(persisted.templates);
+      setTemplates(templates.length ? templates : cloneInitial());
       setVersion(persisted.version);
     }
     setHydrated(true);

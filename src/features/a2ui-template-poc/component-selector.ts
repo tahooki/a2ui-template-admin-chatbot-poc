@@ -113,17 +113,19 @@ export function selectA2UIComponent({
     };
   }
 
-  const fallback = templates.find((template) => template.componentId === "simpleTextList") ?? templates[0];
   return {
-    selectedComponentId: fallback?.componentId ?? "simpleTextList",
+    selectedComponentId: "agent.markdownList",
     viewType: "simpleTextList",
     score: 12,
     reason: profile.hasImageField
       ? "이미지 필드가 있는 데이터를 찾았지만, 이미지 표시를 지원하는 등록 A2UI 컴포넌트가 없어 텍스트 fallback을 사용했습니다."
       : "등록된 A2UI 컴포넌트 중 데이터 스펙을 만족하는 항목이 없어 텍스트 fallback을 사용했습니다.",
-    fieldMapping: fallback ? buildMapping(fallback, profile) : {},
+    fieldMapping: {
+      title: "items[].name",
+      content: "items[].description",
+    },
     isFallback: true,
     registryVersion,
-    maxItems: fallback?.surfaceConfig.maxItems,
+    maxItems: 6,
   };
 }

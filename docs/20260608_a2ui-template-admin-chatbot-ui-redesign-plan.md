@@ -159,7 +159,7 @@ Related:
 
 개선:
 
-- Chatbot panel 상단에는 `상태 목록`, `장비 보여줘`, `다시 실행` prompt chip만 둔다.
+- Chatbot panel 상단에는 `상태 목록`, `장비 목록`, `다시 실행` prompt chip만 둔다.
 - 메시지 로그는 Agent trace가 아니라 채팅 transcript처럼 읽히게 한다.
 - API/Profile/Selected/Reason/debug는 기본 화면에서 제거한다.
 - 최종 A2UI surface는 assistant message 안의 업무 화면처럼 삽입한다.
@@ -174,7 +174,7 @@ Related:
 
 개선:
 
-- `simpleTextList`: 회색 fallback surface로 표현하고 이미지 화면 미등록 상태를 짧게 보여준다.
+- 등록된 A2UI가 없을 때는 surface를 만들지 않고 assistant message의 markdown list로 보여준다.
 - `statusBooleanList`: 테이블형 list로 변경해 업무 콘솔 느낌을 강화한다.
 - `imageCardList`: 이미지가 더 커 보이게 하고, card grid를 더 정돈한다.
 - surface header에는 `A2UI` label과 화면 제목만 남긴다.
@@ -188,8 +188,8 @@ Related:
 1. Reset demo로 초기 상태를 만든다.
 2. `장비 상태 목록 보여줘`를 눌러 이미 등록된 A2UI 결과를 보여준다.
 3. `이미지 있는 장비 리스트 보여줘`를 눌러 fallback 결과를 보여준다.
-4. `템플릿 추가`를 눌러 Admin 등록을 한다.
-5. registry version이 올라가고, 같은 질문이 자동 re-render되는 것을 보여준다.
+4. `템플릿 추가`를 눌러 이미지 카드 템플릿 draft를 연다.
+5. `저장`을 눌렀을 때 registry version이 올라가고, 같은 질문이 자동 re-render되는 것을 보여준다.
 6. 이미지 카드 A2UI 결과가 크게 표시되는 것을 보여준다.
 
 개선 포인트:
@@ -261,7 +261,7 @@ Related:
 ### Phase 4. Agent Preview Redesign
 
 - [x] Quick prompt 영역을 chat prompt chip으로 정리한다.
-- [x] quick prompt button copy를 `상태 목록`, `장비 보여줘`, `다시 실행`으로 줄인다.
+- [x] quick prompt button copy를 `상태 목록`, `장비 목록`, `다시 실행`으로 줄인다.
 - [x] 메시지 list를 Agent run timeline이 아니라 chat transcript처럼 정리한다.
 - [x] stage chip과 metadata panel을 제거한다.
 - [x] API/Profile/Selected/Reason debug 정보는 기본 노출하지 않는다.
@@ -270,8 +270,8 @@ Related:
 
 ### Phase 5. A2UI Surface Polish
 
-- [x] `simpleTextList` fallback surface를 회색 fallback state로 차별화한다.
-- [x] fallback surface에 이미지 화면 미등록 메시지를 짧게 표시한다.
+- [x] 등록된 A2UI가 없을 때 fallback surface 대신 markdown list 응답을 표시한다.
+- [x] 텍스트 목록 fallback 템플릿은 Admin 등록 목록에서 제거한다.
 - [x] `statusBooleanList`를 업무 테이블형 list로 개선한다.
 - [x] boolean flag pill의 on/off 시각 차이를 더 명확히 한다.
 - [x] `imageCardList`의 이미지 면적을 키운다.
@@ -290,9 +290,9 @@ Related:
 
 ### Phase 7. Demo Final Pass
 
-- [x] Reset demo 후 registry v1, 2 templates, 빈 챗봇 상태를 확인한다.
+- [x] Reset demo 후 registry v1, 1 template, 빈 챗봇 상태를 확인한다.
 - [x] 상태 API가 `equipment.statusBooleanList`로 렌더링되는지 확인한다.
-- [x] 이미지 API 등록 전 `simpleTextList` fallback이 이미지 없이 표시되는지 확인한다.
+- [x] 이미지 API 등록 전 markdown list fallback이 표시되는지 확인한다.
 - [x] 이미지 카드 등록 후 `equipment.imageCardList`로 자동 re-render되는지 확인한다.
 - [x] 같은 질문을 `다시 실행`해도 결과가 안정적으로 재현되는지 확인한다.
 - [x] dev server에서 runtime error가 없는지 확인한다.
@@ -335,16 +335,16 @@ Related:
 - Registry Studio list를 compact selectable row로 바꾸고, 선택 상태를 left border/highlight로 표현했다.
 - Detail Editor를 좌측 패널 내부 drill-in 화면으로 바꾸고 JSON editor는 접힌 dark code panel로 변경했다.
 - Agent Preview의 quick prompt 영역을 scenario control로 재정리하고 metadata block을 압축했다.
-- `simpleTextList`, `statusBooleanList`, `imageCardList` surface를 각각 fallback state, 업무 테이블, 이미지 카드 그리드로 차별화했다.
+- `statusBooleanList`, `imageCardList` surface를 업무 테이블과 이미지 카드 그리드로 차별화하고, fallback은 assistant markdown list로 분리했다.
 - Registry 변경 후 마지막 질문이 자동 re-render되되, 별도 system message는 표시하지 않도록 정리했다.
 - 최신 result가 길어도 result header부터 보이도록 chat scroll 기준을 latest message 상단으로 조정했다.
 
 검증 기록:
 
-- `http://localhost:3100` dev server에서 reset 초기 상태가 `registry v1`, `2 templates`, 빈 챗봇 상태로 돌아오는 것을 확인했다.
+- `http://localhost:3100` dev server에서 reset 초기 상태가 `registry v1`, `1 template`, 빈 챗봇 상태로 돌아오는 것을 확인했다.
 - 상태 API 호출이 `equipment.statusBooleanList`와 ON/OFF 테이블 surface로 렌더링되는 것을 확인했다.
-- 이미지 API 등록 전에는 `simpleTextList` fallback과 이미지 화면 미등록 notice가 표시되는 것을 확인했다.
-- `템플릿 추가` 이후 `registry v2`, `3 templates`가 되고 `equipment.imageCardList`로 자동 re-render되는 것을 확인했다.
+- 이미지 API 등록 전에는 A2UI surface 없이 markdown list fallback이 표시되는 것을 확인했다.
+- `템플릿 추가` 후 `저장`을 눌렀을 때 `registry v2`, `2 templates`가 되고 `equipment.imageCardList`로 자동 re-render되는 것을 확인했다.
 - `다시 실행`으로 같은 image card 결과가 안정적으로 재현되는 것을 확인했다.
 - 1440px, 1280px, 980px, 560px viewport에서 overflow와 버튼 텍스트 넘침이 없고, 980px 이하에서 Admin/Chatbot이 상하로 쌓이며 resize handle이 숨겨지는 것을 확인했다.
 - AGENTS 제약에 따라 build/test command는 실행하지 않았다.
@@ -360,7 +360,7 @@ Related:
 
 재검증 기록:
 
-- 이미지 API fallback 후 `템플릿 추가`를 누르면 별도 system message 없이 `equipment.imageCardList` result surface가 즉시 보이는 것을 확인했다.
+- 이미지 API fallback 후 `템플릿 추가`만 눌렀을 때는 registry와 chat이 바뀌지 않고, `저장`을 누른 뒤 별도 system message 없이 `equipment.imageCardList` result surface가 즉시 보이는 것을 확인했다.
 - 상태 API result table은 기본 desktop, 1440px, 1280px, 980px, 560px viewport에서 horizontal overflow 없이 표시되는 것을 확인했다.
 - 1440px, 1280px, 980px, 560px viewport에서 body overflow와 버튼 텍스트 넘침이 없고, 980px 이하에서 resize handle이 숨겨지는 것을 재확인했다.
 - 브라우저 error log는 비어 있었다.
@@ -417,7 +417,7 @@ Related:
 최종 검증 기록:
 
 - 상태 목록 시나리오에서 `statusBooleanList`가 헤더 포함 7줄로 표시되고 가로 overflow가 없는 것을 확인했다.
-- `장비 보여줘` 시나리오에서 등록 전 fallback이 보이고, `템플릿 추가` 후 `imageCardList` 이미지 카드 6개가 자동 re-render되는 것을 확인했다.
+- `장비 목록보여줘` 시나리오에서 등록 전 fallback이 보이고, `템플릿 추가` 후 `저장`을 누르면 `imageCardList` 이미지 카드 6개가 자동 re-render되는 것을 확인했다.
 - 이미지 카드 자동 re-render 후 최신 이미지 카드 surface가 viewport 안에 보이는 것을 DOM 좌표와 새 viewport screenshot으로 확인했다.
 - 최신 상태 화면 스크린샷: `/Users/tahooki/Documents/git/a2ui-template-admin-chatbot-poc/docs/a2ui-template-studio-final-reduced-status-20260608.png`
 - 이미지 카드 전환 스크린샷: `/Users/tahooki/Documents/git/a2ui-template-admin-chatbot-poc/docs/a2ui-template-studio-image-card-visible-unique-20260608-01.png`
@@ -436,7 +436,7 @@ Related:
 
 - 목록 상단의 `템플릿` 중간 헤더 줄을 제거했다.
 - `이미지 카드 추가` 버튼을 `템플릿 추가`로 바꾸고 리스트 하단 dashed action으로 이동했다.
-- 첫 화면의 Admin 목록은 템플릿 카드 2개와 하단 추가 버튼만 보이도록 정리했다.
+- 첫 화면의 Admin 목록은 등록된 A2UI 템플릿 카드와 하단 추가 버튼만 보이도록 정리했다.
 
 검증 기록:
 
@@ -460,12 +460,38 @@ Related:
 
 - 템플릿 상세 저장 성공 후 좌측 Admin이 템플릿 목록 화면으로 돌아가도록 수정했다.
 - `renderPlan.isFallback`일 때는 `A2UIDemoRenderer`를 붙이지 않는다.
-- fallback 응답은 assistant message 본문에 `- 장비명: 설명` 형태의 마크다운식 목록으로 표시한다.
+- fallback 응답은 assistant가 직접 장비 카탈로그를 읽고 정리한 것처럼 `- 장비명: 라인/위치/설명` 형태의 자연스러운 글 목록으로 표시한다.
 - 채팅 본문은 줄바꿈을 유지하도록 `white-space: pre-line`을 적용했다.
 
 검증 기록:
 
-- `장비 보여줘` 시나리오에서 템플릿 등록 전 fallback이 A2UI surface 없이 마크다운식 bullet list로 표시되는 것을 확인했다.
+- `장비 목록보여줘` 시나리오에서 템플릿 등록 전 fallback이 A2UI surface 없이 마크다운식 bullet list로 표시되는 것을 확인했다.
 - `템플릿 추가` 후 상세에서 `저장`하면 Admin이 리스트 화면으로 복귀하는 것을 확인했다.
 - 이미지 카드 A2UI 등록 후 자동 re-render는 계속 정상 동작하는 것을 확인했다.
+- AGENTS 제약에 따라 build/test command는 실행하지 않았다.
+
+## 19. 텍스트 템플릿 제거와 저장 전 미반영 수정
+
+수정일: 2026-06-09
+
+사용자 피드백:
+
+- `텍스트 목록`은 Admin 템플릿 목록에 없어도 된다.
+- `템플릿 추가`를 누르는 순간 이미지 A2UI가 chat에 바로 나오면 안 된다.
+- `템플릿 추가`는 저장이 아니라 draft 상세를 여는 동작이어야 한다.
+
+반영 내용:
+
+- 초기 등록 템플릿에서 `텍스트 목록(simpleTextList)`를 제거했다.
+- 기존 localStorage registry에 남아 있을 수 있는 `simpleTextList`도 로드 시 제거한다.
+- fallback은 등록된 템플릿이 아니라 내부 `agent.markdownList` 흐름으로 처리한다.
+- `템플릿 추가` 클릭 시 `IMAGE_CARD_REGISTRATION_PRESET`을 draft로만 열고, registry에는 저장하지 않는다.
+- `저장`을 눌렀을 때만 registry version이 올라가고 chat이 image card A2UI로 자동 re-render된다.
+
+검증 기록:
+
+- Reset 후 Admin에는 `장비 상태 목록`만 남고 `텍스트 목록`은 보이지 않는 것을 확인했다.
+- `장비 목록` 클릭 후 fallback은 에이전트가 직접 정리한 글 목록으로 표시되는 것을 확인했다.
+- fallback 상태에서 `템플릿 추가`만 누르면 chat은 image card A2UI로 바뀌지 않는 것을 확인했다.
+- draft 상세에서 `저장`을 눌렀을 때만 image card A2UI가 chat에 반영되는 것을 확인했다.
 - AGENTS 제약에 따라 build/test command는 실행하지 않았다.
