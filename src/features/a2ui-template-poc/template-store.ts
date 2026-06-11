@@ -1,72 +1,108 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { INITIAL_TEMPLATES } from "./initial-templates";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { A2UITemplateRegistration } from "./template-types";
 
-const storageKey = "a2ui-template-admin-chatbot-poc:registry";
-
-type PersistedRegistry = {
+type TemplateCatalogResponse = {
   templates: A2UITemplateRegistration[];
   version: number;
+  updatedAt?: string;
+  error?: string;
 };
 
-function cloneInitial(): A2UITemplateRegistration[] {
-  return INITIAL_TEMPLATES.map((template) => ({ ...template }));
+function normalizeCatalog(value: TemplateCatalogResponse): TemplateCatalogResponse {
+  return {
+    ...value,
+    templates: value.templates.filter((template) => template.componentId !== "simpleTextList"),
+    version: typeof value.version === "number" ? value.version : 1,
+  };
 }
 
-function withoutDeprecatedTemplates(templates: A2UITemplateRegistration[]) {
-  return templates.filter((template) => template.componentId !== "simpleTextList");
-}
-
-function parseRegistry(value: string | null): PersistedRegistry | null {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value) as PersistedRegistry;
-    if (!Array.isArray(parsed.templates) || typeof parsed.version !== "number") return null;
-    return parsed;
-  } catch {
-    return null;
-  }
+async function readCatalog() {
+  const response = await fetch("/api/admin/templates", { cache: "no-store" });
+  if (!response.ok) throw new Error(`/api/admin/templates failed with ${response.status}`);
+  return normalizeCatalog((await response.json()) as TemplateCatalogResponse);
 }
 
 export function useTemplateRegistry() {
-  const [templates, setTemplates] = useState<A2UITemplateRegistration[]>(cloneInitial);
-  const [version, setVersion] = useState(1);
+  const [templates, setTemplates] = useState<A2UITemplateRegistration[]>([]);
+  const [version, setVersion] = useState(0);
   const [lastSavedComponentId, setLastSavedComponentId] = useState<string | null>(null);
-  const [hydrated, setHydrated] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    const persisted = parseRegistry(window.localStorage.getItem(storageKey));
-    if (persisted) {
-      const templates = withoutDeprecatedTemplates(persisted.templates);
-      setTemplates(templates.length ? templates : cloneInitial());
-      setVersion(persisted.version);
+  const refreshRegistry = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const catalog = await readCatalog();
+      setTemplates(catalog.templates);
+      setVersion(catalog.version);
+      setError(null);
+      return catalog;
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : "Template catalog refresh failed");
+      return null;
+    } finally {
+      setIsLoading(false);
     }
-    setHydrated(true);
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
-    window.localStorage.setItem(storageKey, JSON.stringify({ templates, version }));
-  }, [hydrated, templates, version]);
+    let active = true;
 
-  function saveTemplate(template: A2UITemplateRegistration) {
-    const nextTemplate = { ...template, updatedAt: new Date().toISOString() };
-    setTemplates((current) => {
-      const exists = current.some((item) => item.componentId === nextTemplate.componentId);
-      if (!exists) return [...current, nextTemplate];
-      return current.map((item) => (item.componentId === nextTemplate.componentId ? nextTemplate : item));
+    async function loadInitialCatalog() {
+      try {
+        const catalog = await readCatalog();
+        if (!active) return;
+        setTemplates(catalog.templates);
+        setVersion(catalog.version);
+        setError(null);
+      } catch (refreshError) {
+        if (!active) return;
+        setError(refreshError instanceof Error ? refreshError.message : "Template catalog refresh failed");
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    }
+
+    void loadInitialCatalog();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const saveTemplate = useCallback(async (template: A2UITemplateRegistration) => {
+    const response = await fetch("/api/admin/templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ template }),
     });
-    setVersion((current) => current + 1);
-    setLastSavedComponentId(nextTemplate.componentId);
-  }
+    const catalog = (await response.json()) as TemplateCatalogResponse;
+    if (!response.ok) {
+      throw new Error(catalog.error ?? `Template save failed with ${response.status}`);
+    }
 
-  function resetRegistry() {
-    setTemplates(cloneInitial());
-    setVersion(1);
+    const normalized = normalizeCatalog(catalog);
+    setTemplates(normalized.templates);
+    setVersion(normalized.version);
+    setLastSavedComponentId(template.componentId);
+    setError(null);
+  }, []);
+
+  const resetRegistry = useCallback(async () => {
+    const response = await fetch("/api/admin/templates/reset", { method: "POST" });
+    const catalog = (await response.json()) as TemplateCatalogResponse;
+    if (!response.ok) {
+      throw new Error(catalog.error ?? `Template reset failed with ${response.status}`);
+    }
+
+    const normalized = normalizeCatalog(catalog);
+    setTemplates(normalized.templates);
+    setVersion(normalized.version);
     setLastSavedComponentId(null);
-  }
+    setError(null);
+  }, []);
 
   const registeredCount = useMemo(
     () => templates.filter((template) => template.status === "registered").length,
@@ -78,7 +114,10 @@ export function useTemplateRegistry() {
     version,
     registeredCount,
     lastSavedComponentId,
+    error,
+    isLoading,
     saveTemplate,
     resetRegistry,
+    refreshRegistry,
   };
 }

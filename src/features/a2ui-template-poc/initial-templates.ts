@@ -20,6 +20,37 @@ export const INITIAL_TEMPLATES: A2UITemplateRegistration[] = [
       },
       intentKeywords: ["상태", "장비 상태", "가동", "점검", "알람", "예약"],
     },
+    inputSchema: {
+      schemaVersion: "2026-06-11",
+      accepts: {
+        shape: ["array<object>"],
+        minRows: 1,
+        capabilities: {
+          hasBooleans: true,
+          hasStatus: true,
+        },
+      },
+      requiredSlots: [
+        {
+          slot: "items[].title",
+          acceptsTypes: ["string"],
+          acceptsRoles: ["title", "label"],
+          required: true,
+        },
+        {
+          slot: "items[].statusFlags",
+          acceptsTypes: ["boolean"],
+          acceptsRoles: ["booleanFlag", "status"],
+          minCount: 3,
+          required: true,
+        },
+      ],
+      selectionHints: {
+        queryKeywords: ["상태", "장비 상태", "가동", "점검", "알람", "예약"],
+        bestFor: ["equipment status boolean list"],
+        priority: 2,
+      },
+    },
     surfaceConfig: {
       viewType: "statusBooleanList",
       titleBinding: "items[].name",

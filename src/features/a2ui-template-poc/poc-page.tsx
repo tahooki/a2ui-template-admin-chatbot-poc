@@ -8,15 +8,13 @@ import { useTemplateRegistry } from "./template-store";
 import styles from "./styles.module.css";
 
 export function A2UITemplatePocPage() {
-  const { templates, version, saveTemplate, resetRegistry } = useTemplateRegistry();
-  const [selectedId, setSelectedId] = useState("equipment.statusBooleanList");
+  const { templates, version, saveTemplate, resetRegistry, isLoading, error } = useTemplateRegistry();
   const [chatWidth, setChatWidth] = useState(540);
   const [chatResetKey, setChatResetKey] = useState(0);
   const draggingRef = useRef(false);
 
-  function resetDemo() {
-    resetRegistry();
-    setSelectedId("equipment.statusBooleanList");
+  async function resetDemo() {
+    await resetRegistry();
     setChatResetKey((current) => current + 1);
   }
 
@@ -51,7 +49,7 @@ export function A2UITemplatePocPage() {
         </div>
         <div className={styles.topMeta}>
           <span>v{version}</span>
-          <button className={styles.secondaryButton} type="button" onClick={resetDemo}>
+          <button className={styles.secondaryButton} type="button" onClick={() => void resetDemo()}>
             Reset demo
           </button>
         </div>
@@ -59,16 +57,15 @@ export function A2UITemplatePocPage() {
 
       <div className={styles.workspace}>
         <AdminPanel
+          catalogError={error}
+          isLoading={isLoading}
           onSave={saveTemplate}
-          onSelect={setSelectedId}
-          selectedId={selectedId}
           templates={templates}
         />
         <ChatbotPanel
           onResizeStart={startResize}
           registryVersion={version}
           resetKey={chatResetKey}
-          templates={templates}
           width={chatWidth}
         />
       </div>

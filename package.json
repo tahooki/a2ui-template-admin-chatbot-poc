@@ -4,6 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "mcp:dev": "node packages/a2ui-admin-mcp-server/server.mjs",
+    "python-agent:dev": "cd packages/a2ui-python-agent && python -m uvicorn app.main:app --reload --port 8000",
+    "python-agent:test": "PYTHONPATH=packages/a2ui-python-agent python3 -m unittest discover packages/a2ui-python-agent/tests",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"

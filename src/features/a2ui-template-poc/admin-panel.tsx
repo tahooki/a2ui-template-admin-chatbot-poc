@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { IMAGE_CARD_REGISTRATION_PRESET } from "./image-card-registration-preset";
 import styles from "./styles.module.css";
 import type { A2UITemplateRegistration } from "./template-types";
@@ -24,77 +24,86 @@ function compactList(values?: string[]) {
 
 export function AdminPanel({
   templates,
-  selectedId,
-  onSelect,
   onSave,
+  isLoading = false,
+  catalogError = null,
 }: {
   templates: A2UITemplateRegistration[];
-  selectedId: string;
-  onSelect: (componentId: string) => void;
-  onSave: (template: A2UITemplateRegistration) => void;
+  onSave: (template: A2UITemplateRegistration) => Promise<void>;
+  isLoading?: boolean;
+  catalogError?: string | null;
 }) {
-  const registeredSelected = templates.find((template) => template.componentId === selectedId) ?? templates[0];
-  const [draftTemplate, setDraftTemplate] = useState<A2UITemplateRegistration | null>(null);
-  const selected = draftTemplate ?? registeredSelected;
-  const [componentId, setComponentId] = useState(selected.componentId);
-  const [title, setTitle] = useState(selected.title);
-  const [description, setDescription] = useState(selected.description);
-  const [selectionGuide, setSelectionGuide] = useState(selected.selectionGuide);
-  const [schemaJson, setSchemaJson] = useState(stringify(selected.schemaSpec));
-  const [surfaceJson, setSurfaceJson] = useState(stringify(selected.surfaceConfig));
+  const [editingTemplate, setEditingTemplate] = useState<A2UITemplateRegistration | null>(null);
+  const selected = editingTemplate;
+  const [componentId, setComponentId] = useState("");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [selectionGuide, setSelectionGuide] = useState("");
+  const [schemaJson, setSchemaJson] = useState("{}");
+  const [inputSchemaJson, setInputSchemaJson] = useState("{}");
+  const [surfaceJson, setSurfaceJson] = useState("{}");
   const [error, setError] = useState<string | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
-  useEffect(() => {
-    setComponentId(selected.componentId);
-    setTitle(selected.title);
-    setDescription(selected.description);
-    setSelectionGuide(selected.selectionGuide);
-    setSchemaJson(stringify(selected.schemaSpec));
-    setSurfaceJson(stringify(selected.surfaceConfig));
+  function loadTemplate(template: A2UITemplateRegistration) {
+    setEditingTemplate(template);
+    setComponentId(template.componentId);
+    setTitle(template.title);
+    setDescription(template.description);
+    setSelectionGuide(template.selectionGuide);
+    setSchemaJson(stringify(template.schemaSpec));
+    setInputSchemaJson(stringify(template.inputSchema ?? {}));
+    setSurfaceJson(stringify(template.surfaceConfig));
     setError(null);
-  }, [selected]);
-
-  function openTemplate(componentId: string) {
-    setDraftTemplate(null);
-    onSelect(componentId);
     setIsDetailOpen(true);
   }
 
-  function handleSave() {
+  function openTemplate(template: A2UITemplateRegistration) {
+    loadTemplate(template);
+  }
+
+  async function handleSave() {
     try {
+      setIsSaving(true);
       const schemaSpec = parseObject(schemaJson, "Schema Spec") as A2UITemplateRegistration["schemaSpec"];
+      const parsedInputSchema = parseObject(inputSchemaJson, "Input Schema");
+      const inputSchema = Object.keys(parsedInputSchema).length
+        ? (parsedInputSchema as A2UITemplateRegistration["inputSchema"])
+        : undefined;
       const surfaceConfig = parseObject(surfaceJson, "Surface Config") as A2UITemplateRegistration["surfaceConfig"];
       if (!componentId.trim() || !title.trim()) {
         throw new Error("Component ID and title are required");
       }
-      onSave({
+      await onSave({
         componentId: componentId.trim(),
         title: title.trim(),
         description: description.trim(),
         selectionGuide: selectionGuide.trim(),
         schemaSpec,
+        inputSchema,
         surfaceConfig,
         status: "registered",
         updatedAt: new Date().toISOString(),
       });
-      onSelect(componentId.trim());
-      setDraftTemplate(null);
+      setEditingTemplate(null);
       setError(null);
       setIsDetailOpen(false);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Save failed");
+    } finally {
+      setIsSaving(false);
     }
   }
 
-  if (isDetailOpen) {
+  if (isDetailOpen && selected) {
     return (
       <section className={styles.adminPanel} aria-label="A2UI template admin">
         <button
           className={styles.backButton}
           type="button"
           onClick={() => {
-            setDraftTemplate(null);
+            setEditingTemplate(null);
             setIsDetailOpen(false);
           }}
         >
@@ -125,6 +134,8 @@ export function AdminPanel({
             <strong>{selected.schemaSpec.requiredRoles.join(", ")}</strong>
             <span>Intent</span>
             <strong>{compactList(selected.schemaSpec.intentKeywords)}</strong>
+            <span>Input</span>
+            <strong>{selected.inputSchema ? selected.inputSchema.accepts.shape.join(", ") : "legacy adapter"}</strong>
           </div>
         </details>
 
@@ -155,13 +166,23 @@ export function AdminPanel({
                 onChange={(event) => setSurfaceJson(event.target.value)}
               />
             </label>
+            <label className={styles.fieldLabel}>
+              Input schema
+              <textarea
+                className={styles.codeTextarea}
+                rows={11}
+                spellCheck={false}
+                value={inputSchemaJson}
+                onChange={(event) => setInputSchemaJson(event.target.value)}
+              />
+            </label>
           </div>
         </details>
 
         {error ? <div className={styles.errorBox}>{error}</div> : null}
         <div className={styles.editorActions}>
-          <button className={styles.primaryButton} type="button" onClick={handleSave}>
-            저장
+          <button className={styles.primaryButton} disabled={isSaving} type="button" onClick={() => void handleSave()}>
+            {isSaving ? "저장 중" : "저장"}
           </button>
         </div>
       </section>
@@ -180,24 +201,29 @@ export function AdminPanel({
 
       <div className={styles.templateList} aria-label="Registered A2UI templates">
         <div className={styles.templateItems}>
-          {templates.map((template) => (
-            <article className={styles.templateItem} key={template.componentId}>
-              <button className={styles.templateRow} type="button" onClick={() => openTemplate(template.componentId)}>
-                <span>
-                  <strong className={styles.templateTitle}>{template.title}</strong>
-                  <span className={styles.templateDescription}>{template.description}</span>
-                </span>
-              </button>
-            </article>
-          ))}
+          {catalogError ? <div className={styles.errorBox}>Catalog 서버를 불러오지 못했습니다. {catalogError}</div> : null}
+          {isLoading ? <div className={styles.emptyState}>서버 catalog를 불러오는 중입니다.</div> : null}
+          {!isLoading && !catalogError && !templates.length ? (
+            <div className={styles.emptyState}>등록된 템플릿이 없습니다.</div>
+          ) : null}
+          {!isLoading && !catalogError
+            ? templates.map((template) => (
+                <article className={styles.templateItem} key={template.componentId}>
+                  <button className={styles.templateRow} type="button" onClick={() => openTemplate(template)}>
+                    <span>
+                      <strong className={styles.templateTitle}>{template.title}</strong>
+                      <span className={styles.templateDescription}>{template.description}</span>
+                    </span>
+                  </button>
+                </article>
+              ))
+            : null}
         </div>
         <button
           className={styles.addTemplateButton}
           type="button"
           onClick={() => {
-            setDraftTemplate(IMAGE_CARD_REGISTRATION_PRESET);
-            setError(null);
-            setIsDetailOpen(true);
+            loadTemplate(IMAGE_CARD_REGISTRATION_PRESET);
           }}
         >
           템플릿 추가

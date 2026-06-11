@@ -107,6 +107,17 @@
   overflow: auto;
 }
 
+.emptyState {
+  border: 1px solid var(--a2ui-line-soft);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--a2ui-muted);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+  padding: 12px;
+}
+
 .addTemplateButton {
   width: 100%;
   min-height: 40px;
@@ -496,6 +507,25 @@
   font-size: 13px;
   line-height: 1.55;
   white-space: pre-line;
+}
+
+.matcherTrace {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.matcherTrace span {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475569;
+  padding: 4px 6px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
 }
 
 .message_user {

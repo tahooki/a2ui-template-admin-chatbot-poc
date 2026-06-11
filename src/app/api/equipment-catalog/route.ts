@@ -1,4 +1,4 @@
-import { equipmentCatalogItems, paginate } from "@/features/a2ui-template-poc/mock-api-fixtures";
+import { equipmentCatalogItems, paginate } from "@/server/equipment/equipment-data";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);

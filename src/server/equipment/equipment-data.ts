@@ -1,4 +1,4 @@
-import type { EquipmentCatalogItem, EquipmentStatusItem } from "./template-types";
+import type { EquipmentCatalogItem, EquipmentStatusItem } from "@/features/a2ui-template-poc/template-types";
 
 const equipmentTypes = [
   { category: "가공", imageUrl: "/images/a2ui-template-poc/cnc.svg", label: "CNC 가공기" },

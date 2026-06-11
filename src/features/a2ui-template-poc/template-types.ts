@@ -1,14 +1,71 @@
 export type A2UIRole =
   | "id"
+  | "label"
   | "title"
   | "content"
   | "description"
   | "image"
+  | "uri"
   | "status"
   | "booleanFlag"
   | "category"
   | "location"
-  | "updatedAt";
+  | "updatedAt"
+  | "time"
+  | "metric"
+  | "version"
+  | "environment"
+  | "artifact"
+  | "action";
+
+export type A2UIDerivedFieldType =
+  | "string"
+  | "number"
+  | "boolean"
+  | "date"
+  | "datetime"
+  | "object"
+  | "array"
+  | "unknown";
+
+export type A2UITemplateSlot = {
+  slot: string;
+  acceptsTypes: A2UIDerivedFieldType[];
+  acceptsRoles: A2UIRole[];
+  acceptsFormats?: string[];
+  minCount?: number;
+  maxCount?: number;
+  required: boolean;
+  description?: string;
+};
+
+export type A2UITemplateInputSchema = {
+  schemaVersion: "2026-06-11";
+  accepts: {
+    shape: Array<"object" | "array<object>" | "array<primitive>" | "unknown">;
+    minRows?: number;
+    maxRows?: number;
+    capabilities?: Partial<{
+      hasImages: boolean;
+      hasBooleans: boolean;
+      hasStatus: boolean;
+      hasTimeField: boolean;
+      hasNumericMetrics: boolean;
+      hasCategories: boolean;
+      hasNestedObjects: boolean;
+      hasActions: boolean;
+    }>;
+  };
+  requiredSlots: A2UITemplateSlot[];
+  optionalSlots?: A2UITemplateSlot[];
+  selectionHints?: {
+    intentKeys?: string[];
+    queryKeywords?: string[];
+    bestFor?: string[];
+    badFor?: string[];
+    priority?: number;
+  };
+};
 
 export type A2UIViewType = "statusBooleanList" | "simpleTextList" | "imageCardList";
 
@@ -40,6 +97,7 @@ export type A2UITemplateRegistration = {
   description: string;
   selectionGuide: string;
   schemaSpec: A2UIComponentSchemaSpec;
+  inputSchema?: A2UITemplateInputSchema;
   surfaceConfig: A2UIComponentSurfaceConfig;
   status: "registered" | "draft" | "invalid";
   updatedAt: string;
@@ -71,6 +129,27 @@ export type FieldMapping = {
   booleanFlags?: string[];
 };
 
+export type A2UICandidateTrace = {
+  templateId: string;
+  score: number;
+  reason: string;
+  rejected?: boolean;
+  rejectionReason?: string;
+  breakdown?: Record<string, number>;
+};
+
+export type A2UIMappingDecision = {
+  templateId: string;
+  confidence: number;
+  reason: string;
+  mappings: Array<{
+    slot: string;
+    sourcePath: string;
+    transform?: "none" | "first" | "join" | "booleanLabel" | "statusTone";
+  }>;
+  missingSlots: string[];
+};
+
 export type A2UIRenderPlan = {
   selectedComponentId: string;
   viewType: A2UIViewType;
@@ -80,6 +159,9 @@ export type A2UIRenderPlan = {
   isFallback: boolean;
   registryVersion: number;
   maxItems?: number;
+  strategy?: "derived_schema" | "legacy_schema_spec" | "fallback";
+  candidates?: A2UICandidateTrace[];
+  mapping?: A2UIMappingDecision;
 };
 
 export type EquipmentCatalogItem = {
@@ -106,4 +188,30 @@ export type EquipmentApiResponse<TItem> = {
   total: number;
   page: number;
   pageSize: number;
+};
+
+export type A2UISurfaceEnvelopePayload = {
+  apiTitle: string;
+  apiId: string;
+  data: EquipmentApiResponse<unknown>;
+  profile: A2UIDataProfile;
+  renderPlan: A2UIRenderPlan;
+};
+
+export type A2UISurfaceEnvelope = {
+  templateId: string;
+  version: string;
+  payload: A2UISurfaceEnvelopePayload;
+  surfaceConfig: A2UIComponentSurfaceConfig;
+  sourceIntent: string;
+  updatedAt: string;
+  meta: {
+    registryVersion: number;
+    decisionReason: string;
+    trace: string[];
+    strategy?: "derived_schema" | "legacy_schema_spec" | "fallback";
+    score?: number;
+    candidates?: A2UICandidateTrace[];
+    mapping?: A2UIMappingDecision;
+  };
 };

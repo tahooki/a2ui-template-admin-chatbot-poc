@@ -3,10 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { A2UIDemoRenderer } from "./a2ui-demo-renderer";
-import { buildA2UIRenderPlan } from "./render-plan-builder";
-import { chooseApiForPrompt, fetchDemoApi } from "./mock-api-client";
 import styles from "./styles.module.css";
-import type { A2UIDataProfile, A2UIRenderPlan, A2UITemplateRegistration, EquipmentApiResponse } from "./template-types";
+import type {
+  A2UICandidateTrace,
+  A2UIDataProfile,
+  A2UIRenderPlan,
+  A2UISurfaceEnvelope,
+  EquipmentApiResponse,
+} from "./template-types";
 
 type ChatSurface = {
   apiTitle: string;
@@ -16,17 +20,30 @@ type ChatSurface = {
   renderPlan: A2UIRenderPlan;
 };
 
+type ChatMatcherTrace = {
+  strategy?: string;
+  score?: number;
+  candidateCount?: number;
+  candidates?: A2UICandidateTrace[];
+};
+
 type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
   surface?: ChatSurface;
+  matcher?: ChatMatcherTrace;
+};
+
+type ParsedSseEvent = {
+  event: string;
+  data: Record<string, unknown>;
 };
 
 const introMessage: ChatMessage = {
   id: "intro",
   role: "assistant",
-  content: "보고 싶은 장비 데이터를 말하면 등록된 A2UI 화면으로 정리합니다.",
+  content: "보고 싶은 장비 데이터를 말하면 Agent가 API를 조회하고 등록된 A2UI로 정리합니다.",
 };
 
 const quickPrompts = [
@@ -40,95 +57,99 @@ const quickPrompts = [
   },
 ];
 
+const pendingText = "조회 중입니다.";
+
 function newId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function keyFromPath(path?: string) {
-  return path?.split(".").pop() ?? "";
-}
+function parseSseEvent(rawEvent: string): ParsedSseEvent | null {
+  const lines = rawEvent.split(/\r?\n/);
+  let event = "message";
+  const dataLines: string[] = [];
 
-function rowsFromData(data: EquipmentApiResponse<unknown>) {
-  return data.items.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)));
-}
-
-function value(row: Record<string, unknown>, path?: string) {
-  if (!path) return "";
-  return row[keyFromPath(path)] ?? "";
-}
-
-function textValue(row: Record<string, unknown>, path?: string) {
-  const fieldValue = value(row, path);
-  return typeof fieldValue === "string" && fieldValue.trim() ? fieldValue : "";
-}
-
-function stringField(row: Record<string, unknown>, key: string) {
-  const fieldValue = row[key];
-  return typeof fieldValue === "string" ? fieldValue : "";
-}
-
-function describeEquipmentRole({
-  category,
-  location,
-}: {
-  category: string;
-  location: string;
-}) {
-  if (category === "가공") {
-    if (location.includes("실험실")) {
-      return "실험실 또는 테스트 공정에서 사용하는 가공 장비로 보입니다.";
+  for (const line of lines) {
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim();
+      continue;
     }
-    return "생산 공정의 핵심 가공 작업을 담당하는 장비로 보입니다.";
-  }
-  if (category === "이송") {
-    if (location === "A동 1층") {
-      return "A동 1층 공정 안에서 장비 간 이동 작업을 보조하는 장비로 보입니다.";
+
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trimStart());
     }
-    return "공정 사이에서 자재나 부품을 옮기는 역할에 가까운 장비입니다.";
   }
-  if (category === "유틸리티") {
-    return "설비 운전에 필요한 순환 계통을 담당하는 장비로 분류되어 있습니다.";
+
+  if (!dataLines.length) return null;
+
+  try {
+    return { event, data: JSON.parse(dataLines.join("\n")) as Record<string, unknown> };
+  } catch {
+    return null;
   }
-  if (category === "검사") {
-    return "생산 결과물의 품질 확인이나 이상 감지에 쓰이는 장비로 볼 수 있습니다.";
-  }
-  return "카탈로그에서 기본 정보와 배치 위치를 확인할 수 있는 장비입니다.";
 }
 
-function buildFallbackMarkdownList({
-  data,
-  renderPlan,
-}: {
-  apiTitle: string;
-  data: EquipmentApiResponse<unknown>;
-  renderPlan: A2UIRenderPlan;
-}) {
-  const visibleRows = rowsFromData(data).slice(0, renderPlan.maxItems ?? 6);
-  const lines = visibleRows.map((row) => {
-    const title = String(value(row, renderPlan.fieldMapping.title) || row.name || row.title || row.id || "항목");
-    const category = stringField(row, "category");
-    const location = stringField(row, "location");
-    const content = textValue(row, renderPlan.fieldMapping.content);
-    const locationLine =
-      location && category
-        ? `${location}에 있는 ${category} 라인 장비입니다.`
-        : content || "카탈로그에 등록된 장비입니다.";
-    const roleLine = describeEquipmentRole({ category, location });
-    return `- ${title}\n  ${locationLine} ${roleLine}`;
-  });
-  const total = typeof data.total === "number" ? data.total : data.items.length;
+async function consumeSse(response: Response, onEvent: (event: ParsedSseEvent) => void) {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Chat stream is empty");
 
-  return `장비 카탈로그를 확인했어요. 현재 등록된 장비는 총 ${total}대입니다.\n\n${lines.join("\n\n")}`;
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary >= 0) {
+      const rawEvent = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const parsed = parseSseEvent(rawEvent);
+      if (parsed) onEvent(parsed);
+      boundary = buffer.indexOf("\n\n");
+    }
+  }
+
+  const parsed = parseSseEvent(buffer.trim());
+  if (parsed) onEvent(parsed);
+}
+
+function surfaceFromEnvelope(value: unknown): ChatSurface | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const envelope = value as Partial<A2UISurfaceEnvelope>;
+  const payload = envelope.payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  if (!payload.data || !payload.profile || !payload.renderPlan) return null;
+
+  return {
+    apiTitle: String(payload.apiTitle ?? "A2UI API"),
+    apiId: String(payload.apiId ?? envelope.templateId ?? "a2ui"),
+    data: payload.data,
+    profile: payload.profile,
+    renderPlan: payload.renderPlan,
+  };
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function matcherFromState(data: Record<string, unknown>): ChatMatcherTrace {
+  const candidates = Array.isArray(data.candidates) ? (data.candidates as A2UICandidateTrace[]) : undefined;
+  return {
+    strategy: typeof data.strategy === "string" ? data.strategy : undefined,
+    score: numberValue(data.score),
+    candidateCount: numberValue(data.candidateCount) ?? candidates?.length,
+    candidates,
+  };
 }
 
 export function ChatbotPanel({
-  templates,
   registryVersion,
   resetKey,
   width,
   onResizeStart,
 }: {
-  templates: A2UITemplateRegistration[];
   registryVersion: number;
   resetKey: number;
   width: number;
@@ -144,52 +165,94 @@ export function ChatbotPanel({
     async (query: string) => {
       const trimmed = query.trim();
       if (!trimmed) return;
+
+      const userMessage: ChatMessage = { id: newId(), role: "user", content: trimmed };
+      const assistantId = newId();
+      const assistantMessage: ChatMessage = { id: assistantId, role: "assistant", content: pendingText };
+      const history = messages.map(({ role, content }) => ({ role, content }));
+      let hasText = false;
+
       setIsRunning(true);
-      setMessages((current) => [...current, { id: newId(), role: "user", content: trimmed }]);
+      setMessages((current) => [...current, userMessage, assistantMessage]);
 
       try {
-        const apiId = chooseApiForPrompt(trimmed);
-        const result = await fetchDemoApi(apiId);
-        const { profile, renderPlan } = buildA2UIRenderPlan({
-          query: trimmed,
-          data: result.data,
-          templates,
-          registryVersion,
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: trimmed, history }),
         });
 
-        setMessages((current) => [
-          ...current,
-          {
-            id: newId(),
-            role: "assistant",
-            content: renderPlan.isFallback
-              ? buildFallbackMarkdownList({ apiTitle: result.title, data: result.data, renderPlan })
-              : `${result.title}입니다. 화면으로 정리했습니다.`,
-            surface: renderPlan.isFallback
-              ? undefined
-              : {
-                  apiTitle: result.title,
-                  apiId: result.apiId,
-                  data: result.data,
-                  profile,
-                  renderPlan,
-                },
-          },
-        ]);
+        if (!response.ok) {
+          throw new Error(`/api/chat failed with ${response.status}`);
+        }
+
+        await consumeSse(response, ({ event, data }) => {
+          if (event === "text" || event === "delta") {
+            const text = typeof data.text === "string" ? data.text : typeof data.delta === "string" ? data.delta : "";
+            if (!text) return;
+            const shouldAppend = hasText;
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      content: shouldAppend ? `${message.content}${text}` : text,
+                    }
+                  : message,
+              ),
+            );
+            hasText = true;
+            return;
+          }
+
+          if (event === "surface") {
+            const surface = surfaceFromEnvelope(data.surface ?? data);
+            if (!surface) return;
+            setMessages((current) =>
+              current.map((message) => (message.id === assistantId ? { ...message, surface } : message)),
+            );
+            return;
+          }
+
+          if (event === "state" && data.status === "matcher") {
+            const matcher = matcherFromState(data);
+            setMessages((current) =>
+              current.map((message) => (message.id === assistantId ? { ...message, matcher } : message)),
+            );
+            return;
+          }
+
+          if (event === "done" && (data.strategy || data.score || data.candidates)) {
+            const matcher = matcherFromState(data);
+            setMessages((current) =>
+              current.map((message) => (message.id === assistantId ? { ...message, matcher } : message)),
+            );
+            return;
+          }
+
+          if (event === "error") {
+            const text = typeof data.message === "string" ? data.message : "Agent 응답을 처리하는 중 오류가 발생했습니다.";
+            setMessages((current) =>
+              current.map((message) => (message.id === assistantId ? { ...message, content: text } : message)),
+            );
+          }
+        });
       } catch (error) {
-        setMessages((current) => [
-          ...current,
-          {
-            id: newId(),
-            role: "assistant",
-            content: error instanceof Error ? error.message : "조회 중 오류가 발생했습니다.",
-          },
-        ]);
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === assistantId
+              ? {
+                  ...message,
+                  content: error instanceof Error ? error.message : "조회 중 오류가 발생했습니다.",
+                }
+              : message,
+          ),
+        );
       } finally {
         setIsRunning(false);
       }
     },
-    [registryVersion, templates],
+    [messages],
   );
 
   useEffect(() => {
@@ -201,17 +264,18 @@ export function ChatbotPanel({
   }, [resetKey]);
 
   useEffect(() => {
-    const list = messageListRef.current;
-    if (!list) return;
+    const currentList = messageListRef.current;
+    if (!currentList) return;
+    const listElement: HTMLDivElement = currentList;
 
     function scrollToLatest() {
       const target =
-        list.querySelector<HTMLElement>("[data-latest-surface='true']") ??
-        list.querySelector<HTMLElement>("[data-latest-message='true']");
+        listElement.querySelector<HTMLElement>("[data-latest-surface='true']") ??
+        listElement.querySelector<HTMLElement>("[data-latest-message='true']");
       if (!target) return;
-      const listTop = list.getBoundingClientRect().top;
+      const listTop = listElement.getBoundingClientRect().top;
       const targetTop = target.getBoundingClientRect().top;
-      list.scrollTop += targetTop - listTop - 12;
+      listElement.scrollTop += targetTop - listTop - 12;
     }
 
     const animationFrame = window.requestAnimationFrame(scrollToLatest);
@@ -254,19 +318,24 @@ export function ChatbotPanel({
               {message.role === "user" ? "You" : message.role === "system" ? "Registry" : "A2UI Agent"}
             </span>
             <p>{message.content}</p>
+            {message.matcher?.strategy ? (
+              <div className={styles.matcherTrace} aria-label="Matcher trace">
+                <span>{message.matcher.strategy}</span>
+                {typeof message.matcher.score === "number" ? <span>{message.matcher.score.toFixed(2)}</span> : null}
+                {typeof message.matcher.candidateCount === "number" ? <span>{message.matcher.candidateCount} candidates</span> : null}
+              </div>
+            ) : null}
             {message.surface ? (
-              <>
-                <div
-                  className={styles.resultFrame}
-                  data-latest-surface={index === messages.length - 1 ? "true" : undefined}
-                >
-                  <A2UIDemoRenderer
-                    data={message.surface.data}
-                    profile={message.surface.profile}
-                    renderPlan={message.surface.renderPlan}
-                  />
-                </div>
-              </>
+              <div
+                className={styles.resultFrame}
+                data-latest-surface={index === messages.length - 1 ? "true" : undefined}
+              >
+                <A2UIDemoRenderer
+                  data={message.surface.data}
+                  profile={message.surface.profile}
+                  renderPlan={message.surface.renderPlan}
+                />
+              </div>
             ) : null}
           </div>
         ))}
