@@ -70,14 +70,14 @@ const laneGutter = 38;
 const canvasLeftInset = 110;
 const canvasRightInset = 130;
 const canvasWidth = canvasLeftInset + canvasRightInset + lanes.length * laneWidth + (lanes.length - 1) * laneGutter;
-const canvasHeight = 1420;
+const canvasHeight = 1480;
 const overviewZoom = 0.86;
 const focusZoom = 1;
 const minZoom = 0.65;
 const maxZoom = 1.25;
 const zoomStep = 0.1;
 const manualAutoFollowPauseMs = 1600;
-const messageLabelOffset = 38;
+const messageLabelOffset = 42;
 
 function laneX(actor: AgentFlowActor) {
   const index = lanes.findIndex((lane) => lane.id === actor);
@@ -127,9 +127,9 @@ const steps: SequenceStep[] = [
     to: "chat",
     label: "Emit matched summary",
     branch: "matched",
-    y: 1004,
+    y: 1050,
   },
-  { id: "surface", phase: "surface", events: ["surface"], from: "a2ui", to: "chat", label: "Emit SurfaceEnvelope", branch: "matched", y: 1072 },
+  { id: "surface", phase: "surface", events: ["surface"], from: "a2ui", to: "chat", label: "Emit SurfaceEnvelope", branch: "matched", y: 1118 },
   {
     id: "no-template",
     phase: "no_template",
@@ -138,7 +138,7 @@ const steps: SequenceStep[] = [
     to: "a2ui",
     label: "No compatible template",
     branch: "no_template",
-    y: 1164,
+    y: 1230,
   },
   {
     id: "fallback",
@@ -148,17 +148,17 @@ const steps: SequenceStep[] = [
     to: "chat",
     label: "Emit fallback text",
     branch: "no_template",
-    y: 1216,
+    y: 1292,
   },
-  { id: "error", phase: "error", events: ["error", "request_error", "response_error"], from: "a2ui", to: "chat", label: "Runtime error", branch: "error", y: 1298 },
+  { id: "error", phase: "error", events: ["error", "request_error", "response_error"], from: "a2ui", to: "chat", label: "Runtime error", branch: "error", y: 1380 },
 ];
 
 const branchBlocks: BranchBlock[] = [
-  { id: "general", label: "alt general chat", left: diagramLeft, width: diagramWidth, top: 390, height: 124 },
-  { id: "data", label: "else data task", left: diagramLeft, width: diagramWidth, top: 552, height: 386 },
-  { id: "matched", label: "then matched: SurfaceEnvelope", left: diagramLeft, width: diagramWidth, top: 954, height: 144 },
-  { id: "no_template", label: "else no template: fallback text", left: diagramLeft, width: diagramWidth, top: 1112, height: 136 },
-  { id: "error", label: "else error", left: diagramLeft, width: diagramWidth, top: 1264, height: 88 },
+  { id: "general", label: "alt general chat", left: diagramLeft, width: diagramWidth, top: 372, height: 152 },
+  { id: "data", label: "else data task", left: diagramLeft, width: diagramWidth, top: 526, height: 462 },
+  { id: "matched", label: "then matched: SurfaceEnvelope", left: diagramLeft, width: diagramWidth, top: 998, height: 158 },
+  { id: "no_template", label: "else no template: fallback text", left: diagramLeft, width: diagramWidth, top: 1176, height: 148 },
+  { id: "error", label: "else error", left: diagramLeft, width: diagramWidth, top: 1330, height: 84 },
 ];
 
 function isDataOutcomeBranch(branch?: AgentFlowBranch) {
@@ -565,6 +565,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true }: 
             {branchBlocks.map((block) => (
               <div
                 className={branchClass(block, branches, active)}
+                data-sequence-branch={block.id}
                 key={block.id}
                 style={{ top: block.top, height: block.height, left: block.left, width: block.width }}
               >
@@ -588,6 +589,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true }: 
               {visibleSteps.map((step) => (
                 <span
                   className={messageLineClass(step, completed, active)}
+                  data-sequence-line={step.id}
                   key={`${step.id}-line`}
                   style={messageLineStyle(step)}
                 />
@@ -599,6 +601,8 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true }: 
               return (
                 <div
                   className={stepClass(step, completed, active)}
+                  data-sequence-branch={step.branch ?? "main"}
+                  data-sequence-step={step.id}
                   key={`${step.id}-label`}
                   style={{ left: position.left, top: position.top }}
                 >
