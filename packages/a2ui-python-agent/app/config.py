@@ -38,9 +38,20 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _bool_env(name: str, default: bool = False) -> bool:
+    value = _env(name)
+    if not value:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     mcp_url: str = _env("A2UI_MCP_URL", "http://localhost:4100/mcp")
+    a2a_url: str = _env("A2UI_A2A_URL", "http://localhost:3000/api/a2a")
+    a2a_enabled: bool = _bool_env("A2UI_A2A_ENABLED", False)
+    a2a_fallback_to_mcp: bool = _bool_env("A2UI_A2A_FALLBACK_TO_MCP", True)
+    a2a_token: str = _env("A2UI_A2A_TOKEN")
     next_api_base_url: str = _env("A2UI_NEXT_API_BASE_URL", "http://localhost:3000")
     request_timeout_seconds: float = _float_env("A2UI_AGENT_TIMEOUT_SECONDS", 6)
     openai_api_key: str = _env("OPENAI_API_KEY")

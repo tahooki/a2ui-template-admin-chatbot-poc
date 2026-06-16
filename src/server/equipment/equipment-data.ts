@@ -1,49 +1,85 @@
-import type { EquipmentCatalogItem, EquipmentStatusItem } from "@/features/a2ui-template-poc/template-types";
+type EquipmentSource = "catalog" | "status";
 
-const equipmentTypes = [
-  { category: "가공", imageUrl: "/images/a2ui-template-poc/cnc.svg", label: "CNC 가공기" },
-  { category: "이송", imageUrl: "/images/a2ui-template-poc/robot-arm.svg", label: "로봇 이송암" },
-  { category: "유틸리티", imageUrl: "/images/a2ui-template-poc/pump.svg", label: "순환 펌프" },
-  { category: "검사", imageUrl: "/images/a2ui-template-poc/inspection.svg", label: "비전 검사기" },
-];
+const sourceEnvByType: Record<EquipmentSource, string[]> = {
+  catalog: ["A2UI_EQUIPMENT_CATALOG_API_URL", "EQUIPMENT_CATALOG_API_URL"],
+  status: ["A2UI_EQUIPMENT_STATUS_API_URL", "EQUIPMENT_STATUS_API_URL"],
+};
 
-const locations = ["A동 1층", "A동 2층", "B동 1층", "B동 3층", "C동 실험실"];
-
-export const equipmentCatalogItems: EquipmentCatalogItem[] = Array.from({ length: 44 }, (_, index) => {
-  const type = equipmentTypes[index % equipmentTypes.length];
-  const serial = String(index + 1).padStart(2, "0");
+function readSourceUrl(source: EquipmentSource) {
+  const envNames = sourceEnvByType[source];
+  const value = envNames.map((name) => process.env[name]).find(Boolean);
   return {
-    id: `eq-catalog-${serial}`,
-    name: `${type.label} ${serial}`,
-    imageUrl: type.imageUrl,
-    description: `${type.category} 라인에서 사용하는 핵심 장비입니다. 작업 상태와 기본 정보를 카탈로그에서 빠르게 확인합니다.`,
-    category: type.category,
-    location: locations[index % locations.length],
+    envNames,
+    value,
   };
-});
+}
 
-export const equipmentStatusItems: EquipmentStatusItem[] = Array.from({ length: 44 }, (_, index) => {
-  const type = equipmentTypes[index % equipmentTypes.length];
-  const serial = String(index + 1).padStart(2, "0");
-  return {
-    id: `eq-status-${serial}`,
-    name: `${type.label} ${serial}`,
-    isOnline: index % 7 !== 0,
-    isRunning: index % 4 !== 0,
-    hasAlarm: index % 9 === 0,
-    needsInspection: index % 11 === 0 || index % 13 === 0,
-    isReserved: index % 5 === 0,
-  };
-});
+function appendRequestSearchParams(target: URL, request: Request) {
+  const requestUrl = new URL(request.url);
+  for (const [key, value] of requestUrl.searchParams.entries()) {
+    if (!target.searchParams.has(key)) {
+      target.searchParams.set(key, value);
+    }
+  }
+}
 
-export function paginate<T>(items: T[], page = 1, pageSize = 44) {
-  const safePage = Math.max(1, page);
-  const safeSize = Math.min(Math.max(1, pageSize), 100);
-  const start = (safePage - 1) * safeSize;
-  return {
-    items: items.slice(start, start + safeSize),
-    total: items.length,
-    page: safePage,
-    pageSize: safeSize,
-  };
+export async function proxyEquipmentData(source: EquipmentSource, request: Request) {
+  const { envNames, value } = readSourceUrl(source);
+  if (!value) {
+    return Response.json(
+      {
+        error: "equipment_api_not_configured",
+        message: "Equipment data source is not configured.",
+        requiredEnv: envNames,
+      },
+      { status: 503 },
+    );
+  }
+
+  let target: URL;
+  try {
+    target = new URL(value);
+  } catch {
+    return Response.json(
+      {
+        error: "equipment_api_invalid_url",
+        message: "Equipment data source URL must be an absolute URL.",
+        requiredEnv: envNames,
+      },
+      { status: 500 },
+    );
+  }
+
+  appendRequestSearchParams(target, request);
+
+  try {
+    const response = await fetch(target, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      const details = await response.text().catch(() => "");
+      return Response.json(
+        {
+          error: "equipment_api_request_failed",
+          message: "Equipment data source request failed.",
+          status: response.status,
+          details,
+        },
+        { status: 502 },
+      );
+    }
+
+    const data = (await response.json()) as unknown;
+    return Response.json(data);
+  } catch (error) {
+    return Response.json(
+      {
+        error: "equipment_api_request_error",
+        message: "Equipment data source request errored.",
+        details: error instanceof Error ? error.message : String(error),
+      },
+      { status: 502 },
+    );
+  }
 }

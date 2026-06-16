@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { A2UIDemoRenderer } from "./a2ui-demo-renderer";
 import styles from "./styles.module.css";
+import type { ChatFlowSourceEvent } from "./agent-flow-types";
 import type {
   A2UICandidateTrace,
   A2UIDataProfile,
@@ -149,11 +150,13 @@ export function ChatbotPanel({
   resetKey,
   width,
   onResizeStart,
+  onFlowEvent,
 }: {
   registryVersion: number;
   resetKey: number;
   width: number;
   onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onFlowEvent?: (event: ChatFlowSourceEvent) => void;
 }) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([introMessage]);
@@ -168,12 +171,27 @@ export function ChatbotPanel({
 
       const userMessage: ChatMessage = { id: newId(), role: "user", content: trimmed };
       const assistantId = newId();
+      const turnId = `turn-${assistantId}`;
       const assistantMessage: ChatMessage = { id: assistantId, role: "assistant", content: pendingText };
       const history = messages.map(({ role, content }) => ({ role, content }));
       let hasText = false;
+      let emittedError = false;
+
+      function emitFlow(kind: ChatFlowSourceEvent["kind"], event: string, data: Record<string, unknown> = {}) {
+        onFlowEvent?.({
+          kind,
+          event,
+          data,
+          turnId,
+          query: trimmed,
+          registryVersion,
+          at: new Date().toISOString(),
+        });
+      }
 
       setIsRunning(true);
       setMessages((current) => [...current, userMessage, assistantMessage]);
+      emitFlow("local", "request_start", { message: trimmed });
 
       try {
         const response = await fetch("/api/chat", {
@@ -183,10 +201,17 @@ export function ChatbotPanel({
         });
 
         if (!response.ok) {
-          throw new Error(`/api/chat failed with ${response.status}`);
+          emittedError = true;
+          const message = `/api/chat failed with ${response.status}`;
+          emitFlow("local", "response_error", { message, status: response.status });
+          throw new Error(message);
         }
 
+        emitFlow("local", "response_open", { status: response.status });
+
         await consumeSse(response, ({ event, data }) => {
+          emitFlow("sse", event, data);
+
           if (event === "text" || event === "delta") {
             const text = typeof data.text === "string" ? data.text : typeof data.delta === "string" ? data.delta : "";
             if (!text) return;
@@ -238,6 +263,11 @@ export function ChatbotPanel({
           }
         });
       } catch (error) {
+        if (!emittedError) {
+          emitFlow("local", "request_error", {
+            message: error instanceof Error ? error.message : "조회 중 오류가 발생했습니다.",
+          });
+        }
         setMessages((current) =>
           current.map((message) =>
             message.id === assistantId
@@ -252,7 +282,7 @@ export function ChatbotPanel({
         setIsRunning(false);
       }
     },
-    [messages],
+    [messages, onFlowEvent, registryVersion],
   );
 
   useEffect(() => {

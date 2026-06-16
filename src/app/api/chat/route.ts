@@ -26,12 +26,16 @@ function errorStream(message: string, details?: string) {
   return streamResponse(
     new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(encoder.encode(sse("error", { message, details })));
-        controller.enqueue(encoder.encode(sse("done", { mode: "error" })));
+        controller.enqueue(encoder.encode(sse("error", { message, details, branch: "error" })));
+        controller.enqueue(encoder.encode(sse("done", { mode: "error", branch: "error" })));
         controller.close();
       },
     }),
   );
+}
+
+function isDevelopmentErrorProbe(message: string) {
+  return process.env.NODE_ENV !== "production" && ["오류 테스트", "/error", "__force_error__"].includes(message);
 }
 
 async function proxyPythonAgent(body: ChatRequestBody) {
@@ -67,6 +71,9 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as ChatRequestBody;
   const message = (body.message ?? body.input ?? "").trim();
   if (!message) return Response.json({ error: "message is required" }, { status: 400 });
+  if (isDevelopmentErrorProbe(message)) {
+    return errorStream("Agent 오류 시나리오를 재현했습니다.", "Development-only Flow Board error probe.");
+  }
 
   return proxyPythonAgent({ ...body, message });
 }

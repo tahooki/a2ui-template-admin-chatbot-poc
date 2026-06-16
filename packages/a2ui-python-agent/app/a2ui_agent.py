@@ -4,6 +4,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel
 
+from .a2a_client import A2UIA2AClient, extract_a2ui_result
 from .config import settings
 
 
@@ -101,7 +102,50 @@ class A2UIMcpClient:
             return self._decode_tool_result(response.json())
 
 
-async def render_or_fallback(
+async def _render_via_a2a(
+    query: str,
+    api_id: str,
+    data: dict[str, Any],
+    profile: dict[str, Any],
+    fallback_text: str,
+    derived_schema: dict[str, Any] | None = None,
+    sample_data_preview: dict[str, Any] | None = None,
+    a2a_url: str | None = None,
+) -> A2UIResponse:
+    client = A2UIA2AClient(a2a_url)
+    payload = A2UIA2AClient.render_request(
+        query=query,
+        api_id=api_id,
+        data=data,
+        profile=profile,
+        fallback_text=fallback_text,
+        derived_schema=derived_schema,
+        sample_data_preview=sample_data_preview,
+    )
+    result = extract_a2ui_result(await client.send_message(payload))
+    if result.get("type") == "surface" and result.get("surface"):
+        return A2UIResponse(
+            type="surface",
+            surface=result.get("surface"),
+            reason=result.get("reason"),
+            strategy=result.get("strategy"),
+            score=result.get("score"),
+            candidates=result.get("candidates"),
+            mapping=result.get("mapping"),
+        )
+
+    return A2UIResponse(
+        type="text_fallback",
+        text=result.get("text") or fallback_text,
+        reason=result.get("reason") or "No matching A2UI surface artifact.",
+        strategy=result.get("strategy"),
+        score=result.get("score"),
+        candidates=result.get("candidates"),
+        mapping=result.get("mapping"),
+    )
+
+
+async def _render_via_mcp(
     query: str,
     api_id: str,
     data: dict[str, Any],
@@ -111,73 +155,112 @@ async def render_or_fallback(
     sample_data_preview: dict[str, Any] | None = None,
     mcp_url: str | None = None,
 ) -> A2UIResponse:
-    try:
-        client = A2UIMcpClient(mcp_url)
-        decision = await client.call_tool(
-            "a2ui.recommendTemplate",
-            {
+    client = A2UIMcpClient(mcp_url)
+    decision = await client.call_tool(
+        "a2ui.recommendTemplate",
+        {
+            "query": query,
+            "apiId": api_id,
+            "derivedSchema": derived_schema,
+            "sampleDataPreview": sample_data_preview,
+            "options": {
+                "includeTrace": True,
+                "allowLegacyIntentFallback": True,
+            },
+            "facts": {
                 "query": query,
                 "apiId": api_id,
-                "derivedSchema": derived_schema,
-                "sampleDataPreview": sample_data_preview,
-                "options": {
-                    "includeTrace": True,
-                    "allowLegacyIntentFallback": True,
-                },
-                "facts": {
-                    "query": query,
-                    "apiId": api_id,
-                    "profile": profile,
-                },
+                "profile": profile,
             },
-        )
+        },
+    )
 
-        if decision.get("mode") != "render_surface" or not decision.get("templateId"):
-            return A2UIResponse(
-                type="text_fallback",
-                text=fallback_text,
-                reason=decision.get("reason") or "No matching A2UI template.",
-                strategy=decision.get("strategy"),
-                score=decision.get("score"),
-                candidates=decision.get("candidates"),
-                mapping=decision.get("mapping"),
-            )
-
-        surface = await client.call_tool(
-            "a2ui.resolveTemplateData",
-            {
-                "templateId": decision["templateId"],
-                "mapping": decision.get("mapping"),
-                "context": {
-                    "query": query,
-                    "apiId": api_id,
-                    "data": data,
-                    "profile": profile,
-                    "derivedSchema": derived_schema,
-                    "sampleDataPreview": sample_data_preview,
-                    "mapping": decision.get("mapping"),
-                },
-            },
-        )
-        if "error" in surface:
-            return A2UIResponse(
-                type="text_fallback",
-                text=fallback_text,
-                reason=surface["error"],
-                strategy=decision.get("strategy"),
-                score=decision.get("score"),
-                candidates=decision.get("candidates"),
-                mapping=decision.get("mapping"),
-            )
-
+    if decision.get("mode") != "render_surface" or not decision.get("templateId"):
         return A2UIResponse(
-            type="surface",
-            surface=surface,
-            reason=decision.get("reason"),
+            type="text_fallback",
+            text=fallback_text,
+            reason=decision.get("reason") or "No matching A2UI template.",
             strategy=decision.get("strategy"),
             score=decision.get("score"),
             candidates=decision.get("candidates"),
             mapping=decision.get("mapping"),
+        )
+
+    surface = await client.call_tool(
+        "a2ui.resolveTemplateData",
+        {
+            "templateId": decision["templateId"],
+            "mapping": decision.get("mapping"),
+            "context": {
+                "query": query,
+                "apiId": api_id,
+                "data": data,
+                "profile": profile,
+                "derivedSchema": derived_schema,
+                "sampleDataPreview": sample_data_preview,
+                "mapping": decision.get("mapping"),
+            },
+        },
+    )
+    if "error" in surface:
+        return A2UIResponse(
+            type="text_fallback",
+            text=fallback_text,
+            reason=surface["error"],
+            strategy=decision.get("strategy"),
+            score=decision.get("score"),
+            candidates=decision.get("candidates"),
+            mapping=decision.get("mapping"),
+        )
+
+    return A2UIResponse(
+        type="surface",
+        surface=surface,
+        reason=decision.get("reason"),
+        strategy=decision.get("strategy"),
+        score=decision.get("score"),
+        candidates=decision.get("candidates"),
+        mapping=decision.get("mapping"),
+    )
+
+
+async def render_or_fallback(
+    query: str,
+    api_id: str,
+    data: dict[str, Any],
+    profile: dict[str, Any],
+    fallback_text: str,
+    derived_schema: dict[str, Any] | None = None,
+    sample_data_preview: dict[str, Any] | None = None,
+    mcp_url: str | None = None,
+    a2a_url: str | None = None,
+) -> A2UIResponse:
+    if settings.a2a_enabled:
+        try:
+            return await _render_via_a2a(
+                query,
+                api_id,
+                data,
+                profile,
+                fallback_text,
+                derived_schema,
+                sample_data_preview,
+                a2a_url,
+            )
+        except Exception as exc:
+            if not settings.a2a_fallback_to_mcp:
+                return A2UIResponse(type="text_fallback", text=fallback_text, reason=str(exc))
+
+    try:
+        return await _render_via_mcp(
+            query,
+            api_id,
+            data,
+            profile,
+            fallback_text,
+            derived_schema,
+            sample_data_preview,
+            mcp_url,
         )
     except Exception as exc:
         return A2UIResponse(type="text_fallback", text=fallback_text, reason=str(exc))

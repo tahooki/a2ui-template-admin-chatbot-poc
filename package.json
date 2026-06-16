@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "mcp:dev": "node packages/a2ui-admin-mcp-server/server.mjs",
-    "python-agent:dev": "cd packages/a2ui-python-agent && python -m uvicorn app.main:app --reload --port 8000",
+    "dev:all": "node scripts/dev-all.mjs",
+    "mcp:dev": "A2UI_NEXT_APP_URL=http://localhost:3001 node packages/a2ui-admin-mcp-server/server.mjs",
+    "equipment-source:dev": "PYTHONPATH=packages/equipment-data-source packages/a2ui-python-agent/.venv/bin/python -m uvicorn app.main:app --reload --port 8100 --app-dir packages/equipment-data-source",
+    "python-agent:dev": "A2UI_NEXT_API_BASE_URL=http://localhost:3001 A2UI_A2A_URL=http://localhost:3001/api/a2a PYTHONPATH=packages/a2ui-python-agent packages/a2ui-python-agent/.venv/bin/python -m uvicorn app.main:app --reload --port 8000 --app-dir packages/a2ui-python-agent",
     "python-agent:test": "PYTHONPATH=packages/a2ui-python-agent python3 -m unittest discover packages/a2ui-python-agent/tests",
     "build": "next build",
     "start": "next start",

@@ -1,12 +1,18 @@
 import json
 import re
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 import httpx
 
 from ..config import settings
 
 EquipmentApiId = Literal["equipment-catalog", "equipment-status"]
+
+
+class EquipmentIntentClassification(TypedDict):
+    api_id: EquipmentApiId | None
+    confidence: float
+    reason: str | None
 
 
 def is_llm_available() -> bool:
@@ -66,10 +72,10 @@ async def _chat_completion(
         return None
 
 
-async def choose_equipment_api_with_llm(
+async def classify_equipment_intent_with_llm(
     message: str,
     history: list[dict[str, Any]] | None = None,
-) -> EquipmentApiId | None:
+) -> EquipmentIntentClassification | None:
     content = await _chat_completion(
         [
             {
@@ -78,7 +84,8 @@ async def choose_equipment_api_with_llm(
                     "You classify Korean equipment chat requests for an A2UI demo agent. "
                     "Return JSON only. Use equipment-catalog when the user wants a device/equipment list, catalog, "
                     "cards, images, photos, names, or descriptions. Use equipment-status when the user wants status, "
-                    "online/running/alarm/inspection/reservation booleans, or operational state."
+                    "online/running/alarm/inspection/reservation booleans, or operational state. "
+                    "For greetings, small talk, unclear requests, or non-equipment requests, return apiId as null."
                 ),
             },
             {
@@ -86,7 +93,7 @@ async def choose_equipment_api_with_llm(
                 "content": (
                     f"Recent history: {_compact_json((history or [])[-6:], 2000)}\n"
                     f"User message: {message}\n"
-                    'Respond as {"apiId":"equipment-catalog|equipment-status","confidence":0.0,"reason":"short"}'
+                    'Respond as {"apiId":"equipment-catalog|equipment-status|null","confidence":0.0,"reason":"short"}'
                 ),
             },
         ],
@@ -103,11 +110,52 @@ async def choose_equipment_api_with_llm(
 
     api_id = parsed.get("apiId")
     confidence = parsed.get("confidence", 0)
-    if api_id not in ("equipment-catalog", "equipment-status"):
-        return None
-    if not isinstance(confidence, (int, float)) or confidence < 0.55:
-        return None
-    return api_id
+    reason = parsed.get("reason")
+    normalized_api_id = api_id if api_id in ("equipment-catalog", "equipment-status") else None
+    normalized_confidence = float(confidence) if isinstance(confidence, (int, float)) else 0.0
+
+    if normalized_api_id and normalized_confidence >= 0.55:
+        return {
+            "api_id": normalized_api_id,
+            "confidence": normalized_confidence,
+            "reason": reason if isinstance(reason, str) else None,
+        }
+
+    return {
+        "api_id": None,
+        "confidence": normalized_confidence,
+        "reason": reason if isinstance(reason, str) else None,
+    }
+
+
+async def generate_general_response_with_llm(
+    *,
+    message: str,
+    history: list[dict[str, Any]] | None = None,
+) -> str | None:
+    return await _chat_completion(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You are a Korean demo chat agent for an A2UI equipment console. "
+                    "The current user message was classified as non-equipment or unclear. "
+                    "Reply naturally and briefly. Do not pretend to have checked equipment data. "
+                    "Invite the user to ask for equipment status or equipment list if useful."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Recent history: {_compact_json((history or [])[-6:], 2000)}\n"
+                    f"User message: {message}\n"
+                    "Write one short Korean response."
+                ),
+            },
+        ],
+        temperature=0.3,
+        max_tokens=220,
+    )
 
 
 async def generate_equipment_fallback_text(

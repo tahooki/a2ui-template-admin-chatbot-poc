@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .config import settings
-from .orchestrate import run_chat_turn, stream_chat_turn
+from .orchestrate import AgentRuntimeError, run_chat_turn, stream_chat_turn
 
 
 class ChatRequest(BaseModel):
@@ -38,6 +38,9 @@ async def health() -> dict[str, Any]:
         "ok": True,
         "name": "a2ui-template-python-agent",
         "mcpUrl": settings.mcp_url,
+        "a2aUrl": settings.a2a_url,
+        "a2aEnabled": settings.a2a_enabled,
+        "a2aFallbackToMcp": settings.a2a_fallback_to_mcp,
         "nextApiBaseUrl": settings.next_api_base_url,
         "llmConfigured": bool(settings.openai_api_key),
         "openaiModel": settings.openai_model,
@@ -46,7 +49,10 @@ async def health() -> dict[str, Any]:
 
 @app.post("/chat")
 async def chat(body: ChatRequest) -> dict[str, Any]:
-    return await run_chat_turn(_message(body), body.history)
+    try:
+        return await run_chat_turn(_message(body), body.history)
+    except AgentRuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/chat/stream")
