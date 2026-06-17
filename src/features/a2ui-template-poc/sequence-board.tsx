@@ -71,7 +71,7 @@ const laneGutter = 38;
 const canvasLeftInset = 110;
 const canvasRightInset = 130;
 const canvasWidth = canvasLeftInset + canvasRightInset + lanes.length * laneWidth + (lanes.length - 1) * laneGutter;
-const canvasHeight = 1760;
+const canvasHeight = 1786;
 const overviewZoom = 0.86;
 const focusZoom = 1;
 const minZoom = 0.65;
@@ -93,9 +93,9 @@ const steps: SequenceStep[] = [
   { id: "request", phase: "request", events: ["request_start"], from: "chat", to: "next", label: "POST /api/chat", y: 124 },
   { id: "bridge", phase: "bridge", events: ["response_open"], from: "next", to: "main_agent", label: "Open /chat/stream", y: 194 },
   { id: "planning", phase: "planning", events: ["state:planning"], from: "main_agent", to: "main_agent", label: "Plan turn", y: 264 },
-  { id: "intent", phase: "intent", events: ["state:intent"], from: "main_agent", to: "llm", label: "Intent classify", y: 334 },
-  { id: "general-llm", phase: "general_chat", events: ["llm:answer"], from: "llm", to: "main_agent", label: "Text answer", branch: "general", y: 432 },
-  { id: "general-stream", phase: "general_chat", events: ["text", "delta"], from: "main_agent", to: "chat", label: "Stream to chat", branch: "general", y: 486 },
+  { id: "intent", phase: "intent", events: ["state:intent"], from: "main_agent", to: "llm", label: "Intent classify", y: 360 },
+  { id: "general-llm", phase: "general_chat", events: ["llm:answer"], from: "llm", to: "main_agent", label: "Text answer", branch: "general", y: 458 },
+  { id: "general-stream", phase: "general_chat", events: ["text", "delta"], from: "main_agent", to: "chat", label: "Stream to chat", branch: "general", y: 512 },
   {
     id: "business-tool-selected",
     phase: "intent",
@@ -104,7 +104,7 @@ const steps: SequenceStep[] = [
     to: "main_agent",
     label: "Choose business API tool",
     branch: "data",
-    y: 574,
+    y: 600,
   },
   {
     id: "business-tool-call",
@@ -114,7 +114,7 @@ const steps: SequenceStep[] = [
     to: "business_db",
     label: "Call get_equipment_*",
     branch: "data",
-    y: 642,
+    y: 668,
   },
   {
     id: "business-tool-result",
@@ -124,7 +124,7 @@ const steps: SequenceStep[] = [
     to: "main_agent",
     label: "Business tool result",
     branch: "data",
-    y: 710,
+    y: 736,
   },
   {
     id: "a2ui-tool-selected",
@@ -134,7 +134,7 @@ const steps: SequenceStep[] = [
     to: "main_agent",
     label: "Choose a2ui_render",
     branch: "data",
-    y: 778,
+    y: 804,
   },
   {
     id: "a2ui-tool-call",
@@ -145,7 +145,7 @@ const steps: SequenceStep[] = [
     label: "Run a2ui_render",
     branch: "data",
     a2uiSubstep: true,
-    y: 846,
+    y: 872,
   },
   {
     id: "profile",
@@ -156,7 +156,7 @@ const steps: SequenceStep[] = [
     label: "Build profile / schema",
     branch: "data",
     a2uiSubstep: true,
-    y: 914,
+    y: 940,
   },
   {
     id: "registry-request",
@@ -166,7 +166,7 @@ const steps: SequenceStep[] = [
     to: "registry",
     label: "Load template contracts",
     branch: "data",
-    y: 982,
+    y: 1008,
   },
   {
     id: "registry-loaded",
@@ -176,9 +176,9 @@ const steps: SequenceStep[] = [
     to: "a2ui",
     label: "Template contracts loaded",
     branch: "data",
-    y: 1050,
+    y: 1076,
   },
-  { id: "matcher", phase: "matcher", events: ["state:matcher"], from: "a2ui", to: "a2ui", label: "Match template / fields", branch: "data", a2uiSubstep: true, y: 1118 },
+  { id: "matcher", phase: "matcher", events: ["state:matcher"], from: "a2ui", to: "a2ui", label: "Match template / fields", branch: "data", a2uiSubstep: true, y: 1144 },
   {
     id: "a2ui-tool-result",
     phase: "matcher",
@@ -188,7 +188,7 @@ const steps: SequenceStep[] = [
     label: "a2ui_render result",
     branch: "data",
     a2uiSubstep: true,
-    y: 1186,
+    y: 1212,
   },
   {
     id: "matched-summary",
@@ -198,7 +198,7 @@ const steps: SequenceStep[] = [
     to: "chat",
     label: "Return text summary",
     branch: "matched",
-    y: 1316,
+    y: 1342,
   },
   {
     id: "surface",
@@ -208,7 +208,7 @@ const steps: SequenceStep[] = [
     to: "chat",
     label: "Return SurfaceEnvelope",
     branch: "matched",
-    y: 1384,
+    y: 1410,
   },
   {
     id: "no-template",
@@ -218,7 +218,7 @@ const steps: SequenceStep[] = [
     to: "a2ui",
     label: "No compatible template",
     branch: "no_template",
-    y: 1496,
+    y: 1522,
   },
   {
     id: "fallback",
@@ -228,17 +228,17 @@ const steps: SequenceStep[] = [
     to: "chat",
     label: "Emit fallback text",
     branch: "no_template",
-    y: 1558,
+    y: 1584,
   },
-  { id: "error", phase: "error", events: ["error", "request_error", "response_error"], from: "main_agent", to: "chat", label: "Runtime error", branch: "error", y: 1646 },
+  { id: "error", phase: "error", events: ["error", "request_error", "response_error"], from: "main_agent", to: "chat", label: "Runtime error", branch: "error", y: 1672 },
 ];
 
 const branchBlocks: BranchBlock[] = [
-  { id: "general", label: "alt general chat", left: diagramLeft, width: diagramWidth, top: 372, height: 152 },
-  { id: "data", label: "else data task", left: diagramLeft, width: diagramWidth, top: 526, height: 704 },
-  { id: "matched", label: "then matched: SurfaceEnvelope", left: diagramLeft, width: diagramWidth, top: 1264, height: 158 },
-  { id: "no_template", label: "else no template: fallback text", left: diagramLeft, width: diagramWidth, top: 1442, height: 148 },
-  { id: "error", label: "else error", left: diagramLeft, width: diagramWidth, top: 1596, height: 84 },
+  { id: "general", label: "alt general chat", left: diagramLeft, width: diagramWidth, top: 398, height: 152 },
+  { id: "data", label: "else data task", left: diagramLeft, width: diagramWidth, top: 552, height: 704 },
+  { id: "matched", label: "then matched: SurfaceEnvelope", left: diagramLeft, width: diagramWidth, top: 1290, height: 158 },
+  { id: "no_template", label: "else no template: fallback text", left: diagramLeft, width: diagramWidth, top: 1468, height: 148 },
+  { id: "error", label: "else error", left: diagramLeft, width: diagramWidth, top: 1622, height: 84 },
 ];
 
 function isDataOutcomeBranch(branch?: AgentFlowBranch) {
