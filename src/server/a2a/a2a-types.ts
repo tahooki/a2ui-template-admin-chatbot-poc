@@ -71,6 +71,7 @@ export type A2ARenderRequestData = {
   apiId?: EquipmentApiId | string;
   facts?: Record<string, unknown>;
   data?: unknown;
+  displayData?: unknown;
   toolMetadata?: Record<string, unknown>;
   sampleDataPreview?: SampleDataPreview;
   derivedSchema?: DerivedSchema;

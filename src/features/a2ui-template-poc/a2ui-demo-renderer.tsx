@@ -1,4 +1,5 @@
 import styles from "./styles.module.css";
+import { COMMON_STATUS_TEMPLATE_ID } from "./initial-templates";
 import type { A2UIDataProfile, A2UIRenderPlan, EquipmentApiResponse } from "./template-types";
 
 function keyFromPath(path?: string) {
@@ -37,7 +38,8 @@ function textValue(row: Record<string, unknown>, path?: string) {
   return typeof fieldValue === "string" && fieldValue.trim() ? fieldValue : "";
 }
 
-function surfaceTitle(viewType: string) {
+function surfaceTitle(viewType: string, componentId: string) {
+  if (componentId === COMMON_STATUS_TEMPLATE_ID) return "공용 장비 상태 템플릿";
   if (viewType === "statusBooleanList") return "장비 상태";
   if (viewType === "imageCardList") return "장비 목록";
   return "장비 목록";
@@ -56,15 +58,28 @@ export function A2UIDemoRenderer({
   const maxItems = renderPlan.maxItems ?? 6;
   const visibleRows = rows.slice(0, maxItems);
   const booleanFlags = renderPlan.fieldMapping.booleanFlags?.slice(0, 5) ?? [];
+  const isCommonStatusTemplate = renderPlan.selectedComponentId === COMMON_STATUS_TEMPLATE_ID;
 
   return (
-    <div className={`${styles.surface} ${styles[`surface_${renderPlan.viewType}`]}`}>
+    <div
+      className={`${styles.surface} ${styles[`surface_${renderPlan.viewType}`]} ${
+        isCommonStatusTemplate ? styles.surface_commonStatusTemplate : ""
+      }`}
+    >
       <div className={styles.surfaceHeader}>
         <div>
-          <span className={styles.surfaceLabel}>A2UI</span>
-          <h4>{surfaceTitle(renderPlan.viewType)}</h4>
+          <span className={styles.surfaceLabel}>{isCommonStatusTemplate ? "A2UI FIXED TEMPLATE" : "A2UI"}</span>
+          <h4>{surfaceTitle(renderPlan.viewType, renderPlan.selectedComponentId)}</h4>
         </div>
       </div>
+
+      {isCommonStatusTemplate ? (
+        <div className={styles.commonTemplateSummary} aria-label="Fixed A2UI template summary">
+          <span>template {COMMON_STATUS_TEMPLATE_ID}</span>
+          <span>{profile.rowCount.toLocaleString()} rows</span>
+          <span>{profile.fields.length.toLocaleString()} fields</span>
+        </div>
+      ) : null}
 
       {renderPlan.viewType === "statusBooleanList" ? (
         <div className={styles.statusTable} role="table" aria-label="Equipment status boolean list">

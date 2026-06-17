@@ -38,6 +38,7 @@ class A2UIA2AClient:
         query: str,
         api_id: str,
         data: dict[str, Any],
+        display_data: dict[str, Any] | None = None,
         profile: dict[str, Any],
         fallback_text: str,
         derived_schema: dict[str, Any] | None = None,
@@ -52,6 +53,8 @@ class A2UIA2AClient:
             "profile": profile,
             "fallbackText": fallback_text,
         }
+        if display_data is not None:
+            facts["displayData"] = display_data
         return {
             "configuration": {
                 "acceptedOutputModes": [A2A_SURFACE, "text/plain"],
@@ -70,6 +73,8 @@ class A2UIA2AClient:
                             "query": query,
                             "intentKey": intent_key,
                             "facts": facts,
+                            "data": data,
+                            "displayData": display_data,
                             "sampleDataPreview": sample_data_preview,
                             "derivedSchema": derived_schema,
                             "fallbackText": fallback_text,

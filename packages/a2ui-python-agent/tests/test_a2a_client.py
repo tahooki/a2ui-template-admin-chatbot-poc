@@ -84,10 +84,12 @@ class A2AClientTest(unittest.TestCase):
 
     def test_render_request_preserves_tool_metadata_in_facts(self) -> None:
         data = {"items": [{"id": "eq-1", "isOnline": True}], "total": 1, "page": 1, "pageSize": 44}
+        display_data = {"items": [{"id": "eq-1", "name": "CNC 1", "isOnline": True}], "total": 1, "page": 1, "pageSize": 44}
         payload = A2UIA2AClient.render_request(
             query="장비 상태 보여줘",
             api_id="equipment-status",
             data=data,
+            display_data=display_data,
             profile={"rowCount": 1},
             fallback_text="fallback",
             tool_metadata={
@@ -102,6 +104,9 @@ class A2AClientTest(unittest.TestCase):
         self.assertEqual(render_data["toolMetadata"]["sourceToolName"], "get_equipment_status")
         self.assertEqual(render_data["facts"]["sourceToolResultId"], "tool-result-1")
         self.assertIs(render_data["facts"]["data"], data)
+        self.assertIs(render_data["facts"]["displayData"], display_data)
+        self.assertIs(render_data["data"], data)
+        self.assertIs(render_data["displayData"], display_data)
         self.assertTrue(render_data["a2uiOptions"]["allowIntentFallback"])
 
     def test_tool_metadata_cannot_override_core_render_facts(self) -> None:

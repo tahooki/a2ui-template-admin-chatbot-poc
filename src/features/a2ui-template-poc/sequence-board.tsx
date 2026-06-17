@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
 import styles from "./styles.module.css";
 import type { AgentFlowActor, AgentFlowBranch, AgentFlowEvent, AgentFlowPhase } from "./agent-flow-types";
+import type { DataBoundaryScenarioTrace } from "./data-boundary-lab";
 
 type ActorLane = {
   id: AgentFlowActor;
@@ -52,6 +53,7 @@ type SequenceBoardProps = {
   events: AgentFlowEvent[];
   actorLabels?: Partial<Record<AgentFlowActor, string>>;
   showA2UISubsteps?: boolean;
+  dataBoundaryTrace?: DataBoundaryScenarioTrace;
 };
 
 const lanes: ActorLane[] = [
@@ -79,6 +81,17 @@ const maxZoom = 1.25;
 const zoomStep = 0.1;
 const manualAutoFollowPauseMs = 1600;
 const messageLabelOffset = 42;
+const clickableStepIds = new Set([
+  "business-tool-call",
+  "business-tool-result",
+  "a2ui-tool-call",
+  "profile",
+  "registry-request",
+  "registry-loaded",
+  "matcher",
+  "a2ui-tool-result",
+  "surface",
+]);
 
 function laneX(actor: AgentFlowActor) {
   const index = lanes.findIndex((lane) => lane.id === actor);
@@ -458,7 +471,227 @@ function cameraStateForScroll(target: string, left: number, top: number, zoom: n
   };
 }
 
-export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true }: SequenceBoardProps) {
+function shortJson(value: unknown, maxLength = 900) {
+  const text = JSON.stringify(value, null, 2);
+  return text.length > maxLength ? `${text.slice(0, maxLength)}\n...` : text;
+}
+
+function shortHash(value?: string) {
+  if (!value) return "-";
+  return value.length > 22 ? `${value.slice(0, 22)}...` : value;
+}
+
+function DetailRows({ rows }: { rows: Array<[string, unknown]> }) {
+  return (
+    <div className={styles.sequenceDetailRows}>
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <span>{label}</span>
+          <strong>{String(value ?? "-")}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function JsonBlock({ value }: { value: unknown }) {
+  return <pre className={styles.sequenceJsonBlock}>{shortJson(value)}</pre>;
+}
+
+function recordValue(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function rawColumnCount(trace: DataBoundaryScenarioTrace) {
+  const firstRow = trace.sourceData.items.find((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)));
+  return firstRow ? Object.keys(firstRow).length : 0;
+}
+
+function stepEvent(step: SequenceStep, events: AgentFlowEvent[]) {
+  const stepEvents = step.events ?? [];
+  return events.findLast((event) => stepEvents.includes(event.event));
+}
+
+function stepToolName(step: SequenceStep, trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]) {
+  if (trace) return trace.businessToolName;
+  const event = stepEvent(step, events);
+  const eventData = recordValue(event?.data);
+  const sourceToolName = eventData.sourceToolName;
+  const label = eventData.label;
+  return typeof sourceToolName === "string" ? sourceToolName : typeof label === "string" ? label : undefined;
+}
+
+function stepDisplayLabel(step: SequenceStep, trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]) {
+  const toolName = stepToolName(step, trace, events);
+  if (step.id === "business-tool-call" && toolName) return `Call ${toolName}`;
+  if (step.id === "business-tool-selected" && toolName) return `Select ${toolName}`;
+  return step.label;
+}
+
+function SequenceTraceDetail({
+  selectedStep,
+  trace,
+}: {
+  selectedStep: string;
+  trace?: DataBoundaryScenarioTrace;
+}) {
+  if (!trace) {
+    return (
+      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
+        <div className={styles.sequenceDetailHeader}>
+          <span>Trace Detail</span>
+          <strong>Run a data flow</strong>
+        </div>
+      </aside>
+    );
+  }
+
+  const renderToolMetadata = recordValue(trace.a2uiRenderPayload.toolMetadata);
+
+  if (selectedStep === "business-tool-call") {
+    return (
+      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
+        <div className={styles.sequenceDetailHeader}>
+          <span>API call info</span>
+          <strong>{trace.apiLabel}</strong>
+        </div>
+        <DetailRows rows={[["query", trace.query], ["apiId", trace.apiId], ["route", trace.apiRoute], ["tool", trace.businessToolName], ["policy", "business tool first, then a2ui_render"]]} />
+      </aside>
+    );
+  }
+
+  if (selectedStep === "business-tool-result") {
+    return (
+      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
+        <div className={styles.sequenceDetailHeader}>
+          <span>Raw tool result</span>
+          <strong>source fingerprint</strong>
+        </div>
+        <DetailRows
+          rows={[
+            ["hash", shortHash(trace.sourceFingerprint.dataHash)],
+            ["rows", trace.sourceFingerprint.rowCount],
+            ["columns", rawColumnCount(trace)],
+            ["bytes", trace.sourceFingerprint.byteLength],
+            ["shape", trace.sourceFingerprint.shape],
+          ]}
+        />
+        <JsonBlock value={trace.sourceData.items.slice(0, 2)} />
+      </aside>
+    );
+  }
+
+  if (selectedStep === "a2ui-tool-call") {
+    return (
+      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
+        <div className={styles.sequenceDetailHeader}>
+          <span>a2ui_render payload</span>
+          <strong>raw data + displayData</strong>
+        </div>
+        <DetailRows rows={[["source tool", renderToolMetadata.sourceToolName], ["result id", renderToolMetadata.sourceToolResultId], ["source hash", shortHash(trace.sourceFingerprint.dataHash)], ["display hash", shortHash(trace.normalization.displayDataHash)], ["preview", `${trace.sampleDataPreview.sampleSize}/${trace.sampleDataPreview.rowCount}`]]} />
+        <JsonBlock value={trace.a2uiRenderPayload} />
+      </aside>
+    );
+  }
+
+  if (selectedStep === "profile") {
+    return (
+      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
+        <div className={styles.sequenceDetailHeader}>
+          <span>Conversion and schema</span>
+          <strong>{trace.normalization.strategy}</strong>
+        </div>
+        <DetailRows rows={[["normalization", trace.normalization.applied], ["fields", trace.derivedSchema.fields.length], ["masked", trace.sampleDataPreview.maskedFields.length], ["truncated", trace.sampleDataPreview.truncated]]} />
+        <div className={styles.sequenceMiniTable}>
+          {trace.mappingComparison.slice(0, 6).map((row) => (
+            <div key={`${row.derivedField}-${row.templateSlot}`}>
+              <span>{row.derivedField}</span>
+              <strong>{row.aliasOrNormalization}</strong>
+            </div>
+          ))}
+        </div>
+      </aside>
+    );
+  }
+
+  if (selectedStep === "registry-request" || selectedStep === "registry-loaded") {
+    return (
+      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
+        <div className={styles.sequenceDetailHeader}>
+          <span>Template contract</span>
+          <strong>{trace.templateContract.componentId}</strong>
+        </div>
+        <DetailRows rows={[["viewType", trace.templateContract.surfaceConfig.viewType], ["required", trace.templateContract.inputSchema?.requiredSlots.map((slot) => slot.slot).join(", ")], ["maxItems", trace.templateContract.surfaceConfig.maxItems]]} />
+        <JsonBlock value={trace.templateContract.inputSchema} />
+      </aside>
+    );
+  }
+
+  if (selectedStep === "matcher") {
+    return (
+      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
+        <div className={styles.sequenceDetailHeader}>
+          <span>Field mapping comparison</span>
+          <strong>score {trace.renderPlan.score.toFixed(2)}</strong>
+        </div>
+        <div className={styles.sequenceMappingTable}>
+          {trace.mappingComparison.map((row) => (
+            <div key={`${row.derivedField}-${row.templateSlot}`}>
+              <span>{row.derivedField}</span>
+              <span>{row.templateSlot}</span>
+              <strong>{row.decision}</strong>
+            </div>
+          ))}
+        </div>
+      </aside>
+    );
+  }
+
+  if (selectedStep === "a2ui-tool-result") {
+    return (
+      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
+        <div className={styles.sequenceDetailHeader}>
+          <span>Source / received comparison</span>
+          <strong>{trace.integrity.matched ? "matched" : "mismatch detected"}</strong>
+        </div>
+        <DetailRows
+          rows={[
+            ["hash", trace.integrity.hashMatched],
+            ["row count", trace.integrity.rowCountMatched],
+            ["byte length", trace.integrity.byteLengthMatched],
+            ["source rows", trace.integrity.expectedRowCount],
+            ["received rows", trace.integrity.receivedRowCount],
+            ["selected template", trace.surfaceEnvelope.templateId],
+          ]}
+        />
+      </aside>
+    );
+  }
+
+  if (selectedStep === "surface") {
+    return (
+      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
+        <div className={styles.sequenceDetailHeader}>
+          <span>SurfaceEnvelope result</span>
+          <strong>{trace.surfaceEnvelope.templateId}</strong>
+        </div>
+        <DetailRows rows={[["strategy", trace.surfaceEnvelope.meta.strategy], ["score", trace.surfaceEnvelope.meta.score], ["rows", trace.surfaceEnvelope.payload.data.items.length]]} />
+        <JsonBlock value={trace.surfaceEnvelope.meta.trace} />
+      </aside>
+    );
+  }
+
+  return (
+    <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
+      <div className={styles.sequenceDetailHeader}>
+        <span>Trace Detail</span>
+        <strong>Select a data step</strong>
+      </div>
+    </aside>
+  );
+}
+
+export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, dataBoundaryTrace }: SequenceBoardProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const panRef = useRef<{ startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
   const lastUserPanAtRef = useRef(0);
@@ -467,6 +700,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true }: 
   const didPlaceInitialViewRef = useRef(false);
   const [isPanning, setIsPanning] = useState(false);
   const [zoom, setZoom] = useState(overviewZoom);
+  const [traceModalStep, setTraceModalStep] = useState<string | null>(null);
   const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, zoom: overviewZoom, target: "overview", mode: "auto" });
   const [viewportScroll, setViewportScroll] = useState({ left: 0, top: 0 });
   const active = events.at(-1);
@@ -475,6 +709,8 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true }: 
   const completed = useMemo(() => completedStepSet(events, visibleSteps), [events, visibleSteps]);
   const activeStep = visibleSteps.find((step) => isActiveStep(step, active));
   const focusStep = activeStep ?? stepForDoneEvent(active, visibleSteps);
+  const modalStep = visibleSteps.find((step) => step.id === traceModalStep);
+  const modalStepLabel = modalStep ? stepDisplayLabel(modalStep, dataBoundaryTrace, events) : "Trace detail";
 
   function focusCamera(region: FocusRegion, nextZoom: number, behavior: ScrollBehavior = "smooth") {
     const viewport = viewportRef.current;
@@ -557,6 +793,15 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true }: 
       window.cancelAnimationFrame(focusFrame);
     };
   }, [active?.branch, active?.event, active?.phase, active?.turnId, focusStep, zoom]);
+
+  useEffect(() => {
+    if (!traceModalStep) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setTraceModalStep(null);
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [traceModalStep]);
 
   function handleViewportScroll(event: ReactUIEvent<HTMLDivElement>) {
     setViewportScroll({ left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop });
@@ -678,15 +923,28 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true }: 
 
             {visibleSteps.map((step) => {
               const position = labelPosition(step);
+              const clickable = Boolean(dataBoundaryTrace) && clickableStepIds.has(step.id);
               return (
                 <div
-                  className={stepClass(step, completed, active)}
+                  className={`${stepClass(step, completed, active)} ${clickable ? styles.sequenceStepClickable : ""} ${traceModalStep === step.id ? styles.sequenceStepSelected : ""}`}
                   data-sequence-branch={step.branch ?? "main"}
                   data-sequence-step={step.id}
                   key={`${step.id}-label`}
                   style={{ left: position.left, top: position.top }}
                 >
-                  <span>{step.label}</span>
+                  {clickable ? (
+                    <button
+                      aria-pressed={traceModalStep === step.id}
+                      onClick={() => setTraceModalStep(step.id)}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      title="View data trace"
+                      type="button"
+                    >
+                      {stepDisplayLabel(step, dataBoundaryTrace, events)}
+                    </button>
+                  ) : (
+                    <span>{stepDisplayLabel(step, dataBoundaryTrace, events)}</span>
+                  )}
                 </div>
               );
             })}
@@ -733,6 +991,33 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true }: 
           Fit
         </button>
       </div>
+      {traceModalStep && dataBoundaryTrace ? (
+        <div className={styles.sequenceModalBackdrop} onClick={() => setTraceModalStep(null)} role="presentation">
+          <div
+            aria-label="Sequence trace detail"
+            aria-modal="true"
+            className={styles.sequenceModal}
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className={styles.sequenceModalTop}>
+              <div>
+                <p className={styles.eyebrow}>Trace Detail</p>
+                <h3>{modalStepLabel}</h3>
+              </div>
+              <button
+                aria-label="Close trace detail"
+                className={styles.sequenceModalClose}
+                onClick={() => setTraceModalStep(null)}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+            <SequenceTraceDetail selectedStep={traceModalStep} trace={dataBoundaryTrace} />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

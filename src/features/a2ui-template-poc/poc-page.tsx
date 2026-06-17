@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { agentFlowEventsFromSource } from "./agent-flow-adapter";
 import { AgentTracePanel } from "./agent-trace-panel";
 import { AdminPanel } from "./admin-panel";
 import { ChatbotPanel } from "./chatbot-panel";
+import { buildDataBoundaryScenarioTrace } from "./data-boundary-lab";
 import { useTemplateRegistry } from "./template-store";
 import styles from "./styles.module.css";
 import type { AgentFlowEvent, ChatFlowSourceEvent } from "./agent-flow-types";
+import type { DataBoundaryScenarioId } from "./data-boundary-lab";
 
 const flowEventDisplayIntervalMs = 1000;
 const maxFlowEvents = 180;
@@ -18,10 +20,15 @@ export function A2UITemplatePocPage() {
   const [chatWidth, setChatWidth] = useState(304);
   const [chatResetKey, setChatResetKey] = useState(0);
   const [flowEvents, setFlowEvents] = useState<AgentFlowEvent[]>([]);
+  const [selectedBoundaryScenario, setSelectedBoundaryScenario] = useState<DataBoundaryScenarioId>("status");
   const draggingRef = useRef(false);
   const logicalFlowEventsRef = useRef<AgentFlowEvent[]>([]);
   const displayQueueRef = useRef<AgentFlowEvent[]>([]);
   const displayTimerRef = useRef<number | null>(null);
+  const dataBoundaryTrace = useMemo(
+    () => buildDataBoundaryScenarioTrace(selectedBoundaryScenario),
+    [selectedBoundaryScenario],
+  );
 
   function clearFlowDisplayTimer() {
     if (!displayTimerRef.current) return;
@@ -54,6 +61,7 @@ export function A2UITemplatePocPage() {
     logicalFlowEventsRef.current = [];
     displayQueueRef.current = [];
     setFlowEvents([]);
+    setSelectedBoundaryScenario("status");
   }
 
   function handleFlowEvent(source: ChatFlowSourceEvent) {
@@ -126,7 +134,13 @@ export function A2UITemplatePocPage() {
           onSave={saveTemplate}
           templates={templates}
         />
-        <AgentTracePanel events={flowEvents} registryVersion={version} />
+        <AgentTracePanel
+          dataBoundaryTrace={dataBoundaryTrace}
+          events={flowEvents}
+          onBoundaryScenarioChange={setSelectedBoundaryScenario}
+          registryVersion={version}
+          selectedBoundaryScenario={selectedBoundaryScenario}
+        />
         <ChatbotPanel
           onFlowEvent={handleFlowEvent}
           onResizeStart={startResize}

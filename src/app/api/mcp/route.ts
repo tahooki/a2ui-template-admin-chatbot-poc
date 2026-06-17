@@ -10,6 +10,13 @@ type JsonRpcRequest = {
   params?: Record<string, unknown>;
 };
 
+const equipmentApiEnum = [
+  "equipment-catalog",
+  "equipment-status",
+  "equipment-status-wide-columns",
+  "equipment-status-large-rows",
+];
+
 const toolDefinitions = [
   {
     name: "a2ui.listTemplates",
@@ -28,7 +35,7 @@ const toolDefinitions = [
       additionalProperties: true,
       properties: {
         query: { type: "string" },
-        apiId: { type: "string", enum: ["equipment-catalog", "equipment-status"] },
+        apiId: { type: "string", enum: equipmentApiEnum },
         facts: { type: "object", additionalProperties: true },
         derivedSchema: { type: "object", additionalProperties: true },
         sampleDataPreview: { type: "object", additionalProperties: true },
@@ -52,7 +59,7 @@ const toolDefinitions = [
       properties: {
         templateId: { type: "string" },
         query: { type: "string" },
-        apiId: { type: "string", enum: ["equipment-catalog", "equipment-status"] },
+        apiId: { type: "string", enum: equipmentApiEnum },
         context: { type: "object", additionalProperties: true },
         mapping: { type: "object", additionalProperties: true },
       },

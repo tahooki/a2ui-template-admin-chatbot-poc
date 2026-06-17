@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { INITIAL_TEMPLATES } from "@/features/a2ui-template-poc/initial-templates";
+import { COMMON_STATUS_TEMPLATE_ID, INITIAL_TEMPLATES } from "@/features/a2ui-template-poc/initial-templates";
 import type { A2UITemplateRegistration } from "@/features/a2ui-template-poc/template-types";
 import { normalizeTemplateInputSchema } from "./schema-matcher/template-input-schema-adapter";
 
@@ -31,6 +31,14 @@ function withoutDeprecatedTemplates(templates: A2UITemplateRegistration[]) {
   return templates.filter((template) => template.componentId !== "simpleTextList");
 }
 
+function withFixedCommonStatusTemplate(templates: A2UITemplateRegistration[]) {
+  const normalizedTemplates = templates.map(normalizeTemplateInputSchema);
+  const templateIds = new Set(normalizedTemplates.map((template) => template.componentId));
+  if (templateIds.has(COMMON_STATUS_TEMPLATE_ID)) return normalizedTemplates;
+  const fixedTemplate = cloneInitialTemplates().find((template) => template.componentId === COMMON_STATUS_TEMPLATE_ID);
+  return fixedTemplate ? [fixedTemplate, ...normalizedTemplates] : normalizedTemplates;
+}
+
 function isTemplate(value: unknown): value is A2UITemplateRegistration {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const template = value as Partial<A2UITemplateRegistration>;
@@ -56,7 +64,7 @@ function normalizeCatalog(value: unknown): A2UITemplateCatalog {
   return {
     version: typeof record.version === "number" ? record.version : 1,
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString(),
-    templates: templates.length ? templates.map(normalizeTemplateInputSchema) : cloneInitialTemplates(),
+    templates: templates.length ? withFixedCommonStatusTemplate(templates) : cloneInitialTemplates(),
   };
 }
 

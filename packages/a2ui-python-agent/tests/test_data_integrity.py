@@ -1,6 +1,6 @@
 import unittest
 
-from app.data_integrity import build_data_integrity_snapshot
+from app.data_integrity import build_data_integrity_snapshot, compare_data_integrity
 
 
 class DataIntegrityTest(unittest.TestCase):
@@ -17,6 +17,36 @@ class DataIntegrityTest(unittest.TestCase):
         self.assertEqual(snapshot["shape"], "object{items:array<object>}")
         self.assertGreater(snapshot["byteLength"], 0)
         self.assertIn("items", snapshot["topLevelKeys"])
+
+    def test_detects_missing_row(self) -> None:
+        source = {"items": [{"id": "eq-1"}, {"id": "eq-2"}], "total": 2}
+        received = {"items": [{"id": "eq-1"}], "total": 1}
+
+        comparison = compare_data_integrity(build_data_integrity_snapshot(source), received)
+
+        self.assertFalse(comparison["matched"])
+        self.assertFalse(comparison["hashMatched"])
+        self.assertFalse(comparison["rowCountMatched"])
+
+    def test_detects_changed_field_value(self) -> None:
+        source = {"items": [{"id": "eq-1", "isOnline": True}], "total": 1}
+        received = {"items": [{"id": "eq-1", "isOnline": False}], "total": 1}
+
+        comparison = compare_data_integrity(build_data_integrity_snapshot(source), received)
+
+        self.assertFalse(comparison["matched"])
+        self.assertFalse(comparison["hashMatched"])
+        self.assertTrue(comparison["rowCountMatched"])
+
+    def test_array_order_is_significant(self) -> None:
+        source = {"items": [{"id": "eq-1"}, {"id": "eq-2"}], "total": 2}
+        received = {"items": [{"id": "eq-2"}, {"id": "eq-1"}], "total": 2}
+
+        comparison = compare_data_integrity(build_data_integrity_snapshot(source), received)
+
+        self.assertFalse(comparison["matched"])
+        self.assertFalse(comparison["hashMatched"])
+        self.assertTrue(comparison["rowCountMatched"])
 
 
 if __name__ == "__main__":

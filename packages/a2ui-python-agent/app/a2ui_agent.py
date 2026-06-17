@@ -108,6 +108,7 @@ async def _render_via_a2a(
     query: str,
     api_id: str,
     data: dict[str, Any],
+    display_data: dict[str, Any] | None,
     profile: dict[str, Any],
     fallback_text: str,
     derived_schema: dict[str, Any] | None = None,
@@ -120,6 +121,7 @@ async def _render_via_a2a(
         query=query,
         api_id=api_id,
         data=data,
+        display_data=display_data,
         profile=profile,
         fallback_text=fallback_text,
         derived_schema=derived_schema,
@@ -157,6 +159,7 @@ async def _render_via_mcp(
     query: str,
     api_id: str,
     data: dict[str, Any],
+    display_data: dict[str, Any] | None,
     profile: dict[str, Any],
     fallback_text: str,
     derived_schema: dict[str, Any] | None = None,
@@ -164,11 +167,15 @@ async def _render_via_mcp(
     tool_metadata: dict[str, Any] | None = None,
     mcp_url: str | None = None,
 ) -> A2UIResponse:
+    render_data = display_data or data
     facts = {
+        **(tool_metadata or {}),
         "query": query,
         "apiId": api_id,
+        "data": data,
+        "displayData": render_data,
+        "fallbackText": fallback_text,
         "profile": profile,
-        **(tool_metadata or {}),
     }
     client = A2UIMcpClient(mcp_url)
     decision = await client.call_tool(
@@ -178,6 +185,7 @@ async def _render_via_mcp(
             "apiId": api_id,
             "derivedSchema": derived_schema,
             "sampleDataPreview": sample_data_preview,
+            "data": render_data,
             "options": {
                 "includeTrace": True,
                 "allowIntentFallback": True,
@@ -206,7 +214,8 @@ async def _render_via_mcp(
             "context": {
                 "query": query,
                 "apiId": api_id,
-                "data": data,
+                "data": render_data,
+                "rawData": data,
                 "profile": profile,
                 "derivedSchema": derived_schema,
                 "sampleDataPreview": sample_data_preview,
@@ -245,6 +254,7 @@ async def render_or_fallback(
     data: dict[str, Any],
     profile: dict[str, Any],
     fallback_text: str,
+    display_data: dict[str, Any] | None = None,
     derived_schema: dict[str, Any] | None = None,
     sample_data_preview: dict[str, Any] | None = None,
     tool_metadata: dict[str, Any] | None = None,
@@ -257,6 +267,7 @@ async def render_or_fallback(
                 query,
                 api_id,
                 data,
+                display_data,
                 profile,
                 fallback_text,
                 derived_schema,
@@ -273,6 +284,7 @@ async def render_or_fallback(
             query,
             api_id,
             data,
+            display_data,
             profile,
             fallback_text,
             derived_schema,

@@ -15,7 +15,14 @@ import { buildDerivedSchema, derivedSchemaFromDataProfile } from "./schema-match
 import { buildSampleDataPreview, type SampleDataPreview } from "./schema-matcher/sample-data-preview";
 import { matchA2UITemplate } from "./schema-matcher/template-schema-matcher";
 
-export type EquipmentApiId = "equipment-catalog" | "equipment-status";
+export const equipmentApiIds = [
+  "equipment-catalog",
+  "equipment-status",
+  "equipment-status-wide-columns",
+  "equipment-status-large-rows",
+] as const;
+
+export type EquipmentApiId = (typeof equipmentApiIds)[number];
 
 export type A2UIRecommendation =
   | {
@@ -58,6 +65,14 @@ function normalizeMatchText(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9가-힣]+/g, "");
 }
 
+export function isEquipmentApiId(value: unknown): value is EquipmentApiId {
+  return typeof value === "string" && (equipmentApiIds as readonly string[]).includes(value);
+}
+
+export function isStatusEquipmentApi(apiId: EquipmentApiId) {
+  return apiId !== "equipment-catalog";
+}
+
 export function chooseEquipmentApiForPrompt(prompt: string): EquipmentApiId {
   const normalized = normalizeMatchText(prompt);
   if (
@@ -75,7 +90,10 @@ export function chooseEquipmentApiForPrompt(prompt: string): EquipmentApiId {
 }
 
 export function equipmentApiTitle(apiId: EquipmentApiId) {
-  return apiId === "equipment-catalog" ? "장비 카탈로그 API" : "장비 상태 API";
+  if (apiId === "equipment-catalog") return "장비 카탈로그 API";
+  if (apiId === "equipment-status-wide-columns") return "컬럼 많은 장비 상태 API";
+  if (apiId === "equipment-status-large-rows") return "데이터 많은 장비 상태 API";
+  return "장비 상태 API";
 }
 
 function templateRenderPlan({
@@ -414,7 +432,7 @@ export async function resolveTemplateData({
       renderPlan,
     },
     surfaceConfig: template.surfaceConfig,
-    sourceIntent: selectedApiId === "equipment-catalog" ? "equipment.catalog.lookup" : "equipment.status.lookup",
+    sourceIntent: isStatusEquipmentApi(selectedApiId) ? "equipment.status.lookup" : "equipment.catalog.lookup",
     updatedAt: new Date().toISOString(),
     meta: {
       registryVersion: catalog.version,
@@ -440,7 +458,7 @@ function readString(value: unknown, fallback = "") {
 }
 
 function readApiId(value: unknown): EquipmentApiId | undefined {
-  return value === "equipment-catalog" || value === "equipment-status" ? value : undefined;
+  return isEquipmentApiId(value) ? value : undefined;
 }
 
 function readData(value: unknown): EquipmentApiResponse<unknown> | undefined {

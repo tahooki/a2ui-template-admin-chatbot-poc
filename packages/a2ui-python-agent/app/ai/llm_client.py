@@ -6,7 +6,19 @@ import httpx
 
 from ..config import settings
 
-EquipmentApiId = Literal["equipment-catalog", "equipment-status"]
+EquipmentApiId = Literal[
+    "equipment-catalog",
+    "equipment-status",
+    "equipment-status-wide-columns",
+    "equipment-status-large-rows",
+]
+
+EQUIPMENT_API_IDS: tuple[EquipmentApiId, ...] = (
+    "equipment-catalog",
+    "equipment-status",
+    "equipment-status-wide-columns",
+    "equipment-status-large-rows",
+)
 
 
 class EquipmentIntentClassification(TypedDict):
@@ -85,6 +97,8 @@ async def classify_equipment_intent_with_llm(
                     "Return JSON only. Use equipment-catalog when the user wants a device/equipment list, catalog, "
                     "cards, images, photos, names, or descriptions. Use equipment-status when the user wants status, "
                     "online/running/alarm/inspection/reservation booleans, or operational state. "
+                    "Use equipment-status-wide-columns when the user asks for a wide-column or many-column status test. "
+                    "Use equipment-status-large-rows when the user asks for a large-data, many-row, or high-row-count status test. "
                     "For greetings, small talk, unclear requests, or non-equipment requests, return apiId as null."
                 ),
             },
@@ -93,7 +107,7 @@ async def classify_equipment_intent_with_llm(
                 "content": (
                     f"Recent history: {_compact_json((history or [])[-6:], 2000)}\n"
                     f"User message: {message}\n"
-                    'Respond as {"apiId":"equipment-catalog|equipment-status|null","confidence":0.0,"reason":"short"}'
+                    'Respond as {"apiId":"equipment-catalog|equipment-status|equipment-status-wide-columns|equipment-status-large-rows|null","confidence":0.0,"reason":"short"}'
                 ),
             },
         ],
@@ -111,7 +125,7 @@ async def classify_equipment_intent_with_llm(
     api_id = parsed.get("apiId")
     confidence = parsed.get("confidence", 0)
     reason = parsed.get("reason")
-    normalized_api_id = api_id if api_id in ("equipment-catalog", "equipment-status") else None
+    normalized_api_id = api_id if api_id in EQUIPMENT_API_IDS else None
     normalized_confidence = float(confidence) if isinstance(confidence, (int, float)) else 0.0
 
     if normalized_api_id and normalized_confidence >= 0.55:

@@ -5,11 +5,22 @@ import httpx
 
 from .config import settings
 
-EquipmentApiId = Literal["equipment-catalog", "equipment-status"]
+EquipmentApiId = Literal[
+    "equipment-catalog",
+    "equipment-status",
+    "equipment-status-wide-columns",
+    "equipment-status-large-rows",
+]
 
 
 def equipment_api_title(api_id: EquipmentApiId) -> str:
-    return "장비 카탈로그 API" if api_id == "equipment-catalog" else "장비 상태 API"
+    if api_id == "equipment-catalog":
+        return "장비 카탈로그 API"
+    if api_id == "equipment-status-wide-columns":
+        return "컬럼 많은 장비 상태 API"
+    if api_id == "equipment-status-large-rows":
+        return "데이터 많은 장비 상태 API"
+    return "장비 상태 API"
 
 
 async def fetch_equipment_data(api_id: EquipmentApiId) -> dict[str, Any]:

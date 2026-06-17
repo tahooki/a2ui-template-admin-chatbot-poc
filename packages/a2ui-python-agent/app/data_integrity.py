@@ -39,3 +39,24 @@ def build_data_integrity_snapshot(data: Any) -> dict[str, Any]:
         "shape": data_shape(data),
         "topLevelKeys": sorted(data.keys()) if isinstance(data, dict) else None,
     }
+
+
+def compare_data_integrity(source_snapshot: dict[str, Any], received_data: Any) -> dict[str, Any]:
+    received = build_data_integrity_snapshot(received_data)
+    hash_matched = source_snapshot.get("dataHash") == received["dataHash"]
+    row_count_matched = source_snapshot.get("rowCount") == received["rowCount"]
+    byte_length_matched = source_snapshot.get("byteLength") == received["byteLength"]
+    return {
+        "expectedHash": source_snapshot.get("dataHash"),
+        "receivedHash": received["dataHash"],
+        "hashMatched": hash_matched,
+        "expectedRowCount": source_snapshot.get("rowCount"),
+        "receivedRowCount": received["rowCount"],
+        "rowCountMatched": row_count_matched,
+        "expectedByteLength": source_snapshot.get("byteLength"),
+        "receivedByteLength": received["byteLength"],
+        "byteLengthMatched": byte_length_matched,
+        "receivedShape": received["shape"],
+        "receivedTopLevelKeys": received["topLevelKeys"],
+        "matched": hash_matched and row_count_matched and byte_length_matched,
+    }

@@ -20,6 +20,7 @@ import {
   type EquipmentApiId,
   chooseEquipmentApiForPrompt,
   equipmentApiTitle,
+  isEquipmentApiId,
   recommendTemplate,
   resolveTemplateData,
 } from "@/server/a2ui-admin/a2ui-runtime";
@@ -30,7 +31,7 @@ export type A2AStreamEvent =
   | { artifactUpdate: { taskId: string; artifact: NonNullable<A2ATask["artifacts"]>[number] } };
 
 function readApiId(value: unknown): EquipmentApiId | undefined {
-  return value === "equipment-catalog" || value === "equipment-status" ? value : undefined;
+  return isEquipmentApiId(value) ? value : undefined;
 }
 
 function readEquipmentData(value: unknown): EquipmentApiResponse<unknown> | undefined {
@@ -108,6 +109,11 @@ function readSourceToolMetadata(
     "sourceTopLevelKeys",
     "renderToolName",
     "renderToolCallPolicy",
+    "normalizationTrace",
+    "displayDataHash",
+    "displayDataByteLength",
+    "displayRowCount",
+    "displayDataShape",
     "intentSource",
   ];
 
@@ -269,10 +275,12 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string): Promise
   const facts = asRecord(renderData.facts) ?? {};
   const apiId = readApiId(renderData.apiId) ?? readApiId(facts.apiId) ?? chooseEquipmentApiForPrompt(query);
   const sourceTool = readSourceToolMetadata(renderData, facts, apiId);
+  const renderDataDisplayEquipment = readEquipmentData(renderData.displayData);
+  const factsDisplayEquipment = readEquipmentData(facts.displayData);
   const renderDataEquipment = readEquipmentData(renderData.data);
   const factsEquipment = readEquipmentData(facts.data);
-  const data = renderDataEquipment ?? factsEquipment;
-  const rawData = renderDataEquipment ? renderData.data : factsEquipment ? facts.data : renderData.data ?? facts.data;
+  const data = renderDataDisplayEquipment ?? factsDisplayEquipment ?? renderDataEquipment ?? factsEquipment;
+  const rawData = renderData.data ?? facts.data ?? renderData.displayData ?? facts.displayData;
   const dataIntegrity = buildDataIntegrity(rawData, sourceTool);
   const sampleDataPreview = renderData.sampleDataPreview ?? (facts.sampleDataPreview as A2ARenderRequestData["sampleDataPreview"]);
   const derivedSchema = renderData.derivedSchema ?? (facts.derivedSchema as A2ARenderRequestData["derivedSchema"]);

@@ -54,7 +54,15 @@ const quickPrompts = [
   },
   {
     label: "장비 목록",
-    prompt: "장비 목록보여줘",
+    prompt: "장비 목록 보여줘",
+  },
+  {
+    label: "컬럼 많은 상태",
+    prompt: "컬럼이 많은 장비 상태 목록 보여줘",
+  },
+  {
+    label: "데이터 많은 상태",
+    prompt: "데이터가 많은 장비 상태 목록 보여줘",
   },
 ];
 
