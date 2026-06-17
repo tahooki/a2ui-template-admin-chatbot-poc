@@ -3,20 +3,17 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 from uuid import uuid4
 
-from .a2ui_agent import render_or_fallback
+from .a2ui_render_tool import A2UIRenderToolInput, A2UIRenderToolResult, run_a2ui_render_tool
 from .ai.llm_client import (
     classify_equipment_intent_with_llm,
-    generate_equipment_fallback_text,
     generate_general_response_with_llm,
     is_llm_available,
 )
 from .config import settings
-from .equipment_tools import (
-    build_data_profile,
-    equipment_api_title,
-    fetch_equipment_data,
-)
-from .schema import build_derived_schema, build_sample_data_preview
+from .equipment_tools import equipment_api_title
+from .business_tools import BusinessToolResult, run_business_tool
+from .render_boundary import RenderBoundaryError
+from .tool_router import business_tool_for_api
 
 
 class AgentRuntimeError(RuntimeError):
@@ -40,25 +37,6 @@ async def _general_response(message: str, history: list[dict[str, Any]] | None =
     raise AgentRuntimeError("LLM general response generation failed.")
 
 
-async def _fallback_text(
-    message: str,
-    api_id: str,
-    data: dict[str, Any],
-    profile: dict[str, Any],
-    reason: str | None = None,
-) -> str:
-    llm_text = await generate_equipment_fallback_text(
-        message=message,
-        api_id=api_id,
-        data=data,
-        profile=profile,
-        reason=reason,
-    )
-    if llm_text:
-        return llm_text
-    raise AgentRuntimeError("LLM equipment fallback generation failed.")
-
-
 def sse_event(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -66,7 +44,7 @@ def sse_event(event: str, data: dict[str, Any]) -> str:
 def trace_payload(turn_id: str, data: dict[str, Any], branch: str | None = None) -> dict[str, Any]:
     payload = {
         "turnId": turn_id,
-        "physicalEmitter": "python-agent",
+        "physicalEmitter": "main-agent",
         "emittedAt": datetime.now(timezone.utc).isoformat(),
         **data,
     }
@@ -80,6 +58,48 @@ def surface_template_id(surface: dict[str, Any] | None) -> str | None:
         return None
     template_id = surface.get("templateId")
     return template_id if isinstance(template_id, str) else None
+
+
+def business_tool_event_payload(tool_result: BusinessToolResult) -> dict[str, Any]:
+    return {
+        "label": tool_result.tool_name,
+        "apiId": tool_result.api_id,
+        "sourceToolName": tool_result.tool_name,
+        "sourceToolResultId": tool_result.metadata.get("sourceToolResultId"),
+        "sourceDataHash": tool_result.metadata.get("sourceDataHash"),
+        "sourceRowCount": tool_result.metadata.get("sourceRowCount"),
+        "sourceDataShape": tool_result.metadata.get("sourceDataShape"),
+    }
+
+
+def render_tool_event_payload(a2ui_tool_result: A2UIRenderToolResult) -> dict[str, Any]:
+    metadata = a2ui_tool_result.metadata
+    return {
+        "label": a2ui_tool_result.tool_name,
+        "renderToolName": a2ui_tool_result.tool_name,
+        "renderToolCallPolicy": metadata.get("renderToolCallPolicy"),
+        "sourceToolName": metadata.get("sourceToolName"),
+        "sourceToolResultId": metadata.get("sourceToolResultId"),
+        "dataIntegrity": metadata.get("dataIntegrity"),
+        "sourceTool": metadata.get("sourceTool"),
+    }
+
+
+async def _run_a2ui_tool(
+    message: str,
+    business_tool_result: BusinessToolResult,
+    intent_source: str,
+) -> A2UIRenderToolResult:
+    try:
+        return await run_a2ui_render_tool(
+            A2UIRenderToolInput(
+                query=message,
+                business_tool_result=business_tool_result,
+                context={"intentSource": intent_source},
+            )
+        )
+    except RenderBoundaryError as exc:
+        raise AgentRuntimeError(str(exc)) from exc
 
 
 async def run_chat_turn(message: str, history: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -99,39 +119,38 @@ async def run_chat_turn(message: str, history: list[dict[str, Any]] | None = Non
             },
         }
 
-    data = await fetch_equipment_data(api_id)
-    profile = build_data_profile(data)
-    sample_data_preview = build_sample_data_preview(data, source_id=api_id)
-    derived_schema = build_derived_schema(data, source_id=api_id, sample_data_preview=sample_data_preview)
-    fallback_text = await _fallback_text(message, api_id, data, profile)
-    a2ui = await render_or_fallback(message, api_id, data, profile, fallback_text, derived_schema, sample_data_preview)
+    business_tool_name = business_tool_for_api(api_id)
+    business_tool_result = await run_business_tool(business_tool_name)
+    a2ui_tool_result = await _run_a2ui_tool(message, business_tool_result, intent_source)
 
-    if a2ui.type == "surface" and a2ui.surface:
+    if a2ui_tool_result.type == "surface" and a2ui_tool_result.surface:
         return {
             "text": f"{equipment_api_title(api_id)}입니다. 등록된 A2UI 템플릿으로 정리했습니다.",
-            "surface": a2ui.surface,
+            "surface": a2ui_tool_result.surface,
             "mode": "render_surface",
-            "reason": a2ui.reason,
+            "reason": a2ui_tool_result.reason,
             "intent_source": intent_source,
+            "tool_metadata": a2ui_tool_result.metadata,
             "matcher": {
-                "strategy": a2ui.strategy,
-                "score": a2ui.score,
-                "candidates": a2ui.candidates,
-                "mapping": a2ui.mapping,
+                "strategy": a2ui_tool_result.strategy,
+                "score": a2ui_tool_result.score,
+                "candidates": a2ui_tool_result.candidates,
+                "mapping": a2ui_tool_result.mapping,
             },
         }
 
     return {
-        "text": a2ui.text or fallback_text,
+        "text": a2ui_tool_result.text or a2ui_tool_result.fallback_text,
         "surface": None,
         "mode": "text_fallback",
-        "reason": a2ui.reason,
+        "reason": a2ui_tool_result.reason,
         "intent_source": intent_source,
+        "tool_metadata": a2ui_tool_result.metadata,
         "matcher": {
-            "strategy": a2ui.strategy,
-            "score": a2ui.score,
-            "candidates": a2ui.candidates,
-            "mapping": a2ui.mapping,
+            "strategy": a2ui_tool_result.strategy,
+            "score": a2ui_tool_result.score,
+            "candidates": a2ui_tool_result.candidates,
+            "mapping": a2ui_tool_result.mapping,
         },
     }
 
@@ -171,42 +190,91 @@ async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = 
             )
             return
 
-        yield sse_event("state", trace_payload(turn_id, {"status": "tool", "label": api_id}, "data"))
-
-        data = await fetch_equipment_data(api_id)
-        profile = build_data_profile(data)
-        sample_data_preview = build_sample_data_preview(data, source_id=api_id)
-        derived_schema = build_derived_schema(data, source_id=api_id, sample_data_preview=sample_data_preview)
+        business_tool_name = business_tool_for_api(api_id)
         yield sse_event(
             "state",
             trace_payload(
                 turn_id,
                 {
-                    "status": "data_loaded",
-                    "label": api_id,
-                    "rowCount": profile["rowCount"],
-                    "previewRowCount": sample_data_preview["rowCount"],
-                    "previewSampleSize": sample_data_preview["sampleSize"],
+                    "status": "business_tool_selected",
+                    "label": business_tool_name,
+                    "apiId": api_id,
+                    "source": intent_source,
                 },
                 "data",
             ),
         )
+        yield sse_event(
+            "state",
+            trace_payload(
+                turn_id,
+                {
+                    "status": "business_tool_call",
+                    "label": business_tool_name,
+                    "apiId": api_id,
+                },
+                "data",
+            ),
+        )
+
+        business_tool_result = await run_business_tool(business_tool_name)
+        yield sse_event(
+            "state",
+            trace_payload(
+                turn_id,
+                {
+                    "status": "business_tool_result",
+                    **business_tool_event_payload(business_tool_result),
+                },
+                "data",
+            ),
+        )
+
+        yield sse_event(
+            "state",
+            trace_payload(
+                turn_id,
+                {
+                    "status": "a2ui_tool_selected",
+                    "label": "a2ui_render",
+                    "sourceToolName": business_tool_result.tool_name,
+                    "sourceToolResultId": business_tool_result.metadata.get("sourceToolResultId"),
+                },
+                "data",
+            ),
+        )
+        yield sse_event(
+            "state",
+            trace_payload(
+                turn_id,
+                {
+                    "status": "a2ui_tool_call",
+                    "label": "a2ui_render",
+                    "sourceToolName": business_tool_result.tool_name,
+                    "sourceToolResultId": business_tool_result.metadata.get("sourceToolResultId"),
+                    "renderToolCallPolicy": "deterministic_after_business_tool_result",
+                },
+                "data",
+            ),
+        )
+
+        a2ui_tool_result = await _run_a2ui_tool(message, business_tool_result, intent_source)
+        profile_metadata = a2ui_tool_result.boundary.metadata
         yield sse_event(
             "state",
             trace_payload(
                 turn_id,
                 {
                     "status": "profile",
-                    "rowCount": profile["rowCount"],
-                    "hasImageField": profile["hasImageField"],
-                    "booleanFieldCount": profile["booleanFieldCount"],
-                    "previewRowCount": sample_data_preview["rowCount"],
-                    "previewSampleSize": sample_data_preview["sampleSize"],
+                    "rowCount": profile_metadata["rowCount"],
+                    "hasImageField": profile_metadata["hasImageField"],
+                    "booleanFieldCount": profile_metadata["booleanFieldCount"],
+                    "previewRowCount": profile_metadata["previewRowCount"],
+                    "previewSampleSize": profile_metadata["previewSampleSize"],
                 },
                 "data",
             ),
         )
-        fallback_text = await _fallback_text(message, api_id, data, profile)
         transport = "a2a" if settings.a2a_enabled else "mcp"
         yield sse_event(
             "state",
@@ -233,9 +301,8 @@ async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = 
             ),
         )
 
-        a2ui = await render_or_fallback(message, api_id, data, profile, fallback_text, derived_schema, sample_data_preview)
-        template_id = surface_template_id(a2ui.surface)
-        matcher_mode = "render_surface" if a2ui.type == "surface" and a2ui.surface else "no_template"
+        template_id = surface_template_id(a2ui_tool_result.surface)
+        matcher_mode = "render_surface" if a2ui_tool_result.type == "surface" and a2ui_tool_result.surface else "no_template"
         yield sse_event(
             "state",
             trace_payload(
@@ -244,18 +311,36 @@ async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = 
                     "status": "matcher",
                     "mode": matcher_mode,
                     "templateId": template_id,
-                    "reason": a2ui.reason,
-                    "strategy": a2ui.strategy,
-                    "score": a2ui.score,
-                    "candidates": a2ui.candidates,
-                    "candidateCount": len(a2ui.candidates or []),
-                    "mapping": a2ui.mapping,
+                    "reason": a2ui_tool_result.reason,
+                    "strategy": a2ui_tool_result.strategy,
+                    "score": a2ui_tool_result.score,
+                    "candidates": a2ui_tool_result.candidates,
+                    "candidateCount": len(a2ui_tool_result.candidates or []),
+                    "mapping": a2ui_tool_result.mapping,
+                    "dataIntegrity": a2ui_tool_result.metadata.get("dataIntegrity"),
                 },
                 "matched" if matcher_mode == "render_surface" else "no_template",
             ),
         )
+        yield sse_event(
+            "state",
+            trace_payload(
+                turn_id,
+                {
+                    "status": "a2ui_tool_result",
+                    "mode": matcher_mode,
+                    "templateId": template_id,
+                    "reason": a2ui_tool_result.reason,
+                    "strategy": a2ui_tool_result.strategy,
+                    "score": a2ui_tool_result.score,
+                    "candidateCount": len(a2ui_tool_result.candidates or []),
+                    **render_tool_event_payload(a2ui_tool_result),
+                },
+                "data",
+            ),
+        )
 
-        if a2ui.type == "surface" and a2ui.surface:
+        if a2ui_tool_result.type == "surface" and a2ui_tool_result.surface:
             yield sse_event(
                 "text",
                 trace_payload(
@@ -264,7 +349,7 @@ async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = 
                     "matched",
                 ),
             )
-            yield sse_event("surface", trace_payload(turn_id, {"surface": a2ui.surface, "templateId": template_id}, "matched"))
+            yield sse_event("surface", trace_payload(turn_id, {"surface": a2ui_tool_result.surface, "templateId": template_id}, "matched"))
             yield sse_event(
                 "done",
                 trace_payload(
@@ -273,18 +358,19 @@ async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = 
                         "mode": "render_surface",
                         "branch": "matched",
                         "templateId": template_id,
-                        "reason": a2ui.reason,
-                        "strategy": a2ui.strategy,
-                        "score": a2ui.score,
-                        "candidates": a2ui.candidates,
-                        "mapping": a2ui.mapping,
+                        "reason": a2ui_tool_result.reason,
+                        "strategy": a2ui_tool_result.strategy,
+                        "score": a2ui_tool_result.score,
+                        "candidates": a2ui_tool_result.candidates,
+                        "mapping": a2ui_tool_result.mapping,
+                        "tool_metadata": a2ui_tool_result.metadata,
                     },
                     "matched",
                 ),
             )
             return
 
-        yield sse_event("text", trace_payload(turn_id, {"text": a2ui.text or fallback_text}, "no_template"))
+        yield sse_event("text", trace_payload(turn_id, {"text": a2ui_tool_result.text or a2ui_tool_result.fallback_text}, "no_template"))
         yield sse_event(
             "done",
             trace_payload(
@@ -292,11 +378,12 @@ async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = 
                 {
                     "mode": "text_fallback",
                     "branch": "no_template",
-                    "reason": a2ui.reason,
-                    "strategy": a2ui.strategy,
-                    "score": a2ui.score,
-                    "candidates": a2ui.candidates,
-                    "mapping": a2ui.mapping,
+                    "reason": a2ui_tool_result.reason,
+                    "strategy": a2ui_tool_result.strategy,
+                    "score": a2ui_tool_result.score,
+                    "candidates": a2ui_tool_result.candidates,
+                    "mapping": a2ui_tool_result.mapping,
+                    "tool_metadata": a2ui_tool_result.metadata,
                 },
                 "no_template",
             ),

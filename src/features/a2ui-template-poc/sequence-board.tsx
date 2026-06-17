@@ -57,10 +57,11 @@ type SequenceBoardProps = {
 const lanes: ActorLane[] = [
   { id: "chat", label: "Chat UI" },
   { id: "next", label: "Next /api/chat" },
-  { id: "python_bridge", label: "Python Agent / Bridge" },
+  { id: "main_agent", label: "Main Agent" },
   { id: "a2ui", label: "A2UI Agent" },
   { id: "llm", label: "LLM" },
   { id: "business_db", label: "Business DB/API" },
+  { id: "a2ui_render_tool", label: "a2ui_render Tool" },
   { id: "registry", label: "A2UI Registry" },
 ];
 
@@ -70,7 +71,7 @@ const laneGutter = 38;
 const canvasLeftInset = 110;
 const canvasRightInset = 130;
 const canvasWidth = canvasLeftInset + canvasRightInset + lanes.length * laneWidth + (lanes.length - 1) * laneGutter;
-const canvasHeight = 1480;
+const canvasHeight = 1760;
 const overviewZoom = 0.86;
 const focusZoom = 1;
 const minZoom = 0.65;
@@ -90,14 +91,63 @@ const diagramWidth = diagramRight - diagramLeft;
 
 const steps: SequenceStep[] = [
   { id: "request", phase: "request", events: ["request_start"], from: "chat", to: "next", label: "POST /api/chat", y: 124 },
-  { id: "bridge", phase: "bridge", events: ["response_open"], from: "next", to: "python_bridge", label: "Open /chat/stream", y: 194 },
-  { id: "planning", phase: "planning", events: ["state:planning"], from: "python_bridge", to: "a2ui", label: "Delegate turn", y: 264 },
+  { id: "bridge", phase: "bridge", events: ["response_open"], from: "next", to: "main_agent", label: "Open /chat/stream", y: 194 },
+  { id: "planning", phase: "planning", events: ["state:planning"], from: "main_agent", to: "a2ui", label: "Delegate turn", y: 264 },
   { id: "intent", phase: "intent", events: ["state:intent"], from: "a2ui", to: "llm", label: "Intent classify", y: 334 },
   { id: "general-llm", phase: "general_chat", events: ["llm:answer"], from: "llm", to: "a2ui", label: "Text answer", branch: "general", y: 432 },
   { id: "general-stream", phase: "general_chat", events: ["text", "delta"], from: "a2ui", to: "chat", label: "Stream to chat", branch: "general", y: 486 },
-  { id: "data-query", phase: "data_loaded", events: ["state:tool"], from: "a2ui", to: "business_db", label: "Query business data", branch: "data", y: 574 },
-  { id: "data-loaded", phase: "data_loaded", events: ["state:data_loaded"], from: "business_db", to: "a2ui", label: "Business data loaded", branch: "data", y: 642 },
-  { id: "profile", phase: "profile", events: ["state:profile"], from: "a2ui", to: "a2ui", label: "Build profile / schema", branch: "data", a2uiSubstep: true, y: 710 },
+  {
+    id: "business-tool-selected",
+    phase: "intent",
+    events: ["state:business_tool_selected"],
+    from: "a2ui",
+    to: "business_db",
+    label: "Select business API tool",
+    branch: "data",
+    y: 574,
+  },
+  {
+    id: "business-tool-call",
+    phase: "data_loaded",
+    events: ["state:business_tool_call", "state:tool"],
+    from: "a2ui",
+    to: "business_db",
+    label: "Call get_equipment_*",
+    branch: "data",
+    y: 642,
+  },
+  {
+    id: "business-tool-result",
+    phase: "data_loaded",
+    events: ["state:business_tool_result", "state:data_loaded"],
+    from: "business_db",
+    to: "a2ui",
+    label: "Business tool result",
+    branch: "data",
+    y: 710,
+  },
+  {
+    id: "a2ui-tool-selected",
+    phase: "registry_loaded",
+    events: ["state:a2ui_tool_selected"],
+    from: "a2ui",
+    to: "a2ui_render_tool",
+    label: "Select a2ui_render",
+    branch: "data",
+    y: 778,
+  },
+  {
+    id: "a2ui-tool-call",
+    phase: "registry_loaded",
+    events: ["state:a2ui_tool_call"],
+    from: "a2ui",
+    to: "a2ui_render_tool",
+    label: "Run a2ui_render",
+    branch: "data",
+    a2uiSubstep: true,
+    y: 846,
+  },
+  { id: "profile", phase: "profile", events: ["state:profile"], from: "a2ui", to: "a2ui", label: "Build profile / schema", branch: "data", a2uiSubstep: true, y: 914 },
   {
     id: "registry-request",
     phase: "registry_loaded",
@@ -106,7 +156,7 @@ const steps: SequenceStep[] = [
     to: "registry",
     label: "Load template contracts",
     branch: "data",
-    y: 778,
+    y: 982,
   },
   {
     id: "registry-loaded",
@@ -116,9 +166,20 @@ const steps: SequenceStep[] = [
     to: "a2ui",
     label: "Template contracts loaded",
     branch: "data",
-    y: 846,
+    y: 1050,
   },
-  { id: "matcher", phase: "matcher", events: ["state:matcher"], from: "a2ui", to: "a2ui", label: "Match template / fields", branch: "data", a2uiSubstep: true, y: 914 },
+  { id: "matcher", phase: "matcher", events: ["state:matcher"], from: "a2ui", to: "a2ui", label: "Match template / fields", branch: "data", a2uiSubstep: true, y: 1118 },
+  {
+    id: "a2ui-tool-result",
+    phase: "matcher",
+    events: ["state:a2ui_tool_result"],
+    from: "a2ui_render_tool",
+    to: "a2ui",
+    label: "a2ui_render result",
+    branch: "data",
+    a2uiSubstep: true,
+    y: 1186,
+  },
   {
     id: "matched-summary",
     phase: "surface",
@@ -127,9 +188,9 @@ const steps: SequenceStep[] = [
     to: "chat",
     label: "Emit matched summary",
     branch: "matched",
-    y: 1050,
+    y: 1316,
   },
-  { id: "surface", phase: "surface", events: ["surface"], from: "a2ui", to: "chat", label: "Emit SurfaceEnvelope", branch: "matched", y: 1118 },
+  { id: "surface", phase: "surface", events: ["surface"], from: "a2ui", to: "chat", label: "Emit SurfaceEnvelope", branch: "matched", y: 1384 },
   {
     id: "no-template",
     phase: "no_template",
@@ -138,7 +199,7 @@ const steps: SequenceStep[] = [
     to: "a2ui",
     label: "No compatible template",
     branch: "no_template",
-    y: 1230,
+    y: 1496,
   },
   {
     id: "fallback",
@@ -148,17 +209,17 @@ const steps: SequenceStep[] = [
     to: "chat",
     label: "Emit fallback text",
     branch: "no_template",
-    y: 1292,
+    y: 1558,
   },
-  { id: "error", phase: "error", events: ["error", "request_error", "response_error"], from: "a2ui", to: "chat", label: "Runtime error", branch: "error", y: 1380 },
+  { id: "error", phase: "error", events: ["error", "request_error", "response_error"], from: "a2ui", to: "chat", label: "Runtime error", branch: "error", y: 1646 },
 ];
 
 const branchBlocks: BranchBlock[] = [
   { id: "general", label: "alt general chat", left: diagramLeft, width: diagramWidth, top: 372, height: 152 },
-  { id: "data", label: "else data task", left: diagramLeft, width: diagramWidth, top: 526, height: 462 },
-  { id: "matched", label: "then matched: SurfaceEnvelope", left: diagramLeft, width: diagramWidth, top: 998, height: 158 },
-  { id: "no_template", label: "else no template: fallback text", left: diagramLeft, width: diagramWidth, top: 1176, height: 148 },
-  { id: "error", label: "else error", left: diagramLeft, width: diagramWidth, top: 1330, height: 84 },
+  { id: "data", label: "else data task", left: diagramLeft, width: diagramWidth, top: 526, height: 704 },
+  { id: "matched", label: "then matched: SurfaceEnvelope", left: diagramLeft, width: diagramWidth, top: 1264, height: 158 },
+  { id: "no_template", label: "else no template: fallback text", left: diagramLeft, width: diagramWidth, top: 1442, height: 148 },
+  { id: "error", label: "else error", left: diagramLeft, width: diagramWidth, top: 1596, height: 84 },
 ];
 
 function isDataOutcomeBranch(branch?: AgentFlowBranch) {
@@ -343,7 +404,7 @@ function focusRegionForStep(step: SequenceStep): FocusRegion {
   if (step.branch === "no_template") return selfRegion("a2ui", step.y, "no_template");
   if (step.branch === "error") return actorEdgeRegion(step.from, step.to, step.y, "error", 0.86);
   if (step.branch === "general") return branchRegion("general") ?? actorEdgeRegion(step.from, step.to, step.y, step.phase);
-  if (step.phase === "profile" || step.phase === "matcher") return selfRegion("a2ui", step.y, step.phase);
+  if (step.phase === "profile" || (step.phase === "matcher" && step.from === step.to)) return selfRegion("a2ui", step.y, step.phase);
   if (step.branch === "data") return branchRegion("data") ?? actorEdgeRegion(step.from, step.to, step.y, step.phase);
   return actorEdgeRegion(step.from, step.to, step.y, step.phase);
 }

@@ -56,7 +56,7 @@ function capabilityHints(schemaSpec: A2UIComponentSchemaSpec) {
   };
 }
 
-export function legacyInputSchemaFromTemplate(template: A2UITemplateRegistration): A2UITemplateInputSchema {
+export function inputSchemaFromTemplate(template: A2UITemplateRegistration): A2UITemplateInputSchema {
   const requiredSlots = template.schemaSpec.requiredRoles.map((role) => slotForRole(role, template.surfaceConfig));
   const optionalSlots: A2UITemplateSlot[] = [];
 
@@ -85,6 +85,6 @@ export function legacyInputSchemaFromTemplate(template: A2UITemplateRegistration
 export function normalizeTemplateInputSchema(template: A2UITemplateRegistration): A2UITemplateRegistration {
   return {
     ...template,
-    inputSchema: template.inputSchema ?? legacyInputSchemaFromTemplate(template),
+    inputSchema: template.inputSchema ?? inputSchemaFromTemplate(template),
   };
 }

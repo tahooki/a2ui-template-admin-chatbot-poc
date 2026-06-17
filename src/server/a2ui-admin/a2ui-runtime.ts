@@ -203,7 +203,7 @@ export async function recommendTemplate({
   derivedSchema?: DerivedSchema;
   sampleDataPreview?: SampleDataPreview;
   options?: {
-    allowLegacyIntentFallback?: boolean;
+    allowIntentFallback?: boolean;
     includeTrace?: boolean;
   };
 }): Promise<A2UIRecommendation> {
@@ -221,7 +221,7 @@ export async function recommendTemplate({
     : canonicalSchema
       ? profileFromDerivedSchema(canonicalSchema)
       : buildA2UIDataProfile(sampleDataFromPreview(sampleDataPreview));
-  const allowLegacyIntentFallback = options?.allowLegacyIntentFallback !== false;
+  const allowIntentFallback = options?.allowIntentFallback ?? true;
   let schemaCandidates: A2UICandidateTrace[] | undefined;
 
   if (canonicalSchema) {
@@ -252,7 +252,7 @@ export async function recommendTemplate({
 
     schemaCandidates = schemaDecision.candidates;
 
-    if (!allowLegacyIntentFallback || !data) {
+    if (!allowIntentFallback || !data) {
       const renderPlan = fallbackRenderPlan({
         registryVersion: catalog.version,
         reason: schemaDecision.reason,
@@ -302,23 +302,23 @@ export async function recommendTemplate({
     templates: catalog.templates,
     registryVersion: catalog.version,
   });
-  const legacyRenderPlan = {
+  const templateSchemaRenderPlan = {
     ...renderPlan,
-    strategy: renderPlan.isFallback ? "fallback" : "legacy_schema_spec",
+    strategy: renderPlan.isFallback ? "fallback" : "template_schema_spec",
     candidates: schemaCandidates,
   } satisfies A2UIRenderPlan;
 
-  if (legacyRenderPlan.isFallback) {
+  if (templateSchemaRenderPlan.isFallback) {
     return {
       mode: "text_fallback",
       templateId: null,
       apiId: selectedApiId,
       apiTitle,
       profile,
-      renderPlan: legacyRenderPlan,
-      reason: legacyRenderPlan.reason,
+      renderPlan: templateSchemaRenderPlan,
+      reason: templateSchemaRenderPlan.reason,
       registryVersion: catalog.version,
-      strategy: legacyRenderPlan.strategy ?? "fallback",
+      strategy: templateSchemaRenderPlan.strategy ?? "fallback",
       candidates: schemaCandidates,
       derivedSchema: canonicalSchema ?? derivedSchemaFromDataProfile(profile, { sourceId: selectedApiId }),
     };
@@ -326,14 +326,14 @@ export async function recommendTemplate({
 
   return {
     mode: "render_surface",
-    templateId: legacyRenderPlan.selectedComponentId,
+    templateId: templateSchemaRenderPlan.selectedComponentId,
     apiId: selectedApiId,
     apiTitle,
     profile,
-    renderPlan: legacyRenderPlan,
-    reason: legacyRenderPlan.reason,
+    renderPlan: templateSchemaRenderPlan,
+    reason: templateSchemaRenderPlan.reason,
     registryVersion: catalog.version,
-    strategy: "legacy_schema_spec",
+    strategy: "template_schema_spec",
     candidates: schemaCandidates,
     derivedSchema: canonicalSchema ?? derivedSchemaFromDataProfile(profile, { sourceId: selectedApiId }),
   };
@@ -381,7 +381,7 @@ export async function resolveTemplateData({
         registryVersion: catalog.version,
       })
     : null;
-  const legacy = templateRenderPlan({
+  const templatePlan = templateRenderPlan({
     query,
     data,
     templates: [template],
@@ -395,8 +395,8 @@ export async function resolveTemplateData({
         }
       : null;
   const renderPlan = schemaRenderPlan ?? {
-    ...legacy.renderPlan,
-    strategy: legacy.renderPlan.isFallback ? "fallback" : "legacy_schema_spec",
+    ...templatePlan.renderPlan,
+    strategy: templatePlan.renderPlan.isFallback ? "fallback" : "template_schema_spec",
   };
 
   if (renderPlan.isFallback || renderPlan.selectedComponentId !== templateId) {
@@ -421,7 +421,7 @@ export async function resolveTemplateData({
       decisionReason: renderPlan.reason,
       trace: [
         "profile:data-shape",
-        `matcher:${renderPlan.strategy ?? "legacy_schema_spec"}`,
+        `matcher:${renderPlan.strategy ?? "template_schema_spec"}`,
         `matcher:score:${renderPlan.score}`,
         ...(renderPlan.candidates?.filter((candidate) => candidate.rejected).map((candidate) => `candidate-rejected:${candidate.templateId}:${candidate.rejectionReason}`) ?? []),
         "resolver:equipment-api",
@@ -502,8 +502,8 @@ function readOptions(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
   return {
-    allowLegacyIntentFallback:
-      typeof record.allowLegacyIntentFallback === "boolean" ? record.allowLegacyIntentFallback : undefined,
+    allowIntentFallback:
+      typeof record.allowIntentFallback === "boolean" ? record.allowIntentFallback : undefined,
     includeTrace: typeof record.includeTrace === "boolean" ? record.includeTrace : undefined,
   };
 }

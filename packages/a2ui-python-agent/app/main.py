@@ -15,7 +15,7 @@ class ChatRequest(BaseModel):
     history: list[dict[str, Any]] = Field(default_factory=list)
 
 
-app = FastAPI(title="A2UI Template Python Agent", version="0.1.0")
+app = FastAPI(title="A2UI Template Main Agent", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,7 +36,7 @@ def _message(body: ChatRequest) -> str:
 async def health() -> dict[str, Any]:
     return {
         "ok": True,
-        "name": "a2ui-template-python-agent",
+        "name": "a2ui-template-main-agent",
         "mcpUrl": settings.mcp_url,
         "a2aUrl": settings.a2a_url,
         "a2aEnabled": settings.a2a_enabled,

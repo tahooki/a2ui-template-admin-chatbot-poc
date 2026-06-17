@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   A2UICandidateTrace,
   A2UIMappingDecision,
@@ -43,6 +44,112 @@ function readEquipmentData(value: unknown): EquipmentApiResponse<unknown> | unde
   };
 }
 
+function stableStringify(value: unknown): string {
+  if (value === undefined) return "null";
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .filter((key) => record[key] !== undefined)
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(",")}}`;
+}
+
+function dataRowCount(value: unknown) {
+  if (Array.isArray(value)) return value.length;
+  const record = asRecord(value);
+  if (!record) return 0;
+  const items = record.items;
+  if (Array.isArray(items)) return typeof record.total === "number" ? record.total : items.length;
+  return 1;
+}
+
+function dataShape(value: unknown) {
+  if (Array.isArray(value)) return value.every((item) => asRecord(item)) ? "array<object>" : "array";
+  const record = asRecord(value);
+  if (!record) return typeof value;
+  const items = record.items;
+  if (Array.isArray(items)) return items.every((item) => asRecord(item)) ? "object{items:array<object>}" : "object{items:array}";
+  return "object";
+}
+
+function dataSnapshot(value: unknown) {
+  if (value === undefined) return undefined;
+  const canonical = stableStringify(value);
+  return {
+    dataHash: createHash("sha256").update(canonical, "utf8").digest("hex"),
+    byteLength: new TextEncoder().encode(canonical).length,
+    rowCount: dataRowCount(value),
+    shape: dataShape(value),
+    topLevelKeys: asRecord(value) ? Object.keys(value as Record<string, unknown>).sort() : undefined,
+  };
+}
+
+function readSourceToolMetadata(
+  renderData: A2ARenderRequestData,
+  facts: Record<string, unknown>,
+  apiId: EquipmentApiId,
+) {
+  const explicit = asRecord(renderData.toolMetadata) ?? {};
+  const renderRecord = renderData as Record<string, unknown>;
+  const metadata: Record<string, unknown> = {};
+  const keys = [
+    "source",
+    "operation",
+    "sourceToolName",
+    "sourceToolResultId",
+    "sourceApiId",
+    "sourceDataHash",
+    "sourceDataByteLength",
+    "sourceRowCount",
+    "sourceDataShape",
+    "sourceTopLevelKeys",
+    "renderToolName",
+    "renderToolCallPolicy",
+    "intentSource",
+  ];
+
+  for (const key of keys) {
+    const value = explicit[key] ?? facts[key] ?? renderRecord[key];
+    if (value !== undefined) metadata[key] = value;
+  }
+
+  if (Object.keys(metadata).length === 0) return undefined;
+  metadata.sourceApiId ??= apiId;
+  return metadata;
+}
+
+function buildDataIntegrity(rawData: unknown, sourceTool?: Record<string, unknown>) {
+  const received = dataSnapshot(rawData);
+  if (!received && !sourceTool) return undefined;
+
+  const expectedHash = typeof sourceTool?.sourceDataHash === "string" ? sourceTool.sourceDataHash : undefined;
+  const expectedByteLength = typeof sourceTool?.sourceDataByteLength === "number" ? sourceTool.sourceDataByteLength : undefined;
+  const expectedRowCount = typeof sourceTool?.sourceRowCount === "number" ? sourceTool.sourceRowCount : undefined;
+  const hashMatched = expectedHash ? Boolean(received && expectedHash === received.dataHash) : undefined;
+  const rowCountMatched = expectedRowCount !== undefined ? Boolean(received && expectedRowCount === received.rowCount) : undefined;
+  const byteLengthMatched = expectedByteLength !== undefined ? Boolean(received && expectedByteLength === received.byteLength) : undefined;
+  const checks = [hashMatched, rowCountMatched, byteLengthMatched].filter((value) => value !== undefined);
+
+  return {
+    comparedAt: new Date().toISOString(),
+    expectedHash,
+    receivedHash: received?.dataHash,
+    hashMatched,
+    expectedRowCount,
+    receivedRowCount: received?.rowCount,
+    rowCountMatched,
+    expectedByteLength,
+    receivedByteLength: received?.byteLength,
+    byteLengthMatched,
+    receivedShape: received?.shape,
+    receivedTopLevelKeys: received?.topLevelKeys,
+    matched: checks.length > 0 ? checks.every(Boolean) : undefined,
+  };
+}
+
 function readRenderData(body: A2ASendMessageRequest): A2ARenderRequestData | undefined {
   const parts = body.message?.parts ?? [];
   for (const part of parts) {
@@ -67,7 +174,11 @@ function readActionData(body: A2ASendMessageRequest): A2AActionRequestData | und
   return undefined;
 }
 
-function decisionTrace(recommendation: A2UIRecommendation) {
+function decisionTrace(
+  recommendation: A2UIRecommendation,
+  sourceTool?: Record<string, unknown>,
+  dataIntegrity?: Record<string, unknown>,
+) {
   const candidates = recommendation.candidates;
   return {
     kind: "a2ui.matcher.trace" as const,
@@ -76,6 +187,8 @@ function decisionTrace(recommendation: A2UIRecommendation) {
     candidateCount: candidates?.length ?? 0,
     candidates,
     mapping: recommendation.mapping,
+    sourceTool,
+    dataIntegrity,
   };
 }
 
@@ -84,13 +197,17 @@ function textFallbackTask({
   fallbackText,
   reason,
   recommendation,
+  sourceTool,
+  dataIntegrity,
 }: {
   contextId?: string;
   fallbackText?: string;
   reason: string;
   recommendation?: A2UIRecommendation;
+  sourceTool?: Record<string, unknown>;
+  dataIntegrity?: Record<string, unknown>;
 }) {
-  const trace = recommendation ? traceArtifact(decisionTrace(recommendation)) : undefined;
+  const trace = recommendation ? traceArtifact(decisionTrace(recommendation, sourceTool, dataIntegrity)) : undefined;
   return task({
     contextId,
     state: "TASK_STATE_COMPLETED",
@@ -103,11 +220,19 @@ function textFallbackTask({
       score: recommendation?.score,
       candidates: recommendation?.candidates,
       mapping: recommendation?.mapping,
+      sourceTool,
+      dataIntegrity,
     },
   });
 }
 
-function failedTask(contextId: string | undefined, error: unknown, taskId?: string) {
+function failedTask(
+  contextId: string | undefined,
+  error: unknown,
+  taskId?: string,
+  sourceTool?: Record<string, unknown>,
+  dataIntegrity?: Record<string, unknown>,
+) {
   const reason = error instanceof Error ? error.message : String(error);
   return task({
     id: taskId,
@@ -117,6 +242,8 @@ function failedTask(contextId: string | undefined, error: unknown, taskId?: stri
     metadata: {
       a2uiTaskKind: "failed",
       reason,
+      sourceTool,
+      dataIntegrity,
     },
   });
 }
@@ -141,13 +268,18 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string): Promise
 
   const facts = asRecord(renderData.facts) ?? {};
   const apiId = readApiId(renderData.apiId) ?? readApiId(facts.apiId) ?? chooseEquipmentApiForPrompt(query);
-  const data = readEquipmentData(renderData.data) ?? readEquipmentData(facts.data);
+  const sourceTool = readSourceToolMetadata(renderData, facts, apiId);
+  const renderDataEquipment = readEquipmentData(renderData.data);
+  const factsEquipment = readEquipmentData(facts.data);
+  const data = renderDataEquipment ?? factsEquipment;
+  const rawData = renderDataEquipment ? renderData.data : factsEquipment ? facts.data : renderData.data ?? facts.data;
+  const dataIntegrity = buildDataIntegrity(rawData, sourceTool);
   const sampleDataPreview = renderData.sampleDataPreview ?? (facts.sampleDataPreview as A2ARenderRequestData["sampleDataPreview"]);
   const derivedSchema = renderData.derivedSchema ?? (facts.derivedSchema as A2ARenderRequestData["derivedSchema"]);
   const fallbackText = renderData.fallbackText || (typeof facts.fallbackText === "string" ? facts.fallbackText : undefined);
   const options = {
     includeTrace: renderData.a2uiOptions?.includeTrace ?? true,
-    allowLegacyIntentFallback: renderData.a2uiOptions?.allowLegacyIntentFallback ?? true,
+    allowIntentFallback: renderData.a2uiOptions?.allowIntentFallback ?? true,
   };
 
   try {
@@ -166,6 +298,8 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string): Promise
         fallbackText,
         reason: recommendation.reason,
         recommendation,
+        sourceTool,
+        dataIntegrity,
       });
       return taskId ? { ...fallback, id: taskId } : fallback;
     }
@@ -176,6 +310,8 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string): Promise
         fallbackText,
         reason: "A2UI surface resolution requires agent-provided data in facts.data.",
         recommendation,
+        sourceTool,
+        dataIntegrity,
       });
       return taskId ? { ...fallback, id: taskId } : fallback;
     }
@@ -189,7 +325,7 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string): Promise
       sampleDataPreview,
       mapping: recommendation.mapping,
     });
-    const trace = decisionTrace(recommendation);
+    const trace = decisionTrace(recommendation, sourceTool, dataIntegrity);
     return task({
       id: taskId,
       contextId,
@@ -209,6 +345,8 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string): Promise
             templateId: recommendation.templateId,
             candidates: recommendation.candidates as A2UICandidateTrace[] | undefined,
             mapping: recommendation.mapping as A2UIMappingDecision | undefined,
+            sourceTool,
+            dataIntegrity,
           },
         }),
       ],
@@ -219,10 +357,12 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string): Promise
         score: recommendation.score,
         candidates: recommendation.candidates,
         mapping: recommendation.mapping,
+        sourceTool,
+        dataIntegrity,
       },
     });
   } catch (error) {
-    return failedTask(contextId, error, taskId);
+    return failedTask(contextId, error, taskId, sourceTool, dataIntegrity);
   }
 }
 

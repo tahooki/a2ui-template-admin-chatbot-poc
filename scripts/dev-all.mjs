@@ -5,7 +5,7 @@ const services = [
   { name: "web", command: "npm", args: ["run", "dev", "--", "-p", "3001"] },
   { name: "mcp", command: "npm", args: ["run", "mcp:dev"] },
   { name: "equipment", command: "npm", args: ["run", "equipment-source:dev"] },
-  { name: "python", command: "npm", args: ["run", "python-agent:dev"] },
+  { name: "main-agent", command: "npm", args: ["run", "main-agent:dev"] },
 ];
 
 const children = new Map();
@@ -50,4 +50,4 @@ for (const service of services) {
 process.on("SIGINT", () => stopAll("SIGINT"));
 process.on("SIGTERM", () => stopAll("SIGTERM"));
 
-console.log("[dev:all] starting web:3001, mcp:4100, python-agent:8000, equipment-source:8100");
+console.log("[dev:all] starting web:3001, mcp:4100 fallback, main-agent:8000 with A2A primary, equipment-source:8100");

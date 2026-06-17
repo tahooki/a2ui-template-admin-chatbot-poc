@@ -1,10 +1,11 @@
 export type AgentFlowActor =
   | "chat"
   | "next"
-  | "python_bridge"
+  | "main_agent"
   | "a2ui"
   | "llm"
   | "business_db"
+  | "a2ui_render_tool"
   | "registry";
 
 export type AgentFlowPhase =
@@ -28,7 +29,7 @@ export type AgentFlowBranch = "general" | "data" | "matched" | "no_template" | "
 
 export type AgentFlowSeverity = "info" | "success" | "warning" | "error";
 
-export type AgentFlowEmitter = "chat" | "next" | "python-agent" | "a2ui-agent";
+export type AgentFlowEmitter = "chat" | "next" | "main-agent" | "a2ui-agent";
 
 export type AgentFlowEvent = {
   id: string;

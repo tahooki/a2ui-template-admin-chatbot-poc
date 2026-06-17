@@ -135,7 +135,7 @@ export function AdminPanel({
             <span>Intent</span>
             <strong>{compactList(selected.schemaSpec.intentKeywords)}</strong>
             <span>Input</span>
-            <strong>{selected.inputSchema ? selected.inputSchema.accepts.shape.join(", ") : "legacy adapter"}</strong>
+            <strong>{selected.inputSchema ? selected.inputSchema.accepts.shape.join(", ") : "schema adapter"}</strong>
           </div>
         </details>
 

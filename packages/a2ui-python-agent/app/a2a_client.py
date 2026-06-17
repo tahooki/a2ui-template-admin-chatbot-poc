@@ -42,8 +42,16 @@ class A2UIA2AClient:
         fallback_text: str,
         derived_schema: dict[str, Any] | None = None,
         sample_data_preview: dict[str, Any] | None = None,
+        tool_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         intent_key = "equipment.catalog.lookup" if api_id == "equipment-catalog" else "equipment.status.lookup"
+        facts = {
+            **(tool_metadata or {}),
+            "apiId": api_id,
+            "data": data,
+            "profile": profile,
+            "fallbackText": fallback_text,
+        }
         return {
             "configuration": {
                 "acceptedOutputModes": [A2A_SURFACE, "text/plain"],
@@ -61,18 +69,14 @@ class A2UIA2AClient:
                             "kind": "a2ui.render.request",
                             "query": query,
                             "intentKey": intent_key,
-                            "facts": {
-                                "apiId": api_id,
-                                "data": data,
-                                "profile": profile,
-                                "fallbackText": fallback_text,
-                            },
+                            "facts": facts,
                             "sampleDataPreview": sample_data_preview,
                             "derivedSchema": derived_schema,
                             "fallbackText": fallback_text,
+                            "toolMetadata": tool_metadata,
                             "a2uiOptions": {
                                 "includeTrace": True,
-                                "allowLegacyIntentFallback": True,
+                                "allowIntentFallback": True,
                             },
                         },
                     },
@@ -149,6 +153,8 @@ def extract_a2ui_result(payload: dict[str, Any]) -> dict[str, Any]:
                     "score": decision.get("score") if isinstance(decision.get("score"), (int, float)) else metadata.get("score"),
                     "candidates": decision.get("candidates") or metadata.get("candidates"),
                     "mapping": decision.get("mapping") or metadata.get("mapping"),
+                    "sourceTool": decision.get("sourceTool") or metadata.get("sourceTool"),
+                    "dataIntegrity": decision.get("dataIntegrity") or metadata.get("dataIntegrity"),
                 }
 
     for part in _iter_parts(task):
@@ -165,4 +171,6 @@ def extract_a2ui_result(payload: dict[str, Any]) -> dict[str, Any]:
         "score": metadata.get("score"),
         "candidates": metadata.get("candidates"),
         "mapping": metadata.get("mapping"),
+        "sourceTool": metadata.get("sourceTool"),
+        "dataIntegrity": metadata.get("dataIntegrity"),
     }

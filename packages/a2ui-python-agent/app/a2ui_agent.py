@@ -17,6 +17,8 @@ class A2UIResponse(BaseModel):
     score: float | None = None
     candidates: list[dict[str, Any]] | None = None
     mapping: dict[str, Any] | None = None
+    source_tool: dict[str, Any] | None = None
+    data_integrity: dict[str, Any] | None = None
 
 
 class A2UIMcpClient:
@@ -66,7 +68,7 @@ class A2UIMcpClient:
                     "protocolVersion": "2025-03-26",
                     "capabilities": {},
                     "clientInfo": {
-                        "name": "a2ui-template-python-agent",
+                        "name": "a2ui-template-main-agent",
                         "version": "0.1.0",
                     },
                 },
@@ -110,6 +112,7 @@ async def _render_via_a2a(
     fallback_text: str,
     derived_schema: dict[str, Any] | None = None,
     sample_data_preview: dict[str, Any] | None = None,
+    tool_metadata: dict[str, Any] | None = None,
     a2a_url: str | None = None,
 ) -> A2UIResponse:
     client = A2UIA2AClient(a2a_url)
@@ -121,6 +124,7 @@ async def _render_via_a2a(
         fallback_text=fallback_text,
         derived_schema=derived_schema,
         sample_data_preview=sample_data_preview,
+        tool_metadata=tool_metadata,
     )
     result = extract_a2ui_result(await client.send_message(payload))
     if result.get("type") == "surface" and result.get("surface"):
@@ -132,6 +136,8 @@ async def _render_via_a2a(
             score=result.get("score"),
             candidates=result.get("candidates"),
             mapping=result.get("mapping"),
+            source_tool=result.get("sourceTool"),
+            data_integrity=result.get("dataIntegrity"),
         )
 
     return A2UIResponse(
@@ -142,6 +148,8 @@ async def _render_via_a2a(
         score=result.get("score"),
         candidates=result.get("candidates"),
         mapping=result.get("mapping"),
+        source_tool=result.get("sourceTool"),
+        data_integrity=result.get("dataIntegrity"),
     )
 
 
@@ -153,8 +161,15 @@ async def _render_via_mcp(
     fallback_text: str,
     derived_schema: dict[str, Any] | None = None,
     sample_data_preview: dict[str, Any] | None = None,
+    tool_metadata: dict[str, Any] | None = None,
     mcp_url: str | None = None,
 ) -> A2UIResponse:
+    facts = {
+        "query": query,
+        "apiId": api_id,
+        "profile": profile,
+        **(tool_metadata or {}),
+    }
     client = A2UIMcpClient(mcp_url)
     decision = await client.call_tool(
         "a2ui.recommendTemplate",
@@ -165,13 +180,9 @@ async def _render_via_mcp(
             "sampleDataPreview": sample_data_preview,
             "options": {
                 "includeTrace": True,
-                "allowLegacyIntentFallback": True,
+                "allowIntentFallback": True,
             },
-            "facts": {
-                "query": query,
-                "apiId": api_id,
-                "profile": profile,
-            },
+            "facts": facts,
         },
     )
 
@@ -184,6 +195,7 @@ async def _render_via_mcp(
             score=decision.get("score"),
             candidates=decision.get("candidates"),
             mapping=decision.get("mapping"),
+            source_tool=tool_metadata,
         )
 
     surface = await client.call_tool(
@@ -199,6 +211,7 @@ async def _render_via_mcp(
                 "derivedSchema": derived_schema,
                 "sampleDataPreview": sample_data_preview,
                 "mapping": decision.get("mapping"),
+                "toolMetadata": tool_metadata,
             },
         },
     )
@@ -211,6 +224,7 @@ async def _render_via_mcp(
             score=decision.get("score"),
             candidates=decision.get("candidates"),
             mapping=decision.get("mapping"),
+            source_tool=tool_metadata,
         )
 
     return A2UIResponse(
@@ -221,6 +235,7 @@ async def _render_via_mcp(
         score=decision.get("score"),
         candidates=decision.get("candidates"),
         mapping=decision.get("mapping"),
+        source_tool=tool_metadata,
     )
 
 
@@ -232,6 +247,7 @@ async def render_or_fallback(
     fallback_text: str,
     derived_schema: dict[str, Any] | None = None,
     sample_data_preview: dict[str, Any] | None = None,
+    tool_metadata: dict[str, Any] | None = None,
     mcp_url: str | None = None,
     a2a_url: str | None = None,
 ) -> A2UIResponse:
@@ -245,11 +261,12 @@ async def render_or_fallback(
                 fallback_text,
                 derived_schema,
                 sample_data_preview,
+                tool_metadata,
                 a2a_url,
             )
         except Exception as exc:
             if not settings.a2a_fallback_to_mcp:
-                return A2UIResponse(type="text_fallback", text=fallback_text, reason=str(exc))
+                return A2UIResponse(type="text_fallback", text=fallback_text, reason=str(exc), source_tool=tool_metadata)
 
     try:
         return await _render_via_mcp(
@@ -260,7 +277,8 @@ async def render_or_fallback(
             fallback_text,
             derived_schema,
             sample_data_preview,
+            tool_metadata,
             mcp_url,
         )
     except Exception as exc:
-        return A2UIResponse(type="text_fallback", text=fallback_text, reason=str(exc))
+        return A2UIResponse(type="text_fallback", text=fallback_text, reason=str(exc), source_tool=tool_metadata)

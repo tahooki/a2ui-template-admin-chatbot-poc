@@ -1,1 +1,1 @@
-"""A2UI Python Agent package."""
+"""A2UI Main Agent package."""

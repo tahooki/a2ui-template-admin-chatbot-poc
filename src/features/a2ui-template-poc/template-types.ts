@@ -159,7 +159,7 @@ export type A2UIRenderPlan = {
   isFallback: boolean;
   registryVersion: number;
   maxItems?: number;
-  strategy?: "derived_schema" | "legacy_schema_spec" | "fallback";
+  strategy?: "derived_schema" | "template_schema_spec" | "fallback";
   candidates?: A2UICandidateTrace[];
   mapping?: A2UIMappingDecision;
 };
@@ -209,7 +209,7 @@ export type A2UISurfaceEnvelope = {
     registryVersion: number;
     decisionReason: string;
     trace: string[];
-    strategy?: "derived_schema" | "legacy_schema_spec" | "fallback";
+    strategy?: "derived_schema" | "template_schema_spec" | "fallback";
     score?: number;
     candidates?: A2UICandidateTrace[];
     mapping?: A2UIMappingDecision;

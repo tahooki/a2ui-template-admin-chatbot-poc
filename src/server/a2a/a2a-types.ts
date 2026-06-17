@@ -71,12 +71,13 @@ export type A2ARenderRequestData = {
   apiId?: EquipmentApiId | string;
   facts?: Record<string, unknown>;
   data?: unknown;
+  toolMetadata?: Record<string, unknown>;
   sampleDataPreview?: SampleDataPreview;
   derivedSchema?: DerivedSchema;
   fallbackText?: string;
   a2uiOptions?: {
     includeTrace?: boolean;
-    allowLegacyIntentFallback?: boolean;
+    allowIntentFallback?: boolean;
   };
 };
 
@@ -100,6 +101,8 @@ export type A2UIDecisionArtifactData = {
     templateId: string;
     candidates?: A2UICandidateTrace[];
     mapping?: A2UIMappingDecision;
+    sourceTool?: Record<string, unknown>;
+    dataIntegrity?: Record<string, unknown>;
   };
 };
 
@@ -110,6 +113,8 @@ export type A2ATraceArtifactData = {
   candidateCount: number;
   candidates?: A2UICandidateTrace[];
   mapping?: A2UIMappingDecision;
+  sourceTool?: Record<string, unknown>;
+  dataIntegrity?: Record<string, unknown>;
 };
 
 export function a2aHeaders(init?: HeadersInit): HeadersInit {

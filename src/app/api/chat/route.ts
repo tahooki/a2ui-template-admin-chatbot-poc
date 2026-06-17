@@ -38,16 +38,16 @@ function isDevelopmentErrorProbe(message: string) {
   return process.env.NODE_ENV !== "production" && ["오류 테스트", "/error", "__force_error__"].includes(message);
 }
 
-async function proxyPythonAgent(body: ChatRequestBody) {
-  const pythonUrl = (process.env.PYTHON_AGENT_URL ?? "http://localhost:8000").replace(/\/$/, "");
+async function proxyMainAgent(body: ChatRequestBody) {
+  const mainAgentUrl = (process.env.MAIN_AGENT_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
   const controller = new AbortController();
-  const configuredTimeoutMs = Number(process.env.PYTHON_AGENT_CONNECT_TIMEOUT_MS ?? "2500");
+  const configuredTimeoutMs = Number(process.env.MAIN_AGENT_CONNECT_TIMEOUT_MS ?? "2500");
   const timeoutMs = Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0 ? configuredTimeoutMs : 2500;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(`${pythonUrl}/chat/stream`, {
+    const response = await fetch(`${mainAgentUrl}/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -57,13 +57,13 @@ async function proxyPythonAgent(body: ChatRequestBody) {
 
     if (!response.ok || !response.body) {
       const details = await response.text().catch(() => "");
-      return errorStream("Python Agent 응답을 받을 수 없습니다.", details || `HTTP ${response.status}`);
+      return errorStream("Main Agent 응답을 받을 수 없습니다.", details || `HTTP ${response.status}`);
     }
     return streamResponse(response.body);
   } catch (error) {
     clearTimeout(timeout);
     const details = error instanceof Error ? error.message : String(error);
-    return errorStream("Python Agent에 연결할 수 없습니다.", details);
+    return errorStream("Main Agent에 연결할 수 없습니다.", details);
   }
 }
 
@@ -75,5 +75,5 @@ export async function POST(request: Request) {
     return errorStream("Agent 오류 시나리오를 재현했습니다.", "Development-only Flow Board error probe.");
   }
 
-  return proxyPythonAgent({ ...body, message });
+  return proxyMainAgent({ ...body, message });
 }

@@ -37,7 +37,7 @@ const toolDefinitions = [
           additionalProperties: false,
           properties: {
             includeTrace: { type: "boolean" },
-            allowLegacyIntentFallback: { type: "boolean" },
+            allowIntentFallback: { type: "boolean" },
           },
         },
       },

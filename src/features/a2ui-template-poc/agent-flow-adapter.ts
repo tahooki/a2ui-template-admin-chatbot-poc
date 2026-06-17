@@ -14,6 +14,10 @@ function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function recordValue(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
 function boolText(value: unknown) {
   return typeof value === "boolean" ? String(value) : undefined;
 }
@@ -100,7 +104,7 @@ function matcherDetail(source: ChatFlowSourceEvent) {
 }
 
 function profileDetail(source: ChatFlowSourceEvent) {
-  const rowCount = numberValue(source.data.rowCount);
+  const rowCount = numberValue(source.data.rowCount) ?? numberValue(source.data.sourceRowCount);
   const previewRowCount = numberValue(source.data.previewRowCount);
   const booleanFieldCount = numberValue(source.data.booleanFieldCount);
   const hasImageField = boolText(source.data.hasImageField);
@@ -109,6 +113,39 @@ function profileDetail(source: ChatFlowSourceEvent) {
     typeof previewRowCount === "number" ? `preview=${previewRowCount}` : undefined,
     typeof booleanFieldCount === "number" ? `booleans=${booleanFieldCount}` : undefined,
     hasImageField ? `image=${hasImageField}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" | ");
+}
+
+function toolDetail(source: ChatFlowSourceEvent) {
+  const apiId = shortText(source.data.apiId);
+  const sourceToolName = shortText(source.data.sourceToolName);
+  const sourceToolResultId = shortText(source.data.sourceToolResultId, 34);
+  const rowCount = numberValue(source.data.rowCount) ?? numberValue(source.data.sourceRowCount);
+  const hash = shortText(source.data.sourceDataHash, 14);
+  return [
+    sourceToolName ? `tool=${sourceToolName}` : undefined,
+    apiId ? `api=${apiId}` : undefined,
+    sourceToolResultId ? `result=${sourceToolResultId}` : undefined,
+    typeof rowCount === "number" ? `rows=${rowCount}` : undefined,
+    hash ? `hash=${hash}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" | ");
+}
+
+function renderToolDetail(source: ChatFlowSourceEvent) {
+  const renderToolName = shortText(source.data.renderToolName) ?? shortText(source.data.label);
+  const policy = shortText(source.data.renderToolCallPolicy);
+  const sourceToolName = shortText(source.data.sourceToolName);
+  const integrity = recordValue(source.data.dataIntegrity);
+  const matched = boolText(integrity?.matched);
+  return [
+    renderToolName ? `tool=${renderToolName}` : undefined,
+    sourceToolName ? `source=${sourceToolName}` : undefined,
+    policy ? `policy=${policy}` : undefined,
+    matched ? `integrity=${matched}` : undefined,
   ]
     .filter(Boolean)
     .join(" | ");
@@ -156,7 +193,7 @@ function localEvent(source: ChatFlowSourceEvent, state: AgentFlowAdapterState): 
         event: "response_open",
         phase: "bridge",
         from: "next",
-        to: "python_bridge",
+        to: "main_agent",
         label: "Open /chat/stream",
         detail: `registry=v${source.registryVersion}`,
         severity: "info",
@@ -195,12 +232,12 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
       newFlowEvent(source, 0, {
         event: "state:planning",
         phase: "planning",
-        from: "python_bridge",
+        from: "main_agent",
         to: "a2ui",
         label: "Delegate chat turn",
         detail: label || "A2UI Agent started planning.",
         severity: "info",
-        physicalEmitter: "python-agent",
+        physicalEmitter: "main-agent",
         data: source.data,
       }),
     ];
@@ -224,7 +261,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
           .join(" | "),
         branch: isGeneral ? "general" : "data",
         severity: "info",
-        physicalEmitter: "python-agent",
+        physicalEmitter: "main-agent",
         data: source.data,
       }),
     ];
@@ -241,7 +278,110 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         detail: label || "equipment data",
         branch: "data",
         severity: "info",
-        physicalEmitter: "python-agent",
+        physicalEmitter: "main-agent",
+        data: source.data,
+      }),
+    ];
+  }
+
+  if (status === "business_tool_selected") {
+    return [
+      newFlowEvent(source, 0, {
+        event: "state:business_tool_selected",
+        phase: "intent",
+        from: "a2ui",
+        to: "business_db",
+        label: "Select business API tool",
+        detail: toolDetail(source) || label,
+        branch: "data",
+        severity: "info",
+        physicalEmitter: "main-agent",
+        data: source.data,
+      }),
+    ];
+  }
+
+  if (status === "business_tool_call") {
+    return [
+      newFlowEvent(source, 0, {
+        event: "state:business_tool_call",
+        phase: "data_loaded",
+        from: "a2ui",
+        to: "business_db",
+        label: "Call business API tool",
+        detail: toolDetail(source) || label,
+        branch: "data",
+        severity: "info",
+        physicalEmitter: "main-agent",
+        data: source.data,
+      }),
+    ];
+  }
+
+  if (status === "business_tool_result") {
+    return [
+      newFlowEvent(source, 0, {
+        event: "state:business_tool_result",
+        phase: "data_loaded",
+        from: "business_db",
+        to: "a2ui",
+        label: "Business tool result",
+        detail: toolDetail(source) || profileDetail(source),
+        branch: "data",
+        severity: "success",
+        physicalEmitter: "main-agent",
+        data: source.data,
+      }),
+    ];
+  }
+
+  if (status === "a2ui_tool_selected") {
+    return [
+      newFlowEvent(source, 0, {
+        event: "state:a2ui_tool_selected",
+        phase: "registry_loaded",
+        from: "a2ui",
+        to: "a2ui_render_tool",
+        label: "Select a2ui_render tool",
+        detail: renderToolDetail(source) || label,
+        branch: "data",
+        severity: "info",
+        physicalEmitter: "main-agent",
+        data: source.data,
+      }),
+    ];
+  }
+
+  if (status === "a2ui_tool_call") {
+    return [
+      newFlowEvent(source, 0, {
+        event: "state:a2ui_tool_call",
+        phase: "registry_loaded",
+        from: "a2ui",
+        to: "a2ui_render_tool",
+        label: "Run a2ui_render tool",
+        detail: renderToolDetail(source) || label,
+        branch: "data",
+        severity: "info",
+        physicalEmitter: "main-agent",
+        data: source.data,
+      }),
+    ];
+  }
+
+  if (status === "a2ui_tool_result") {
+    const detail = [matcherDetail(source), renderToolDetail(source)].filter(Boolean).join(" | ");
+    return [
+      newFlowEvent(source, 0, {
+        event: "state:a2ui_tool_result",
+        phase: "matcher",
+        from: "a2ui_render_tool",
+        to: "a2ui",
+        label: "a2ui_render result",
+        detail,
+        branch: "data",
+        severity: "success",
+        physicalEmitter: "main-agent",
         data: source.data,
       }),
     ];
@@ -258,7 +398,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         detail: profileDetail(source),
         branch: "data",
         severity: "success",
-        physicalEmitter: "python-agent",
+        physicalEmitter: "main-agent",
         data: source.data,
       }),
     ];
@@ -277,7 +417,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
           detail: profileDetail(source),
           branch: "data",
           severity: "success",
-          physicalEmitter: "python-agent",
+          physicalEmitter: "main-agent",
           data: source.data,
         }),
       );
@@ -292,7 +432,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         detail: profileDetail(source),
         branch: "data",
         severity: "success",
-        physicalEmitter: "python-agent",
+        physicalEmitter: "main-agent",
         data: source.data,
       }),
     );
@@ -310,7 +450,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         detail: `transport=${status}${label ? ` | ${label}` : ""}`,
         branch: "data",
         severity: "info",
-        physicalEmitter: "python-agent",
+        physicalEmitter: "main-agent",
         data: source.data,
       }),
     ];
@@ -327,7 +467,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         detail: source.data.templateCount ? `templates=${String(source.data.templateCount)}` : undefined,
         branch: "data",
         severity: "success",
-        physicalEmitter: "python-agent",
+        physicalEmitter: "main-agent",
         data: source.data,
       }),
     ];
@@ -344,7 +484,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         detail: matcherDetail(source),
         branch: "data",
         severity: "info",
-        physicalEmitter: "python-agent",
+        physicalEmitter: "main-agent",
         data: source.data,
       }),
     ];
@@ -358,7 +498,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
       to: "a2ui",
       label: label || "Runtime state",
       severity: "info",
-      physicalEmitter: "python-agent",
+      physicalEmitter: "main-agent",
       data: source.data,
     }),
   ];
@@ -382,7 +522,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
         detail: surfaceDetail(source),
         branch: "matched",
         severity: "success",
-        physicalEmitter: "python-agent",
+        physicalEmitter: "main-agent",
         data: source.data,
       }),
     ];
@@ -402,7 +542,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
           detail: shortText(source.data.text ?? source.data.delta),
           branch,
           severity: "success",
-          physicalEmitter: "python-agent",
+          physicalEmitter: "main-agent",
           data: source.data,
         }),
         newFlowEvent(source, 1, {
@@ -414,7 +554,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
           detail: shortText(source.data.text ?? source.data.delta),
           branch,
           severity: "success",
-          physicalEmitter: "python-agent",
+          physicalEmitter: "main-agent",
           data: source.data,
         }),
       ];
@@ -429,7 +569,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
         detail: shortText(source.data.text ?? source.data.delta),
         branch,
         severity: branch === "no_template" ? "warning" : "success",
-        physicalEmitter: "python-agent",
+        physicalEmitter: "main-agent",
         data: source.data,
       }),
     ];
@@ -446,7 +586,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
         detail: [shortText(source.data.message), shortText(source.data.details)].filter(Boolean).join(" | "),
         branch: "error",
         severity: "error",
-        physicalEmitter: "python-agent",
+        physicalEmitter: "main-agent",
         data: source.data,
       }),
     ];
@@ -466,7 +606,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
           detail: doneDetail(source),
           branch,
           severity: "warning",
-          physicalEmitter: "python-agent",
+          physicalEmitter: "main-agent",
           data: source.data,
         }),
       );
@@ -481,7 +621,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
         detail: doneDetail(source),
         branch,
         severity: branch === "error" ? "error" : branch === "matched" ? "success" : "info",
-        physicalEmitter: "python-agent",
+        physicalEmitter: "main-agent",
         data: source.data,
       }),
     );
@@ -494,7 +634,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
       phase: "planning",
       label: source.event,
       severity: "info",
-      physicalEmitter: "python-agent",
+      physicalEmitter: "main-agent",
       data: source.data,
     }),
   ];

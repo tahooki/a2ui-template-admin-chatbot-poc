@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { agentFlowEventsFromSource } from "./agent-flow-adapter";
 import { AgentTracePanel } from "./agent-trace-panel";
@@ -10,36 +10,76 @@ import { useTemplateRegistry } from "./template-store";
 import styles from "./styles.module.css";
 import type { AgentFlowEvent, ChatFlowSourceEvent } from "./agent-flow-types";
 
+const flowEventDisplayIntervalMs = 1000;
+const maxFlowEvents = 180;
+
 export function A2UITemplatePocPage() {
   const { templates, version, saveTemplate, resetRegistry, isLoading, error } = useTemplateRegistry();
   const [chatWidth, setChatWidth] = useState(304);
   const [chatResetKey, setChatResetKey] = useState(0);
   const [flowEvents, setFlowEvents] = useState<AgentFlowEvent[]>([]);
   const draggingRef = useRef(false);
+  const logicalFlowEventsRef = useRef<AgentFlowEvent[]>([]);
+  const displayQueueRef = useRef<AgentFlowEvent[]>([]);
+  const displayTimerRef = useRef<number | null>(null);
+
+  function clearFlowDisplayTimer() {
+    if (!displayTimerRef.current) return;
+    window.clearTimeout(displayTimerRef.current);
+    displayTimerRef.current = null;
+  }
+
+  function showNextQueuedFlowEvent() {
+    const nextEvent = displayQueueRef.current.shift();
+    if (!nextEvent) return false;
+
+    setFlowEvents((current) => [...current, nextEvent].slice(-maxFlowEvents));
+    return true;
+  }
+
+  function scheduleNextFlowEvent(delayMs = flowEventDisplayIntervalMs) {
+    if (displayTimerRef.current) return;
+    displayTimerRef.current = window.setTimeout(() => {
+      displayTimerRef.current = null;
+      if (showNextQueuedFlowEvent()) scheduleNextFlowEvent();
+    }, delayMs);
+  }
+
+  useEffect(() => () => clearFlowDisplayTimer(), []);
 
   async function resetDemo() {
     await resetRegistry();
     setChatResetKey((current) => current + 1);
+    clearFlowDisplayTimer();
+    logicalFlowEventsRef.current = [];
+    displayQueueRef.current = [];
     setFlowEvents([]);
   }
 
   function handleFlowEvent(source: ChatFlowSourceEvent) {
-    setFlowEvents((current) => {
-      const currentTurnEvents = current.filter((event) => event.turnId === source.turnId);
-      const nextEvents = agentFlowEventsFromSource(source, currentTurnEvents);
-      const seenIds = new Set(current.map((event) => event.id));
-      const uniqueNextEvents = nextEvents.map((event) => {
-        let id = event.id;
-        let suffix = 1;
-        while (seenIds.has(id)) {
-          id = `${event.id}-${suffix}`;
-          suffix += 1;
-        }
-        seenIds.add(id);
-        return id === event.id ? event : { ...event, id };
-      });
-      return [...current, ...uniqueNextEvents].slice(-180);
+    const current = logicalFlowEventsRef.current;
+    const currentTurnEvents = current.filter((event) => event.turnId === source.turnId);
+    const nextEvents = agentFlowEventsFromSource(source, currentTurnEvents);
+    const seenIds = new Set(current.map((event) => event.id));
+    const uniqueNextEvents = nextEvents.map((event) => {
+      let id = event.id;
+      let suffix = 1;
+      while (seenIds.has(id)) {
+        id = `${event.id}-${suffix}`;
+        suffix += 1;
+      }
+      seenIds.add(id);
+      return id === event.id ? event : { ...event, id };
     });
+
+    const isDisplayIdle = displayQueueRef.current.length === 0 && !displayTimerRef.current;
+    logicalFlowEventsRef.current = [...current, ...uniqueNextEvents].slice(-maxFlowEvents);
+    displayQueueRef.current.push(...uniqueNextEvents);
+    if (isDisplayIdle && showNextQueuedFlowEvent()) {
+      scheduleNextFlowEvent();
+    } else {
+      scheduleNextFlowEvent();
+    }
   }
 
   function startResize(event: ReactPointerEvent<HTMLDivElement>) {
