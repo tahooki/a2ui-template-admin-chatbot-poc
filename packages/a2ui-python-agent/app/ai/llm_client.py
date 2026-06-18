@@ -1,10 +1,14 @@
 import json
+import logging
 import re
 from typing import Any, Literal, TypedDict
 
 import httpx
 
 from ..config import settings
+
+
+logger = logging.getLogger("uvicorn.error")
 
 EquipmentApiId = Literal[
     "equipment-catalog",
@@ -74,6 +78,11 @@ def _compact_error_text(value: str, limit: int = 700) -> str:
     return compacted[:limit]
 
 
+def _compact_log_text(value: str, limit: int = 5000) -> str:
+    compacted = " ".join(value.split())
+    return compacted[:limit]
+
+
 async def _chat_completion(
     messages: list[dict[str, str]],
     *,
@@ -104,6 +113,12 @@ async def _chat_completion(
                 },
                 json=payload,
             )
+        logger.info(
+            "[main-agent] LLM raw response stage=%s status=%s body=%s",
+            stage,
+            response.status_code,
+            _compact_log_text(response.text),
+        )
         if not response.is_success:
             raise LLMClientError(
                 stage,
@@ -168,6 +183,11 @@ async def check_llm_connection() -> dict[str, Any]:
                     "max_tokens": 4,
                 },
             )
+        logger.info(
+            "[main-agent] LLM health raw response status=%s body=%s",
+            response.status_code,
+            _compact_log_text(response.text),
+        )
         return {
             "ok": response.is_success,
             "statusCode": response.status_code,

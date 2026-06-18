@@ -37,7 +37,7 @@ class IntentRoutingTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(AgentRuntimeError):
                 await _choose_api("장비 상태 보여줘")
 
-    async def test_stream_error_includes_llm_failure_details(self) -> None:
+    async def test_stream_error_logs_llm_failure_details_without_exposing_them(self) -> None:
         async def llm_error(message, history=None):
             raise LLMClientError(
                 "intent_classification",
@@ -55,12 +55,13 @@ class IntentRoutingTest(unittest.IsolatedAsyncioTestCase):
 
         error_chunk = next(chunk for chunk in chunks if chunk.startswith("event: error"))
         payload = json.loads(error_chunk.split("data: ", 1)[1])
-        self.assertEqual(payload["errorType"], "AgentRuntimeError")
-        self.assertIn("LLM intent classification failed", payload["details"])
-        self.assertIn("status=401", payload["details"])
-        self.assertIn("invalid_api_key", payload["details"])
+        self.assertEqual(payload["message"], "Agent가 장비 데이터를 조회하거나 처리하지 못했습니다. Python 실행 로그를 확인해 주세요.")
+        self.assertNotIn("details", payload)
+        self.assertNotIn("errorType", payload)
         self.assertIn("chat stream failed", "\n".join(logs.output))
+        self.assertIn("LLM intent classification failed", "\n".join(logs.output))
         self.assertIn("status=401", "\n".join(logs.output))
+        self.assertIn("invalid_api_key", "\n".join(logs.output))
 
 
 if __name__ == "__main__":

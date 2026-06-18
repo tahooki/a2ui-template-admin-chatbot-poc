@@ -411,9 +411,7 @@ async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = 
             trace_payload(
                 turn_id,
                 {
-                    "message": "Agent가 장비 데이터를 조회하거나 처리하지 못했습니다.",
-                    "details": str(exc),
-                    "errorType": exc.__class__.__name__,
+                    "message": "Agent가 장비 데이터를 조회하거나 처리하지 못했습니다. Python 실행 로그를 확인해 주세요.",
                 },
                 "error",
             ),
