@@ -104,7 +104,7 @@ async def _chat_completion(
         payload["response_format"] = response_format
 
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=100.0) as client:
             response = await client.post(
                 f"{settings.openai_base_url.rstrip('/')}/chat/completions",
                 headers={
@@ -166,7 +166,7 @@ async def check_llm_connection() -> dict[str, Any]:
         }
 
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=40.0) as client:
             response = await client.post(
                 f"{settings.openai_base_url.rstrip('/')}/chat/completions",
                 headers={
