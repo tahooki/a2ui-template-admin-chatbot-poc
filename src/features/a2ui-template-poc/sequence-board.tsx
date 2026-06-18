@@ -82,17 +82,12 @@ const zoomStep = 0.1;
 const manualAutoFollowPauseMs = 1600;
 const messageLabelOffset = 42;
 const clickableStepIds = new Set([
-  "business-tool-selected",
-  "business-tool-call",
   "business-tool-result",
-  "a2ui-tool-selected",
   "a2ui-tool-call",
   "profile",
-  "registry-request",
   "registry-loaded",
   "matcher",
   "a2ui-tool-result",
-  "matched-summary",
   "surface",
 ]);
 
@@ -138,7 +133,7 @@ const steps: SequenceStep[] = [
     events: ["state:business_tool_result", "state:data_loaded"],
     from: "business_db",
     to: "main_agent",
-    label: "Receive API data",
+    label: "Source data for compare",
     branch: "data",
     y: 736,
   },
@@ -158,7 +153,7 @@ const steps: SequenceStep[] = [
     events: ["state:a2ui_tool_call"],
     from: "main_agent",
     to: "a2ui_render_tool",
-    label: "Send data to a2ui_render",
+    label: "Send compare payload",
     branch: "data",
     a2uiSubstep: true,
     y: 872,
@@ -169,7 +164,7 @@ const steps: SequenceStep[] = [
     events: ["state:profile"],
     from: "a2ui_render_tool",
     to: "a2ui",
-    label: "Build derived schema",
+    label: "Derived schema input",
     branch: "data",
     a2uiSubstep: true,
     y: 940,
@@ -190,18 +185,18 @@ const steps: SequenceStep[] = [
     events: ["state:registry_loaded"],
     from: "registry",
     to: "a2ui",
-    label: "Receive template contracts",
+    label: "Template contract input",
     branch: "data",
     y: 1076,
   },
-  { id: "matcher", phase: "matcher", events: ["state:matcher"], from: "a2ui", to: "a2ui", label: "Compare schema + templates", branch: "data", a2uiSubstep: true, y: 1144 },
+  { id: "matcher", phase: "matcher", events: ["state:matcher"], from: "a2ui", to: "a2ui", label: "Compare data vs template", branch: "data", a2uiSubstep: true, y: 1144 },
   {
     id: "a2ui-tool-result",
     phase: "matcher",
     events: ["state:a2ui_tool_result"],
     from: "a2ui",
     to: "main_agent",
-    label: "Return render plan",
+    label: "Decision: select template",
     branch: "data",
     a2uiSubstep: true,
     y: 1212,
@@ -222,7 +217,7 @@ const steps: SequenceStep[] = [
     events: ["surface"],
     from: "main_agent",
     to: "chat",
-    label: "SurfaceEnvelope",
+    label: "Return selected template",
     branch: "matched",
     y: 1410,
   },
@@ -500,11 +495,20 @@ type DetailMappingRow = {
   decision: string;
 };
 
+type DetailComparisonSide = {
+  title: string;
+  items: DetailMetric[];
+};
+
 type DetailViewModel = {
   eyebrow: string;
   title: string;
   purpose: string;
   metrics?: DetailMetric[];
+  comparison?: {
+    left: DetailComparisonSide;
+    right: DetailComparisonSide;
+  };
   flow?: DetailFlowItem[];
   mappings?: DetailMappingRow[];
   outcome?: string;
@@ -512,10 +516,6 @@ type DetailViewModel = {
 
 function formatCount(value: number) {
   return value.toLocaleString("en-US");
-}
-
-function formatBoolean(value: boolean) {
-  return value ? "pass" : "check needed";
 }
 
 function formatStrategy(value?: string) {
@@ -537,10 +537,6 @@ function requiredSlotSummary(trace: DataBoundaryScenarioTrace) {
   return compactList(trace.templateContract.inputSchema?.requiredSlots.map((slot) => slot.slot), "none");
 }
 
-function booleanFieldCount(trace: DataBoundaryScenarioTrace) {
-  return trace.derivedSchema.fields.filter((field) => field.type === "boolean").length;
-}
-
 function capabilitySummary(trace: DataBoundaryScenarioTrace) {
   const capabilities = trace.derivedSchema.capabilities;
   return [
@@ -551,6 +547,59 @@ function capabilitySummary(trace: DataBoundaryScenarioTrace) {
   ]
     .filter(Boolean)
     .join(", ") || "basic fields";
+}
+
+function templateCapabilitySummary(trace: DataBoundaryScenarioTrace) {
+  const capabilities = trace.templateContract.inputSchema?.accepts.capabilities;
+  if (!capabilities) return "not required";
+  return Object.entries(capabilities)
+    .filter(([, value]) => value)
+    .map(([key]) => key.replace(/^has/, ""))
+    .join(", ") || "not required";
+}
+
+function missingSlotSummary(trace: DataBoundaryScenarioTrace) {
+  return compactList(trace.renderPlan.mapping?.missingSlots, "none");
+}
+
+function selectedMappingCount(trace: DataBoundaryScenarioTrace) {
+  return trace.renderPlan.mapping?.mappings.length ?? trace.mappingComparison.length;
+}
+
+function comparisonInput(trace: DataBoundaryScenarioTrace): DetailViewModel["comparison"] {
+  return {
+    left: {
+      title: "Compared data: derived schema",
+      items: [
+        { label: "Shape", value: trace.derivedSchema.shape },
+        { label: "Rows", value: formatCount(trace.derivedSchema.rowCount) },
+        { label: "Fields", value: formatCount(trace.derivedSchema.fields.length) },
+        { label: "Capabilities", value: capabilitySummary(trace) },
+      ],
+    },
+    right: {
+      title: "Compared target: template contract",
+      items: [
+        { label: "Template", value: trace.templateContract.componentId },
+        { label: "View type", value: trace.templateContract.surfaceConfig.viewType },
+        { label: "Required slots", value: requiredSlotSummary(trace) },
+        { label: "Required capabilities", value: templateCapabilitySummary(trace) },
+      ],
+    },
+  };
+}
+
+function judgmentMetrics(trace: DataBoundaryScenarioTrace): DetailMetric[] {
+  return [
+    { label: "Selected template", value: trace.renderPlan.selectedComponentId, tone: "success" },
+    { label: "Decision score", value: trace.renderPlan.score.toFixed(2), tone: trace.renderPlan.score >= 0.8 ? "success" : "warning" },
+    { label: "Strategy", value: formatStrategy(trace.renderPlan.strategy) },
+    { label: "Missing slots", value: missingSlotSummary(trace), tone: trace.renderPlan.mapping?.missingSlots.length ? "warning" : "success" },
+  ];
+}
+
+function decisionReason(trace: DataBoundaryScenarioTrace) {
+  return trace.renderPlan.mapping?.reason ?? trace.renderPlan.reason;
 }
 
 function normalizedRuleSummary(trace: DataBoundaryScenarioTrace): DetailFlowItem[] {
@@ -603,6 +652,26 @@ function DetailFlow({ items }: { items: DetailFlowItem[] }) {
   );
 }
 
+function DetailComparison({ left, right }: { left: DetailComparisonSide; right: DetailComparisonSide }) {
+  return (
+    <div className={styles.sequenceComparisonGrid}>
+      {[left, right].map((side) => (
+        <div className={styles.sequenceComparisonPanel} key={side.title}>
+          <strong>{side.title}</strong>
+          <div>
+            {side.items.map((item) => (
+              <span key={`${side.title}-${item.label}`}>
+                <small>{item.label}</small>
+                <b>{item.value}</b>
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DetailMapping({ rows }: { rows: DetailMappingRow[] }) {
   return (
     <div className={styles.sequenceMappingTable}>
@@ -626,6 +695,7 @@ function DetailView({ view }: { view: DetailViewModel }) {
       </div>
       <p className={styles.sequenceDetailPurpose}>{view.purpose}</p>
       {view.metrics?.length ? <DetailMetrics items={view.metrics} /> : null}
+      {view.comparison ? <DetailComparison left={view.comparison.left} right={view.comparison.right} /> : null}
       {view.flow?.length ? <DetailFlow items={view.flow} /> : null}
       {view.mappings?.length ? <DetailMapping rows={view.mappings} /> : null}
       {view.outcome ? <p className={styles.sequenceDetailOutcome}>{view.outcome}</p> : null}
@@ -699,7 +769,7 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
   const mappingRows = trace.mappingComparison.map((row) => ({
     source: compactPath(row.derivedField),
     target: row.templateSlot,
-    decision: row.decision,
+    decision: `${row.decision}${row.aliasOrNormalization !== "direct" ? ` via ${formatStrategy(row.aliasOrNormalization)}` : ""}`,
   }));
 
   if (selectedStep === "business-tool-selected") {
@@ -741,19 +811,19 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
 
   if (selectedStep === "business-tool-result") {
     return {
-      eyebrow: "API response",
-      title: "Raw business data received",
-      purpose: "This is the source response before A2UI reshapes it. The UI hides row dumps here and only keeps the shape needed to understand the next boundary.",
+      eyebrow: "Comparison input",
+      title: "Source data captured",
+      purpose: "This is the business API result that will become the left side of the matcher comparison after schema derivation.",
       metrics: [
-        { label: "Arrow carries", value: "API result" },
+        { label: "Source API", value: trace.businessToolName },
         { label: "Rows", value: formatCount(trace.sourceFingerprint.rowCount) },
         { label: "Columns", value: formatCount(rawColumnCount(trace)) },
-        { label: "Shape", value: trace.sourceFingerprint.shape },
+        { label: "Next compare input", value: "derived schema" },
       ],
       flow: [
-        { title: "Receive source rows", body: `${formatCount(trace.sourceFingerprint.rowCount)} rows arrive from ${trace.businessToolName}.` },
-        { title: "Preserve source identity", body: "Integrity checks stay internal so the detail view does not become a hash/debug panel." },
-        { title: "Prepare render handoff", body: "The next arrow sends the result into a2ui_render for schema profiling and matching." },
+        { title: "Raw API result", body: `${formatCount(trace.sourceFingerprint.rowCount)} rows from ${trace.apiRoute}.` },
+        { title: "Comparison role", body: "This data is not judged directly; A2UI first reduces it to field types, roles, and capabilities." },
+        { title: "Expected decision path", body: "source data -> derived schema -> compare with template contract -> select template." },
       ],
     };
   }
@@ -778,93 +848,86 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
 
   if (selectedStep === "a2ui-tool-call") {
     return {
-      eyebrow: "a2ui_render request",
-      title: "Send render payload",
-      purpose: "This arrow carries the business result plus display-ready data into a2ui_render so A2UI can infer schema and choose a template.",
+      eyebrow: "Comparison payload",
+      title: "Data prepared for matcher",
+      purpose: "This payload carries the data that the main logic will compare after it is converted into a derived schema.",
       metrics: [
-        { label: "Arrow carries", value: "render request" },
-        { label: "Source tool", value: sourceToolName },
+        { label: "Source", value: sourceToolName },
         { label: "Rows", value: formatCount(trace.normalization.displayRowCount) },
-        { label: "Preview", value: `${formatCount(trace.sampleDataPreview.sampleSize)} of ${formatCount(trace.sampleDataPreview.rowCount)}` },
+        { label: "Preview used", value: `${formatCount(trace.sampleDataPreview.sampleSize)} of ${formatCount(trace.sampleDataPreview.rowCount)}` },
+        { label: "Compare target", value: trace.expectedTemplateId },
       ],
       flow: [
-        { title: "Attach raw source", body: "The original response remains available for integrity checks." },
-        { title: "Attach displayData", body: "Normalized data is what the matcher and renderer will use." },
-        { title: "Attach metadata", body: "Tool name, API route, and source result identity travel with the request." },
+        { title: "Left side candidate", body: "displayData will be profiled into shape, fields, and capabilities." },
+        { title: "Right side candidate", body: `registered contract ${trace.expectedTemplateId} will be loaded from the registry.` },
+        { title: "Judgment comes later", body: "No template is selected until the matcher compares those two sides." },
       ],
     };
   }
 
   if (selectedStep === "profile") {
     return {
-      eyebrow: "Schema profiling",
-      title: formatStrategy(trace.normalization.strategy),
-      purpose: "A2UI turns the received rows into a compact derived schema: field types, semantic roles, and capabilities. Raw rows are intentionally reduced to a bounded preview.",
+      eyebrow: "Comparison input",
+      title: "Derived schema built",
+      purpose: "This is the exact left-side data the matcher will compare against template contracts.",
       metrics: [
-        { label: "Rows sampled", value: `${formatCount(trace.sampleDataPreview.sampleSize)} of ${formatCount(trace.sampleDataPreview.rowCount)}` },
+        { label: "Shape", value: trace.derivedSchema.shape },
         { label: "Fields", value: formatCount(trace.derivedSchema.fields.length) },
-        { label: "Boolean fields", value: formatCount(booleanFieldCount(trace)) },
         { label: "Capabilities", value: capabilitySummary(trace) },
+        { label: "Rows sampled", value: `${formatCount(trace.sampleDataPreview.sampleSize)} / ${formatCount(trace.sampleDataPreview.rowCount)}` },
       ],
+      comparison: comparisonInput(trace),
       flow: [
-        { title: "Bound the preview", body: trace.sampleDataPreview.truncated ? "Large data is sampled before LLM-facing or UI-facing inspection." : "All rows fit inside the preview window." },
-        { title: "Infer roles", body: "Fields are tagged as title, status, image, time, metric, or category candidates." },
+        { title: "Matcher will read", body: "field type, role candidates, row shape, and capabilities." },
+        { title: "Template will require", body: `${requiredSlotSummary(trace)} plus ${templateCapabilitySummary(trace)}.` },
         ...normalizedRuleSummary(trace),
       ],
-      outcome: "Next, these derived fields are compared against registered template contracts.",
+      outcome: "This step does not select the template yet. It prepares the data side of the comparison.",
     };
   }
 
   if (selectedStep === "registry-request" || selectedStep === "registry-loaded") {
     return {
-      eyebrow: selectedStep === "registry-request" ? "Registry request" : "Registry response",
+      eyebrow: "Comparison input",
       title: trace.templateContract.componentId,
-      purpose: "A2UI loads template contracts so matching can be based on required slots and capabilities instead of guessing from raw data.",
+      purpose: "This is the right-side contract the matcher compares against the derived schema.",
       metrics: [
-        { label: "Arrow carries", value: selectedStep === "registry-request" ? "contract request" : "template contracts" },
         { label: "View type", value: trace.templateContract.surfaceConfig.viewType },
         { label: "Required slots", value: requiredSlotSummary(trace) },
-        { label: "Max visible items", value: formatCount(trace.templateContract.surfaceConfig.maxItems ?? 0) },
+        { label: "Required capabilities", value: templateCapabilitySummary(trace) },
+        { label: "Candidate", value: trace.templateContract.componentId },
       ],
+      comparison: comparisonInput(trace),
       flow: [
-        { title: "Read registered templates", body: "Contracts describe what a component can accept." },
-        { title: "Expose slot requirements", body: `${trace.templateContract.componentId} requires ${requiredSlotSummary(trace)}.` },
-        { title: "Send to matcher", body: "The matcher compares those slots with the derived schema from the profile step." },
+        { title: "Contract requirement", body: `${trace.templateContract.componentId} accepts ${trace.templateContract.surfaceConfig.viewType}.` },
+        { title: "Comparison target", body: `Matcher checks whether derived schema can fill ${requiredSlotSummary(trace)}.` },
       ],
     };
   }
 
   if (selectedStep === "matcher") {
     return {
-      eyebrow: "Template selection",
-      title: trace.templateContract.componentId,
-      purpose: "This is the actual selection point: A2UI compares derived schema fields with template slots and chooses the component contract that fits.",
-      metrics: [
-        { label: "Strategy", value: formatStrategy(trace.renderPlan.strategy) },
-        { label: "Score", value: trace.renderPlan.score.toFixed(2), tone: "success" },
-        { label: "Candidates", value: formatCount(trace.renderPlan.candidates?.length ?? 0) },
-        { label: "Decision", value: trace.renderPlan.reason },
-      ],
+      eyebrow: "Comparison report",
+      title: `${trace.derivedSchema.sourceId} -> ${trace.renderPlan.selectedComponentId}`,
+      purpose: "The main logic compared the API-derived schema with a registered template contract. The score and slot mappings below explain why this template was selected.",
+      metrics: judgmentMetrics(trace),
+      comparison: comparisonInput(trace),
       mappings: mappingRows,
-      outcome: "The selected template and field bindings become the render plan returned to the Main Agent.",
+      outcome: `${decisionReason(trace)}. The selected template is ${trace.renderPlan.selectedComponentId}.`,
     };
   }
 
   if (selectedStep === "a2ui-tool-result") {
     return {
-      eyebrow: "Render decision",
+      eyebrow: "Decision result",
       title: trace.renderPlan.selectedComponentId,
-      purpose: "a2ui_render returns a render plan: which template to use, how fields bind, and whether the received data still matches the original source boundary.",
-      metrics: [
-        { label: "Arrow carries", value: "render plan" },
-        { label: "Integrity", value: formatBoolean(trace.integrity.matched), tone: trace.integrity.matched ? "success" : "warning" },
-        { label: "Rows", value: formatCount(trace.integrity.receivedRowCount) },
-        { label: "View type", value: trace.renderPlan.viewType },
-      ],
+      purpose: "This is the selected template decision returned from the comparison, including the score and field bindings that made the selection possible.",
+      metrics: judgmentMetrics(trace),
+      comparison: comparisonInput(trace),
+      mappings: mappingRows,
       flow: [
-        { title: "Return selected template", body: trace.renderPlan.selectedComponentId },
-        { title: "Return bindings", body: compactList(Object.keys(trace.renderPlan.fieldMapping), "field mapping ready", 4) },
-        { title: "Main Agent resumes", body: "The chat runtime can now send a text summary and SurfaceEnvelope to the UI." },
+        { title: "Judgment", body: decisionReason(trace) },
+        { title: "Bindings selected", body: `${formatCount(selectedMappingCount(trace))} slot mappings selected.` },
       ],
     };
   }
@@ -890,19 +953,15 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
 
   if (selectedStep === "surface") {
     return {
-      eyebrow: "Final UI contract",
+      eyebrow: "Selected template output",
       title: trace.surfaceEnvelope.templateId,
-      purpose: "SurfaceEnvelope is the final contract the Chat UI renders. The browser uses this envelope; it does not choose the template by itself.",
-      metrics: [
-        { label: "Arrow carries", value: "SurfaceEnvelope" },
-        { label: "Template", value: trace.surfaceEnvelope.templateId },
-        { label: "Rows", value: formatCount(trace.surfaceEnvelope.payload.data.items.length) },
-        { label: "Strategy", value: formatStrategy(trace.surfaceEnvelope.meta.strategy) },
-      ],
+      purpose: "This is the UI payload produced because the matcher selected this template from the comparison result.",
+      metrics: judgmentMetrics(trace),
+      comparison: comparisonInput(trace),
+      mappings: mappingRows,
       flow: [
-        { title: "Pair with text summary", body: "The matched branch returns human text and the UI envelope as one output moment." },
-        { title: "Render fixed component", body: `${trace.surfaceEnvelope.templateId} receives payload data and surfaceConfig.` },
-        { title: "Keep trace internal", body: "Low-level matcher traces stay out of the designer-facing detail." },
+        { title: "SurfaceEnvelope uses", body: `${trace.surfaceEnvelope.templateId} with ${trace.renderPlan.viewType}.` },
+        { title: "Renderer receives", body: `${formatCount(trace.surfaceEnvelope.payload.data.items.length)} rows plus selected field bindings.` },
       ],
     };
   }
@@ -1213,7 +1272,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
             {visibleSteps.map((step) => {
               const position = labelPosition(step);
               const liveEvent = eventForStep(step, events);
-              const clickable = Boolean(liveEvent) || (Boolean(dataBoundaryTrace) && clickableStepIds.has(step.id));
+              const clickable = clickableStepIds.has(step.id) && (Boolean(liveEvent) || Boolean(dataBoundaryTrace));
               const displayLabel = stepDisplayLabel(step, dataBoundaryTrace, events);
               return (
                 <div

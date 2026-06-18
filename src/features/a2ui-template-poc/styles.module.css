@@ -995,6 +995,59 @@
   overflow-wrap: anywhere;
 }
 
+.sequenceComparisonGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sequenceComparisonPanel {
+  min-width: 0;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 8px;
+}
+
+.sequenceComparisonPanel > strong {
+  display: block;
+  color: var(--a2ui-ink);
+  font-size: 12px;
+  font-weight: 950;
+  line-height: 1.25;
+}
+
+.sequenceComparisonPanel > div {
+  display: grid;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.sequenceComparisonPanel span {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.sequenceComparisonPanel small {
+  color: var(--a2ui-muted);
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.sequenceComparisonPanel b {
+  color: var(--a2ui-primary);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .sequenceDetailFlow {
   display: grid;
   gap: 6px;
@@ -2165,6 +2218,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .sequenceComparisonGrid {
+    grid-template-columns: 1fr;
+  }
+
   .resizeHandle {
     display: none;
   }
@@ -2211,5 +2268,10 @@
 
   .sequenceMappingTable div {
     grid-template-columns: 1fr;
+  }
+
+  .sequenceComparisonPanel span {
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
 }
