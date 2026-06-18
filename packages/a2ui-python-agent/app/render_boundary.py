@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .a2ui_agent import A2UIResponse, render_or_fallback
-from .ai.llm_client import generate_equipment_fallback_text
+from .ai.llm_client import LLMClientError, generate_equipment_fallback_text
 from .equipment_tools import build_data_profile
 from .business_tools import BusinessToolResult
 from .data_integrity import build_data_integrity_snapshot
@@ -41,16 +41,19 @@ async def _fallback_text(
     profile: dict[str, Any],
     reason: str | None = None,
 ) -> str:
-    llm_text = await generate_equipment_fallback_text(
-        message=message,
-        api_id=api_id,
-        data=data,
-        profile=profile,
-        reason=reason,
-    )
+    try:
+        llm_text = await generate_equipment_fallback_text(
+            message=message,
+            api_id=api_id,
+            data=data,
+            profile=profile,
+            reason=reason,
+        )
+    except LLMClientError as exc:
+        raise RenderBoundaryError(f"LLM equipment fallback generation failed: {exc}") from exc
     if llm_text:
         return llm_text
-    raise RenderBoundaryError("LLM equipment fallback generation failed.")
+    raise RenderBoundaryError("LLM equipment fallback generation failed: empty response text.")
 
 
 async def render_business_tool_result(

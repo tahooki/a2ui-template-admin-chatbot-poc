@@ -27,6 +27,30 @@ class EquipmentIntentClassification(TypedDict):
     reason: str | None
 
 
+class LLMClientError(RuntimeError):
+    def __init__(
+        self,
+        stage: str,
+        message: str,
+        *,
+        status_code: int | None = None,
+        response_body: str | None = None,
+        exception_type: str | None = None,
+    ) -> None:
+        details = [f"stage={stage}", f"baseUrl={settings.openai_base_url}", f"model={settings.openai_model}", message]
+        if status_code is not None:
+            details.append(f"status={status_code}")
+        if exception_type:
+            details.append(f"exception={exception_type}")
+        if response_body:
+            details.append(f"body={response_body}")
+        super().__init__("; ".join(details))
+        self.stage = stage
+        self.status_code = status_code
+        self.response_body = response_body
+        self.exception_type = exception_type
+
+
 def is_llm_available() -> bool:
     return bool(settings.openai_api_key)
 
@@ -45,15 +69,21 @@ def _compact_json(value: object, limit: int = 5000) -> str:
     return text[:limit]
 
 
+def _compact_error_text(value: str, limit: int = 700) -> str:
+    compacted = " ".join(value.split())
+    return compacted[:limit]
+
+
 async def _chat_completion(
     messages: list[dict[str, str]],
     *,
+    stage: str,
     temperature: float = 0.0,
     max_tokens: int = 800,
     response_format: dict[str, str] | None = None,
-) -> str | None:
+) -> str:
     if not is_llm_available():
-        return None
+        raise LLMClientError(stage, "OPENAI_API_KEY is not configured.")
 
     payload: dict[str, Any] = {
         "model": settings.openai_model,
@@ -75,13 +105,40 @@ async def _chat_completion(
                 json=payload,
             )
         if not response.is_success:
-            return None
+            raise LLMClientError(
+                stage,
+                "LLM request returned a non-success response.",
+                status_code=response.status_code,
+                response_body=_compact_error_text(response.text),
+            )
 
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise LLMClientError(
+                stage,
+                "LLM response was not valid JSON.",
+                status_code=response.status_code,
+                response_body=_compact_error_text(response.text),
+                exception_type=exc.__class__.__name__,
+            ) from exc
         content = data.get("choices", [{}])[0].get("message", {}).get("content")
-        return content.strip() if isinstance(content, str) and content.strip() else None
-    except Exception:
-        return None
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+        raise LLMClientError(
+            stage,
+            "LLM response did not include choices[0].message.content.",
+            status_code=response.status_code,
+            response_body=_compact_error_text(json.dumps(data, ensure_ascii=False, default=str)),
+        )
+    except LLMClientError:
+        raise
+    except Exception as exc:
+        raise LLMClientError(
+            stage,
+            "LLM request failed before a valid response was parsed.",
+            exception_type=exc.__class__.__name__,
+        ) from exc
 
 
 async def check_llm_connection() -> dict[str, Any]:
@@ -114,6 +171,7 @@ async def check_llm_connection() -> dict[str, Any]:
         return {
             "ok": response.is_success,
             "statusCode": response.status_code,
+            "responseBody": _compact_error_text(response.text) if not response.is_success else None,
             "baseUrl": settings.openai_base_url,
             "model": settings.openai_model,
         }
@@ -153,16 +211,20 @@ async def classify_equipment_intent_with_llm(
                 ),
             },
         ],
+        stage="intent_classification",
         response_format={"type": "json_object"},
         max_tokens=220,
     )
-    if not content:
-        return None
 
     try:
         parsed = json.loads(_strip_code_fence(content))
-    except json.JSONDecodeError:
-        return None
+    except json.JSONDecodeError as exc:
+        raise LLMClientError(
+            "intent_classification",
+            "LLM intent classification returned invalid JSON.",
+            response_body=_compact_error_text(content),
+            exception_type=exc.__class__.__name__,
+        ) from exc
 
     api_id = parsed.get("apiId")
     confidence = parsed.get("confidence", 0)
@@ -188,7 +250,7 @@ async def generate_general_response_with_llm(
     *,
     message: str,
     history: list[dict[str, Any]] | None = None,
-) -> str | None:
+) -> str:
     return await _chat_completion(
         [
             {
@@ -209,6 +271,7 @@ async def generate_general_response_with_llm(
                 ),
             },
         ],
+        stage="general_response",
         temperature=0.3,
         max_tokens=220,
     )
@@ -221,7 +284,7 @@ async def generate_equipment_fallback_text(
     data: dict[str, Any],
     profile: dict[str, Any],
     reason: str | None = None,
-) -> str | None:
+) -> str:
     rows = data.get("items") if isinstance(data.get("items"), list) else []
     sample_rows = rows[:6]
     content = await _chat_completion(
@@ -247,6 +310,7 @@ async def generate_equipment_fallback_text(
                 ),
             },
         ],
+        stage="equipment_fallback_text",
         temperature=0.2,
         max_tokens=900,
     )

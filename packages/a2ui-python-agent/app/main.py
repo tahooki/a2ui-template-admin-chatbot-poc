@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -9,6 +10,9 @@ from pydantic import BaseModel, Field
 from .ai.llm_client import check_llm_connection
 from .config import settings
 from .orchestrate import AgentRuntimeError, run_chat_turn, stream_chat_turn
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class ChatRequest(BaseModel):
@@ -27,7 +31,14 @@ async def log_llm_startup_check() -> None:
     )
     result = await check_llm_connection()
     status = "ok" if result.get("ok") else "failed"
-    detail = result.get("statusCode") or result.get("reason") or "unknown"
+    detail_parts = []
+    if result.get("statusCode"):
+        detail_parts.append(f"status={result['statusCode']}")
+    if result.get("reason"):
+        detail_parts.append(f"reason={result['reason']}")
+    if result.get("responseBody"):
+        detail_parts.append(f"body={result['responseBody']}")
+    detail = " ".join(detail_parts) or "unknown"
     print(f"[main-agent] LLM connection check {status} detail={detail}", flush=True)
 
 
@@ -71,6 +82,7 @@ async def chat(body: ChatRequest) -> dict[str, Any]:
     try:
         return await run_chat_turn(_message(body), body.history)
     except AgentRuntimeError as exc:
+        logger.exception("[main-agent] chat request failed detail=%s", exc)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 

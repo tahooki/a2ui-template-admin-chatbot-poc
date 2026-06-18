@@ -123,6 +123,14 @@ async function consumeSse(response: Response, onEvent: (event: ParsedSseEvent) =
   if (parsed) onEvent(parsed);
 }
 
+function errorMessageFromEvent(data: Record<string, unknown>) {
+  const message = typeof data.message === "string" ? data.message : "Agent 응답을 처리하는 중 오류가 발생했습니다.";
+  const details = typeof data.details === "string" ? data.details : "";
+  const errorType = typeof data.errorType === "string" ? data.errorType : "";
+  const reason = [errorType, details].filter(Boolean).join(": ");
+  return reason && reason !== message ? `${message}\n원인: ${reason}` : message;
+}
+
 function surfaceFromEnvelope(value: unknown): ChatSurface | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const envelope = value as Partial<A2UISurfaceEnvelope>;
@@ -264,7 +272,7 @@ export function ChatbotPanel({
           }
 
           if (event === "error") {
-            const text = typeof data.message === "string" ? data.message : "Agent 응답을 처리하는 중 오류가 발생했습니다.";
+            const text = errorMessageFromEvent(data);
             setMessages((current) =>
               current.map((message) => (message.id === assistantId ? { ...message, content: text } : message)),
             );

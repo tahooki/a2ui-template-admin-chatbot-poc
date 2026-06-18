@@ -1,10 +1,12 @@
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 from uuid import uuid4
 
 from .a2ui_render_tool import A2UIRenderToolInput, A2UIRenderToolResult, run_a2ui_render_tool
 from .ai.llm_client import (
+    LLMClientError,
     classify_equipment_intent_with_llm,
     generate_general_response_with_llm,
     is_llm_available,
@@ -16,6 +18,9 @@ from .render_boundary import RenderBoundaryError
 from .tool_router import business_tool_for_api
 
 
+logger = logging.getLogger("uvicorn.error")
+
+
 class AgentRuntimeError(RuntimeError):
     pass
 
@@ -24,17 +29,23 @@ async def _choose_api(message: str, history: list[dict[str, Any]] | None = None)
     if not is_llm_available():
         raise AgentRuntimeError("LLM is not configured. Set OPENAI_API_KEY before using the agent.")
 
-    llm_classification = await classify_equipment_intent_with_llm(message, history)
+    try:
+        llm_classification = await classify_equipment_intent_with_llm(message, history)
+    except LLMClientError as exc:
+        raise AgentRuntimeError(f"LLM intent classification failed: {exc}") from exc
     if llm_classification is None:
-        raise AgentRuntimeError("LLM intent classification failed.")
+        raise AgentRuntimeError("LLM intent classification failed: empty classification result.")
     return llm_classification["api_id"], "llm"
 
 
 async def _general_response(message: str, history: list[dict[str, Any]] | None = None) -> str:
-    llm_text = await generate_general_response_with_llm(message=message, history=history)
+    try:
+        llm_text = await generate_general_response_with_llm(message=message, history=history)
+    except LLMClientError as exc:
+        raise AgentRuntimeError(f"LLM general response generation failed: {exc}") from exc
     if llm_text:
         return llm_text
-    raise AgentRuntimeError("LLM general response generation failed.")
+    raise AgentRuntimeError("LLM general response generation failed: empty response text.")
 
 
 def sse_event(event: str, data: dict[str, Any]) -> str:
@@ -389,8 +400,22 @@ async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = 
             ),
         )
     except Exception as exc:
+        logger.exception(
+            "[main-agent] chat stream failed turnId=%s errorType=%s detail=%s",
+            turn_id,
+            exc.__class__.__name__,
+            exc,
+        )
         yield sse_event(
             "error",
-            trace_payload(turn_id, {"message": "Agent가 장비 데이터를 조회하거나 처리하지 못했습니다.", "details": str(exc)}, "error"),
+            trace_payload(
+                turn_id,
+                {
+                    "message": "Agent가 장비 데이터를 조회하거나 처리하지 못했습니다.",
+                    "details": str(exc),
+                    "errorType": exc.__class__.__name__,
+                },
+                "error",
+            ),
         )
         yield sse_event("done", trace_payload(turn_id, {"mode": "error", "branch": "error"}, "error"))
