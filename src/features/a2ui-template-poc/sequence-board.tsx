@@ -82,14 +82,17 @@ const zoomStep = 0.1;
 const manualAutoFollowPauseMs = 1600;
 const messageLabelOffset = 42;
 const clickableStepIds = new Set([
+  "business-tool-selected",
   "business-tool-call",
   "business-tool-result",
+  "a2ui-tool-selected",
   "a2ui-tool-call",
   "profile",
   "registry-request",
   "registry-loaded",
   "matcher",
   "a2ui-tool-result",
+  "matched-summary",
   "surface",
 ]);
 
@@ -115,7 +118,7 @@ const steps: SequenceStep[] = [
     events: ["state:business_tool_selected"],
     from: "main_agent",
     to: "main_agent",
-    label: "Choose business API tool",
+    label: "Select business API",
     branch: "data",
     y: 600,
   },
@@ -135,7 +138,7 @@ const steps: SequenceStep[] = [
     events: ["state:business_tool_result", "state:data_loaded"],
     from: "business_db",
     to: "main_agent",
-    label: "Business tool result",
+    label: "Receive API data",
     branch: "data",
     y: 736,
   },
@@ -145,7 +148,7 @@ const steps: SequenceStep[] = [
     events: ["state:a2ui_tool_selected"],
     from: "main_agent",
     to: "main_agent",
-    label: "Choose a2ui_render",
+    label: "Select a2ui_render",
     branch: "data",
     y: 804,
   },
@@ -155,7 +158,7 @@ const steps: SequenceStep[] = [
     events: ["state:a2ui_tool_call"],
     from: "main_agent",
     to: "a2ui_render_tool",
-    label: "Run a2ui_render",
+    label: "Send data to a2ui_render",
     branch: "data",
     a2uiSubstep: true,
     y: 872,
@@ -166,7 +169,7 @@ const steps: SequenceStep[] = [
     events: ["state:profile"],
     from: "a2ui_render_tool",
     to: "a2ui",
-    label: "Build profile / schema",
+    label: "Build derived schema",
     branch: "data",
     a2uiSubstep: true,
     y: 940,
@@ -177,7 +180,7 @@ const steps: SequenceStep[] = [
     events: ["state:a2a"],
     from: "a2ui",
     to: "registry",
-    label: "Load template contracts",
+    label: "Request template contracts",
     branch: "data",
     y: 1008,
   },
@@ -187,18 +190,18 @@ const steps: SequenceStep[] = [
     events: ["state:registry_loaded"],
     from: "registry",
     to: "a2ui",
-    label: "Template contracts loaded",
+    label: "Receive template contracts",
     branch: "data",
     y: 1076,
   },
-  { id: "matcher", phase: "matcher", events: ["state:matcher"], from: "a2ui", to: "a2ui", label: "Match template / fields", branch: "data", a2uiSubstep: true, y: 1144 },
+  { id: "matcher", phase: "matcher", events: ["state:matcher"], from: "a2ui", to: "a2ui", label: "Compare schema + templates", branch: "data", a2uiSubstep: true, y: 1144 },
   {
     id: "a2ui-tool-result",
     phase: "matcher",
     events: ["state:a2ui_tool_result"],
     from: "a2ui",
     to: "main_agent",
-    label: "a2ui_render result",
+    label: "Return render plan",
     branch: "data",
     a2uiSubstep: true,
     y: 1212,
@@ -209,7 +212,7 @@ const steps: SequenceStep[] = [
     events: ["text", "delta"],
     from: "main_agent",
     to: "chat",
-    label: "Return text summary",
+    label: "Text summary",
     branch: "matched",
     y: 1342,
   },
@@ -219,7 +222,7 @@ const steps: SequenceStep[] = [
     events: ["surface"],
     from: "main_agent",
     to: "chat",
-    label: "Return SurfaceEnvelope",
+    label: "SurfaceEnvelope",
     branch: "matched",
     y: 1410,
   },
@@ -276,16 +279,25 @@ function completedStepSet(events: AgentFlowEvent[], visibleSteps: SequenceStep[]
   return new Set(visibleSteps.filter((step) => events.some((event) => eventMatchesStep(step, event))).map((step) => step.id));
 }
 
-function isActiveStep(step: SequenceStep, active?: AgentFlowEvent) {
-  return eventMatchesStep(step, active);
+function isMatchedSurfaceStep(step: SequenceStep) {
+  return step.branch === "matched" && step.phase === "surface" && (step.id === "matched-summary" || step.id === "surface");
+}
+
+function isMatchedSurfaceEvent(event?: AgentFlowEvent) {
+  return Boolean(event && event.branch === "matched" && event.phase === "surface" && ["delta", "surface", "text"].includes(event.event));
+}
+
+function isActiveStep(step: SequenceStep, active: AgentFlowEvent | undefined, completed: Set<string>) {
+  if (eventMatchesStep(step, active)) return true;
+  return Boolean(active?.event === "surface" && isMatchedSurfaceEvent(active) && isMatchedSurfaceStep(step) && completed.has("matched-summary"));
 }
 
 function stepClass(step: SequenceStep, completed: Set<string>, active?: AgentFlowEvent) {
   const classes = [styles.sequenceStep];
   if (step.branch) classes.push(styles[`sequenceStep_${step.branch}`]);
   if (completed.has(step.id)) classes.push(styles.sequenceStepComplete);
-  if (isActiveStep(step, active)) classes.push(styles.sequenceStepActive);
-  if (!completed.has(step.id) && !isActiveStep(step, active)) classes.push(styles.sequenceStepPreview);
+  if (isActiveStep(step, active, completed)) classes.push(styles.sequenceStepActive);
+  if (!completed.has(step.id) && !isActiveStep(step, active, completed)) classes.push(styles.sequenceStepPreview);
   if (step.branch && active?.branch && step.branch !== active.branch && !(step.branch === "data" && isDataOutcomeBranch(active.branch))) {
     classes.push(styles.sequenceStepMuted);
   }
@@ -297,8 +309,8 @@ function messageLineClass(step: SequenceStep, completed: Set<string>, active?: A
   const classes = [styles.sequenceMessageLine];
   if (step.branch) classes.push(styles[`sequenceMessageLine_${step.branch}`]);
   if (completed.has(step.id)) classes.push(styles.sequenceMessageLineComplete);
-  if (isActiveStep(step, active)) classes.push(styles.sequenceMessageLineActive);
-  if (!completed.has(step.id) && !isActiveStep(step, active)) classes.push(styles.sequenceMessageLinePreview);
+  if (isActiveStep(step, active, completed)) classes.push(styles.sequenceMessageLineActive);
+  if (!completed.has(step.id) && !isActiveStep(step, active, completed)) classes.push(styles.sequenceMessageLinePreview);
   if (loopX) classes.push(styles.sequenceMessageLineSelf);
   if (!loopX && x1 > x2) classes.push(styles.sequenceMessageLineReverse);
   if (step.branch && active?.branch && step.branch !== active.branch && !(step.branch === "data" && isDataOutcomeBranch(active.branch))) {
@@ -311,7 +323,7 @@ function activationClass(step: SequenceStep, completed: Set<string>, active?: Ag
   const classes = [styles.sequenceActivation];
   if (step.branch) classes.push(styles[`sequenceActivation_${step.branch}`]);
   if (completed.has(step.id)) classes.push(styles.sequenceActivationComplete);
-  if (isActiveStep(step, active)) classes.push(styles.sequenceActivationActive);
+  if (isActiveStep(step, active, completed)) classes.push(styles.sequenceActivationActive);
   if (step.branch && active?.branch && step.branch !== active.branch && !(step.branch === "data" && isDataOutcomeBranch(active.branch))) {
     classes.push(styles.sequenceActivationMuted);
   }
@@ -471,31 +483,154 @@ function cameraStateForScroll(target: string, left: number, top: number, zoom: n
   };
 }
 
-function shortJson(value: unknown, maxLength = 900) {
-  const text = JSON.stringify(value, null, 2);
-  return text.length > maxLength ? `${text.slice(0, maxLength)}\n...` : text;
+type DetailMetric = {
+  label: string;
+  value: string;
+  tone?: "success" | "warning";
+};
+
+type DetailFlowItem = {
+  title: string;
+  body: string;
+};
+
+type DetailMappingRow = {
+  source: string;
+  target: string;
+  decision: string;
+};
+
+type DetailViewModel = {
+  eyebrow: string;
+  title: string;
+  purpose: string;
+  metrics?: DetailMetric[];
+  flow?: DetailFlowItem[];
+  mappings?: DetailMappingRow[];
+  outcome?: string;
+};
+
+function formatCount(value: number) {
+  return value.toLocaleString("en-US");
 }
 
-function shortHash(value?: string) {
-  if (!value) return "-";
-  return value.length > 22 ? `${value.slice(0, 22)}...` : value;
+function formatBoolean(value: boolean) {
+  return value ? "pass" : "check needed";
 }
 
-function DetailRows({ rows }: { rows: Array<[string, unknown]> }) {
+function formatStrategy(value?: string) {
+  return value ? value.replaceAll("_", " ") : "-";
+}
+
+function compactPath(value: string) {
+  return value.replace(/^items\./, "items[].");
+}
+
+function compactList(values: string[] | undefined, fallback = "-", limit = 3) {
+  if (!values?.length) return fallback;
+  const visible = values.slice(0, limit);
+  const suffix = values.length > visible.length ? ` +${values.length - visible.length}` : "";
+  return `${visible.join(", ")}${suffix}`;
+}
+
+function requiredSlotSummary(trace: DataBoundaryScenarioTrace) {
+  return compactList(trace.templateContract.inputSchema?.requiredSlots.map((slot) => slot.slot), "none");
+}
+
+function booleanFieldCount(trace: DataBoundaryScenarioTrace) {
+  return trace.derivedSchema.fields.filter((field) => field.type === "boolean").length;
+}
+
+function capabilitySummary(trace: DataBoundaryScenarioTrace) {
+  const capabilities = trace.derivedSchema.capabilities;
+  return [
+    capabilities.hasBooleans ? "boolean status" : undefined,
+    capabilities.hasImages ? "images" : undefined,
+    capabilities.hasNumericMetrics ? "metrics" : undefined,
+    capabilities.hasTimeField ? "time" : undefined,
+  ]
+    .filter(Boolean)
+    .join(", ") || "basic fields";
+}
+
+function normalizedRuleSummary(trace: DataBoundaryScenarioTrace): DetailFlowItem[] {
+  const rules = trace.normalization.rules.slice(0, 4);
+  if (rules.length === 0) {
+    return [
+      {
+        title: "Keep field names",
+        body: "The API response already matches the display-facing shape closely enough.",
+      },
+    ];
+  }
+
+  return rules.map((rule) => ({
+    title: `${rule.sourceField} -> ${rule.targetField}`,
+    body: formatStrategy(rule.transform),
+  }));
+}
+
+function sourceToolResultId(trace: DataBoundaryScenarioTrace) {
+  return `demo-tool-result-${trace.id}`;
+}
+
+function DetailMetrics({ items }: { items: DetailMetric[] }) {
   return (
-    <div className={styles.sequenceDetailRows}>
-      {rows.map(([label, value]) => (
-        <div key={label}>
-          <span>{label}</span>
-          <strong>{String(value ?? "-")}</strong>
+    <div className={styles.sequenceDetailCards}>
+      {items.map((item) => (
+        <div className={`${styles.sequenceDetailCard} ${item.tone ? styles[`sequenceDetailCard_${item.tone}`] : ""}`} key={`${item.label}-${item.value}`}>
+          <span>{item.label}</span>
+          <strong>{item.value}</strong>
         </div>
       ))}
     </div>
   );
 }
 
-function JsonBlock({ value }: { value: unknown }) {
-  return <pre className={styles.sequenceJsonBlock}>{shortJson(value)}</pre>;
+function DetailFlow({ items }: { items: DetailFlowItem[] }) {
+  return (
+    <div className={styles.sequenceDetailFlow}>
+      {items.map((item, index) => (
+        <div className={styles.sequenceDetailFlowItem} key={`${item.title}-${index}`}>
+          <span>{String(index + 1).padStart(2, "0")}</span>
+          <div>
+            <strong>{item.title}</strong>
+            <p>{item.body}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DetailMapping({ rows }: { rows: DetailMappingRow[] }) {
+  return (
+    <div className={styles.sequenceMappingTable}>
+      {rows.map((row) => (
+        <div key={`${row.source}-${row.target}-${row.decision}`}>
+          <span>{row.source}</span>
+          <span>{row.target}</span>
+          <strong>{row.decision}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DetailView({ view }: { view: DetailViewModel }) {
+  return (
+    <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
+      <div className={styles.sequenceDetailHeader}>
+        <span>{view.eyebrow}</span>
+        <strong>{view.title}</strong>
+      </div>
+      <p className={styles.sequenceDetailPurpose}>{view.purpose}</p>
+      {view.metrics?.length ? <DetailMetrics items={view.metrics} /> : null}
+      {view.flow?.length ? <DetailFlow items={view.flow} /> : null}
+      {view.mappings?.length ? <DetailMapping rows={view.mappings} /> : null}
+      {view.outcome ? <p className={styles.sequenceDetailOutcome}>{view.outcome}</p> : null}
+    </aside>
+  );
 }
 
 function recordValue(value: unknown) {
@@ -532,6 +667,253 @@ function eventForStep(step: SequenceStep, events: AgentFlowEvent[]) {
   return events.findLast((event) => eventMatchesStep(step, event));
 }
 
+function liveDetailView(selectedEvent: AgentFlowEvent): DetailViewModel {
+  const fromTo = [selectedEvent.from, selectedEvent.to].filter(Boolean).join(" -> ") || "-";
+  return {
+    eyebrow: "Live event",
+    title: selectedEvent.label,
+    purpose: selectedEvent.detail || "This event shows the current payload boundary in the running chat turn.",
+    metrics: [
+      { label: "Arrow", value: fromTo },
+      { label: "Phase", value: selectedEvent.phase },
+      { label: "Branch", value: selectedEvent.branch ?? "main" },
+      { label: "Emitter", value: selectedEvent.physicalEmitter ?? "-" },
+    ],
+    flow: [
+      {
+        title: "Event received",
+        body: selectedEvent.event,
+      },
+      {
+        title: "Displayed as sequence step",
+        body: selectedEvent.label,
+      },
+    ],
+  };
+}
+
+function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace): DetailViewModel {
+  const renderToolMetadata = recordValue(trace.a2uiRenderPayload.toolMetadata);
+  const renderToolName = typeof renderToolMetadata.renderToolName === "string" ? renderToolMetadata.renderToolName : "a2ui_render";
+  const sourceToolName = typeof renderToolMetadata.sourceToolName === "string" ? renderToolMetadata.sourceToolName : trace.businessToolName;
+  const mappingRows = trace.mappingComparison.map((row) => ({
+    source: compactPath(row.derivedField),
+    target: row.templateSlot,
+    decision: row.decision,
+  }));
+
+  if (selectedStep === "business-tool-selected") {
+    return {
+      eyebrow: "Tool choice",
+      title: trace.businessToolName,
+      purpose: "The Main Agent chooses which business API should answer the user's request. This is not UI template selection yet.",
+      metrics: [
+        { label: "User asks", value: trace.query },
+        { label: "Selected API", value: trace.apiId },
+        { label: "Tool", value: trace.businessToolName },
+        { label: "Next arrow", value: "call business API" },
+      ],
+      flow: [
+        { title: "Read intent", body: "The request is treated as a data task." },
+        { title: "Pick data source", body: `${trace.businessToolName} is selected for ${trace.apiRoute}.` },
+        { title: "Keep rendering separate", body: "A2UI template matching starts only after data comes back." },
+      ],
+    };
+  }
+
+  if (selectedStep === "business-tool-call") {
+    return {
+      eyebrow: "Business API call",
+      title: trace.apiRoute,
+      purpose: "This arrow sends the chosen data request to the business API. It carries the question and API identity, not an A2UI schema.",
+      metrics: [
+        { label: "Arrow carries", value: "API request" },
+        { label: "Tool", value: trace.businessToolName },
+        { label: "Route", value: trace.apiRoute },
+        { label: "Query", value: trace.query },
+      ],
+      flow: [
+        { title: "Call source system", body: "Main Agent asks the business data boundary for equipment data." },
+        { title: "Wait for raw result", body: "The next step receives rows exactly from the API response." },
+      ],
+    };
+  }
+
+  if (selectedStep === "business-tool-result") {
+    return {
+      eyebrow: "API response",
+      title: "Raw business data received",
+      purpose: "This is the source response before A2UI reshapes it. The UI hides row dumps here and only keeps the shape needed to understand the next boundary.",
+      metrics: [
+        { label: "Arrow carries", value: "API result" },
+        { label: "Rows", value: formatCount(trace.sourceFingerprint.rowCount) },
+        { label: "Columns", value: formatCount(rawColumnCount(trace)) },
+        { label: "Shape", value: trace.sourceFingerprint.shape },
+      ],
+      flow: [
+        { title: "Receive source rows", body: `${formatCount(trace.sourceFingerprint.rowCount)} rows arrive from ${trace.businessToolName}.` },
+        { title: "Preserve source identity", body: "Integrity checks stay internal so the detail view does not become a hash/debug panel." },
+        { title: "Prepare render handoff", body: "The next arrow sends the result into a2ui_render for schema profiling and matching." },
+      ],
+    };
+  }
+
+  if (selectedStep === "a2ui-tool-selected") {
+    return {
+      eyebrow: "Render boundary",
+      title: renderToolName,
+      purpose: "The Main Agent selects a2ui_render because business data exists and now needs a render decision. The template is still not chosen here.",
+      metrics: [
+        { label: "Input condition", value: "business data ready" },
+        { label: "Selected tool", value: renderToolName },
+        { label: "Source result", value: sourceToolResultId(trace) },
+        { label: "Template choice", value: "later in matcher" },
+      ],
+      flow: [
+        { title: "Choose render tool", body: "The flow crosses from chat orchestration into A2UI rendering logic." },
+        { title: "Defer UI selection", body: "The actual component is selected after schema and registry contracts are compared." },
+      ],
+    };
+  }
+
+  if (selectedStep === "a2ui-tool-call") {
+    return {
+      eyebrow: "a2ui_render request",
+      title: "Send render payload",
+      purpose: "This arrow carries the business result plus display-ready data into a2ui_render so A2UI can infer schema and choose a template.",
+      metrics: [
+        { label: "Arrow carries", value: "render request" },
+        { label: "Source tool", value: sourceToolName },
+        { label: "Rows", value: formatCount(trace.normalization.displayRowCount) },
+        { label: "Preview", value: `${formatCount(trace.sampleDataPreview.sampleSize)} of ${formatCount(trace.sampleDataPreview.rowCount)}` },
+      ],
+      flow: [
+        { title: "Attach raw source", body: "The original response remains available for integrity checks." },
+        { title: "Attach displayData", body: "Normalized data is what the matcher and renderer will use." },
+        { title: "Attach metadata", body: "Tool name, API route, and source result identity travel with the request." },
+      ],
+    };
+  }
+
+  if (selectedStep === "profile") {
+    return {
+      eyebrow: "Schema profiling",
+      title: formatStrategy(trace.normalization.strategy),
+      purpose: "A2UI turns the received rows into a compact derived schema: field types, semantic roles, and capabilities. Raw rows are intentionally reduced to a bounded preview.",
+      metrics: [
+        { label: "Rows sampled", value: `${formatCount(trace.sampleDataPreview.sampleSize)} of ${formatCount(trace.sampleDataPreview.rowCount)}` },
+        { label: "Fields", value: formatCount(trace.derivedSchema.fields.length) },
+        { label: "Boolean fields", value: formatCount(booleanFieldCount(trace)) },
+        { label: "Capabilities", value: capabilitySummary(trace) },
+      ],
+      flow: [
+        { title: "Bound the preview", body: trace.sampleDataPreview.truncated ? "Large data is sampled before LLM-facing or UI-facing inspection." : "All rows fit inside the preview window." },
+        { title: "Infer roles", body: "Fields are tagged as title, status, image, time, metric, or category candidates." },
+        ...normalizedRuleSummary(trace),
+      ],
+      outcome: "Next, these derived fields are compared against registered template contracts.",
+    };
+  }
+
+  if (selectedStep === "registry-request" || selectedStep === "registry-loaded") {
+    return {
+      eyebrow: selectedStep === "registry-request" ? "Registry request" : "Registry response",
+      title: trace.templateContract.componentId,
+      purpose: "A2UI loads template contracts so matching can be based on required slots and capabilities instead of guessing from raw data.",
+      metrics: [
+        { label: "Arrow carries", value: selectedStep === "registry-request" ? "contract request" : "template contracts" },
+        { label: "View type", value: trace.templateContract.surfaceConfig.viewType },
+        { label: "Required slots", value: requiredSlotSummary(trace) },
+        { label: "Max visible items", value: formatCount(trace.templateContract.surfaceConfig.maxItems ?? 0) },
+      ],
+      flow: [
+        { title: "Read registered templates", body: "Contracts describe what a component can accept." },
+        { title: "Expose slot requirements", body: `${trace.templateContract.componentId} requires ${requiredSlotSummary(trace)}.` },
+        { title: "Send to matcher", body: "The matcher compares those slots with the derived schema from the profile step." },
+      ],
+    };
+  }
+
+  if (selectedStep === "matcher") {
+    return {
+      eyebrow: "Template selection",
+      title: trace.templateContract.componentId,
+      purpose: "This is the actual selection point: A2UI compares derived schema fields with template slots and chooses the component contract that fits.",
+      metrics: [
+        { label: "Strategy", value: formatStrategy(trace.renderPlan.strategy) },
+        { label: "Score", value: trace.renderPlan.score.toFixed(2), tone: "success" },
+        { label: "Candidates", value: formatCount(trace.renderPlan.candidates?.length ?? 0) },
+        { label: "Decision", value: trace.renderPlan.reason },
+      ],
+      mappings: mappingRows,
+      outcome: "The selected template and field bindings become the render plan returned to the Main Agent.",
+    };
+  }
+
+  if (selectedStep === "a2ui-tool-result") {
+    return {
+      eyebrow: "Render decision",
+      title: trace.renderPlan.selectedComponentId,
+      purpose: "a2ui_render returns a render plan: which template to use, how fields bind, and whether the received data still matches the original source boundary.",
+      metrics: [
+        { label: "Arrow carries", value: "render plan" },
+        { label: "Integrity", value: formatBoolean(trace.integrity.matched), tone: trace.integrity.matched ? "success" : "warning" },
+        { label: "Rows", value: formatCount(trace.integrity.receivedRowCount) },
+        { label: "View type", value: trace.renderPlan.viewType },
+      ],
+      flow: [
+        { title: "Return selected template", body: trace.renderPlan.selectedComponentId },
+        { title: "Return bindings", body: compactList(Object.keys(trace.renderPlan.fieldMapping), "field mapping ready", 4) },
+        { title: "Main Agent resumes", body: "The chat runtime can now send a text summary and SurfaceEnvelope to the UI." },
+      ],
+    };
+  }
+
+  if (selectedStep === "matched-summary") {
+    return {
+      eyebrow: "Matched output",
+      title: "Text summary",
+      purpose: "The Main Agent sends a short human-readable summary beside the SurfaceEnvelope. It explains the rendered result but does not decide the UI template.",
+      metrics: [
+        { label: "Arrow carries", value: "summary text" },
+        { label: "Paired with", value: "SurfaceEnvelope" },
+        { label: "Template", value: trace.surfaceEnvelope.templateId },
+        { label: "Rows summarized", value: formatCount(trace.surfaceEnvelope.payload.data.items.length) },
+      ],
+      flow: [
+        { title: "Use render decision", body: `The selected template is already ${trace.surfaceEnvelope.templateId}.` },
+        { title: "Send readable text", body: "The chat bubble gets concise context for the surface that appears with it." },
+        { title: "Move with envelope", body: "Summary and SurfaceEnvelope are treated as the same matched output moment in the diagram." },
+      ],
+    };
+  }
+
+  if (selectedStep === "surface") {
+    return {
+      eyebrow: "Final UI contract",
+      title: trace.surfaceEnvelope.templateId,
+      purpose: "SurfaceEnvelope is the final contract the Chat UI renders. The browser uses this envelope; it does not choose the template by itself.",
+      metrics: [
+        { label: "Arrow carries", value: "SurfaceEnvelope" },
+        { label: "Template", value: trace.surfaceEnvelope.templateId },
+        { label: "Rows", value: formatCount(trace.surfaceEnvelope.payload.data.items.length) },
+        { label: "Strategy", value: formatStrategy(trace.surfaceEnvelope.meta.strategy) },
+      ],
+      flow: [
+        { title: "Pair with text summary", body: "The matched branch returns human text and the UI envelope as one output moment." },
+        { title: "Render fixed component", body: `${trace.surfaceEnvelope.templateId} receives payload data and surfaceConfig.` },
+        { title: "Keep trace internal", body: "Low-level matcher traces stay out of the designer-facing detail." },
+      ],
+    };
+  }
+
+  return {
+    eyebrow: "Trace detail",
+    title: "Select a data step",
+    purpose: "Click a data-flow label to see what crosses that boundary, what changes, and why the next step can continue.",
+  };
+}
+
 function SequenceTraceDetail({
   selectedStep,
   selectedEvent,
@@ -543,189 +925,28 @@ function SequenceTraceDetail({
 }) {
   if (!trace) {
     if (selectedEvent) {
-      return (
-        <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
-          <div className={styles.sequenceDetailHeader}>
-            <span>Live Event</span>
-            <strong>{selectedEvent.label}</strong>
-          </div>
-          <DetailRows
-            rows={[
-              ["phase", selectedEvent.phase],
-              ["event", selectedEvent.event],
-              ["branch", selectedEvent.branch],
-              ["emitter", selectedEvent.physicalEmitter],
-              ["from", selectedEvent.from],
-              ["to", selectedEvent.to],
-              ["severity", selectedEvent.severity],
-              ["at", selectedEvent.at],
-            ]}
-          />
-          {selectedEvent.detail ? <DetailRows rows={[["detail", selectedEvent.detail]]} /> : null}
-          <JsonBlock value={selectedEvent.data ?? selectedEvent} />
-        </aside>
-      );
+      return <DetailView view={liveDetailView(selectedEvent)} />;
     }
 
     return (
-      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
-        <div className={styles.sequenceDetailHeader}>
-          <span>Trace Detail</span>
-          <strong>Run a data flow</strong>
-        </div>
-      </aside>
+      <DetailView
+        view={{
+          eyebrow: "Trace detail",
+          title: "Run a data flow",
+          purpose: "Click a data-flow label to see what crosses that boundary, what changes, and why the next step can continue.",
+        }}
+      />
     );
   }
 
-  const renderToolMetadata = recordValue(trace.a2uiRenderPayload.toolMetadata);
-
-  if (selectedStep === "business-tool-call") {
-    return (
-      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
-        <div className={styles.sequenceDetailHeader}>
-          <span>API call info</span>
-          <strong>{trace.apiLabel}</strong>
-        </div>
-        <DetailRows rows={[["query", trace.query], ["apiId", trace.apiId], ["route", trace.apiRoute], ["tool", trace.businessToolName], ["policy", "business tool first, then a2ui_render"]]} />
-      </aside>
-    );
-  }
-
-  if (selectedStep === "business-tool-result") {
-    return (
-      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
-        <div className={styles.sequenceDetailHeader}>
-          <span>Raw tool result</span>
-          <strong>source fingerprint</strong>
-        </div>
-        <DetailRows
-          rows={[
-            ["hash", shortHash(trace.sourceFingerprint.dataHash)],
-            ["rows", trace.sourceFingerprint.rowCount],
-            ["columns", rawColumnCount(trace)],
-            ["bytes", trace.sourceFingerprint.byteLength],
-            ["shape", trace.sourceFingerprint.shape],
-          ]}
-        />
-        <JsonBlock value={trace.sourceData.items.slice(0, 2)} />
-      </aside>
-    );
-  }
-
-  if (selectedStep === "a2ui-tool-call") {
-    return (
-      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
-        <div className={styles.sequenceDetailHeader}>
-          <span>a2ui_render payload</span>
-          <strong>raw data + displayData</strong>
-        </div>
-        <DetailRows rows={[["source tool", renderToolMetadata.sourceToolName], ["result id", renderToolMetadata.sourceToolResultId], ["source hash", shortHash(trace.sourceFingerprint.dataHash)], ["display hash", shortHash(trace.normalization.displayDataHash)], ["preview", `${trace.sampleDataPreview.sampleSize}/${trace.sampleDataPreview.rowCount}`]]} />
-        <JsonBlock value={trace.a2uiRenderPayload} />
-      </aside>
-    );
-  }
-
-  if (selectedStep === "profile") {
-    return (
-      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
-        <div className={styles.sequenceDetailHeader}>
-          <span>Conversion and schema</span>
-          <strong>{trace.normalization.strategy}</strong>
-        </div>
-        <DetailRows rows={[["normalization", trace.normalization.applied], ["fields", trace.derivedSchema.fields.length], ["masked", trace.sampleDataPreview.maskedFields.length], ["truncated", trace.sampleDataPreview.truncated]]} />
-        <div className={styles.sequenceMiniTable}>
-          {trace.mappingComparison.slice(0, 6).map((row) => (
-            <div key={`${row.derivedField}-${row.templateSlot}`}>
-              <span>{row.derivedField}</span>
-              <strong>{row.aliasOrNormalization}</strong>
-            </div>
-          ))}
-        </div>
-      </aside>
-    );
-  }
-
-  if (selectedStep === "registry-request" || selectedStep === "registry-loaded") {
-    return (
-      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
-        <div className={styles.sequenceDetailHeader}>
-          <span>Template contract</span>
-          <strong>{trace.templateContract.componentId}</strong>
-        </div>
-        <DetailRows rows={[["viewType", trace.templateContract.surfaceConfig.viewType], ["required", trace.templateContract.inputSchema?.requiredSlots.map((slot) => slot.slot).join(", ")], ["maxItems", trace.templateContract.surfaceConfig.maxItems]]} />
-        <JsonBlock value={trace.templateContract.inputSchema} />
-      </aside>
-    );
-  }
-
-  if (selectedStep === "matcher") {
-    return (
-      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
-        <div className={styles.sequenceDetailHeader}>
-          <span>Field mapping comparison</span>
-          <strong>score {trace.renderPlan.score.toFixed(2)}</strong>
-        </div>
-        <div className={styles.sequenceMappingTable}>
-          {trace.mappingComparison.map((row) => (
-            <div key={`${row.derivedField}-${row.templateSlot}`}>
-              <span>{row.derivedField}</span>
-              <span>{row.templateSlot}</span>
-              <strong>{row.decision}</strong>
-            </div>
-          ))}
-        </div>
-      </aside>
-    );
-  }
-
-  if (selectedStep === "a2ui-tool-result") {
-    return (
-      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
-        <div className={styles.sequenceDetailHeader}>
-          <span>Source / received comparison</span>
-          <strong>{trace.integrity.matched ? "matched" : "mismatch detected"}</strong>
-        </div>
-        <DetailRows
-          rows={[
-            ["hash", trace.integrity.hashMatched],
-            ["row count", trace.integrity.rowCountMatched],
-            ["byte length", trace.integrity.byteLengthMatched],
-            ["source rows", trace.integrity.expectedRowCount],
-            ["received rows", trace.integrity.receivedRowCount],
-            ["selected template", trace.surfaceEnvelope.templateId],
-          ]}
-        />
-      </aside>
-    );
-  }
-
-  if (selectedStep === "surface") {
-    return (
-      <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
-        <div className={styles.sequenceDetailHeader}>
-          <span>SurfaceEnvelope result</span>
-          <strong>{trace.surfaceEnvelope.templateId}</strong>
-        </div>
-        <DetailRows rows={[["strategy", trace.surfaceEnvelope.meta.strategy], ["score", trace.surfaceEnvelope.meta.score], ["rows", trace.surfaceEnvelope.payload.data.items.length]]} />
-        <JsonBlock value={trace.surfaceEnvelope.meta.trace} />
-      </aside>
-    );
-  }
-
-  return (
-    <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
-      <div className={styles.sequenceDetailHeader}>
-        <span>Trace Detail</span>
-        <strong>Select a data step</strong>
-      </div>
-    </aside>
-  );
+  return <DetailView view={traceDetailView(selectedStep, trace)} />;
 }
 
 export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, dataBoundaryTrace }: SequenceBoardProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const panRef = useRef<{ startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
-  const lastUserPanAtRef = useRef(0);
+  const autoFollowPausedRef = useRef(false);
+  const autoFollowPauseTimerRef = useRef<number | null>(null);
   const lastTurnIdRef = useRef<string | undefined>(undefined);
   const lastEventCountRef = useRef(events.length);
   const didPlaceInitialViewRef = useRef(false);
@@ -739,11 +960,27 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
   const branches = useMemo(() => branchSet(events), [events]);
   const visibleSteps = useMemo(() => steps.filter((step) => showA2UISubsteps || !step.a2uiSubstep), [showA2UISubsteps]);
   const completed = useMemo(() => completedStepSet(events, visibleSteps), [events, visibleSteps]);
-  const activeStep = visibleSteps.find((step) => isActiveStep(step, active));
+  const activeStep = visibleSteps.find((step) => eventMatchesStep(step, active));
+  const activeSteps = visibleSteps.filter((step) => isActiveStep(step, active, completed));
   const focusStep = activeStep ?? stepForDoneEvent(active, visibleSteps);
   const modalStep = visibleSteps.find((step) => step.id === traceModalStep);
   const modalStepEvent = modalStep ? eventForStep(modalStep, events) : undefined;
   const modalStepLabel = modalStep ? stepDisplayLabel(modalStep, dataBoundaryTrace, events) : "Trace detail";
+
+  function clearAutoFollowPauseTimer() {
+    if (!autoFollowPauseTimerRef.current) return;
+    window.clearTimeout(autoFollowPauseTimerRef.current);
+    autoFollowPauseTimerRef.current = null;
+  }
+
+  function pauseAutoFollow() {
+    autoFollowPausedRef.current = true;
+    clearAutoFollowPauseTimer();
+    autoFollowPauseTimerRef.current = window.setTimeout(() => {
+      autoFollowPausedRef.current = false;
+      autoFollowPauseTimerRef.current = null;
+    }, manualAutoFollowPauseMs);
+  }
 
   function focusCamera(region: FocusRegion, nextZoom: number, behavior: ScrollBehavior = "smooth") {
     const viewport = viewportRef.current;
@@ -757,7 +994,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
   function applyManualZoom(nextZoomValue: number, target: string) {
     const viewport = viewportRef.current;
     const nextZoom = clampZoom(nextZoomValue);
-    lastUserPanAtRef.current = Date.now();
+    pauseAutoFollow();
 
     if (!viewport) {
       setZoom(nextZoom);
@@ -777,6 +1014,12 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
       setCamera(cameraStateForScroll(target, nextLeft, nextTop, nextZoom, "user"));
     });
   }
+
+  useEffect(() => () => {
+    if (autoFollowPauseTimerRef.current) {
+      window.clearTimeout(autoFollowPauseTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -804,11 +1047,14 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
     const startedNewTurn = Boolean(active?.turnId && active.turnId !== lastTurnIdRef.current);
     if (startedNewTurn) {
       lastTurnIdRef.current = active?.turnId;
-      lastUserPanAtRef.current = 0;
+      if (autoFollowPauseTimerRef.current) {
+        window.clearTimeout(autoFollowPauseTimerRef.current);
+        autoFollowPauseTimerRef.current = null;
+      }
+      autoFollowPausedRef.current = false;
     }
 
-    const userRecentlyPanned = Date.now() - lastUserPanAtRef.current < manualAutoFollowPauseMs;
-    if (userRecentlyPanned && !startedNewTurn && active?.phase !== "request") return;
+    if (autoFollowPausedRef.current && !startedNewTurn && active?.phase !== "request") return;
 
     const region = focusRegionForStep(focusStep);
     const nextZoom = clampZoom(region.zoom ?? focusZoom);
@@ -844,7 +1090,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
     if (event.button !== 0) return;
     const viewport = viewportRef.current;
     if (!viewport) return;
-    lastUserPanAtRef.current = Date.now();
+    pauseAutoFollow();
     panRef.current = {
       startX: event.clientX,
       startY: event.clientY,
@@ -862,7 +1108,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
     event.preventDefault();
     viewport.scrollLeft = pan.scrollLeft - (event.clientX - pan.startX);
     viewport.scrollTop = pan.scrollTop - (event.clientY - pan.startY);
-    lastUserPanAtRef.current = Date.now();
+    pauseAutoFollow();
     setViewportScroll({ left: viewport.scrollLeft, top: viewport.scrollTop });
     setCamera(cameraStateForScroll("user pan", viewport.scrollLeft, viewport.scrollTop, zoom, "user"));
   }
@@ -943,7 +1189,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
 
             <div className={styles.sequenceActivationLayer} aria-hidden="true">
               {visibleSteps
-                .filter((step) => completed.has(step.id) || isActiveStep(step, active))
+                .filter((step) => completed.has(step.id) || isActiveStep(step, active, completed))
                 .map((step) => (
                   <span
                     className={activationClass(step, completed, active)}
@@ -1002,7 +1248,9 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
               );
             })}
 
-            {activeStep ? <span className={packetRailClass(activeStep)} style={packetRailStyle(activeStep)} /> : null}
+            {activeSteps.map((step) => (
+              <span className={packetRailClass(step)} key={`${step.id}-packet`} style={packetRailStyle(step)} />
+            ))}
           </div>
         </div>
       </div>
