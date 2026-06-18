@@ -1,3 +1,5 @@
+import { buildEquipmentCatalog, buildEquipmentStatus } from "./equipment-test-data";
+
 type EquipmentSource = "catalog" | "status";
 
 const sourceEnvByType: Record<EquipmentSource, string[]> = {
@@ -23,17 +25,29 @@ function appendRequestSearchParams(target: URL, request: Request) {
   }
 }
 
+function pageOptionsFromRequest(request: Request) {
+  const requestUrl = new URL(request.url);
+  const page = Number(requestUrl.searchParams.get("page") ?? 1);
+  const pageSize = Number(requestUrl.searchParams.get("pageSize") ?? 44);
+  return {
+    page: Number.isFinite(page) ? page : 1,
+    pageSize: Number.isFinite(pageSize) ? pageSize : 44,
+  };
+}
+
+function localEquipmentData(source: EquipmentSource, request: Request) {
+  const options = pageOptionsFromRequest(request);
+  return source === "catalog" ? buildEquipmentCatalog(options) : buildEquipmentStatus(options);
+}
+
+function shouldFallbackToFixture(target: URL) {
+  return target.hostname === "localhost" || target.hostname === "127.0.0.1" || target.hostname === "::1";
+}
+
 export async function proxyEquipmentData(source: EquipmentSource, request: Request) {
   const { envNames, value } = readSourceUrl(source);
   if (!value) {
-    return Response.json(
-      {
-        error: "equipment_api_not_configured",
-        message: "Equipment data source is not configured.",
-        requiredEnv: envNames,
-      },
-      { status: 503 },
-    );
+    return Response.json(localEquipmentData(source, request));
   }
 
   let target: URL;
@@ -59,6 +73,7 @@ export async function proxyEquipmentData(source: EquipmentSource, request: Reque
     });
     if (!response.ok) {
       const details = await response.text().catch(() => "");
+      if (shouldFallbackToFixture(target)) return Response.json(localEquipmentData(source, request));
       return Response.json(
         {
           error: "equipment_api_request_failed",
@@ -73,6 +88,7 @@ export async function proxyEquipmentData(source: EquipmentSource, request: Reque
     const data = (await response.json()) as unknown;
     return Response.json(data);
   } catch (error) {
+    if (shouldFallbackToFixture(target)) return Response.json(localEquipmentData(source, request));
     return Response.json(
       {
         error: "equipment_api_request_error",

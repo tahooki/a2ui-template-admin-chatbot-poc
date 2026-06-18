@@ -604,8 +604,16 @@ npm run dev:all
 
 ```text
 Next dev server: http://localhost:3001
-equipment source server 또는 기존 API env
 main-agent server: http://localhost:8000
+```
+
+`/api/equipment-status`, `/api/equipment-catalog`, `/api/equipment-status-wide-columns`, `/api/equipment-status-large-rows`는 Next route에서 기본 fixture를 제공한다. 별도 equipment source server나 `A2UI_EQUIPMENT_*_API_URL` env는 필수가 아니다.
+
+외부 장비 source proxy를 테스트할 때만 다음 env를 선택적으로 설정한다.
+
+```text
+A2UI_EQUIPMENT_STATUS_API_URL
+A2UI_EQUIPMENT_CATALOG_API_URL
 ```
 
 각 response는 다음 공통 shape를 가져야 한다.
@@ -621,7 +629,7 @@ wide route는 첫 row column count가 120 이상이어야 한다.
 
 large route는 `total >= 1000`이어야 한다.
 
-기존 `/api/equipment-status`, `/api/equipment-catalog`는 외부 source 미설정 시 503이 정상이다. e2e smoke에서 이 둘까지 통과시키려면 equipment source server가 떠 있어야 한다.
+기존 `/api/equipment-status`, `/api/equipment-catalog`도 env 없이 200을 반환해야 한다. 로컬 `localhost:8100` source env가 남아 있는데 source server가 꺼져 있으면 Next route는 기본 fixture로 fallback한다.
 
 ### 7.3 UI E2E 시연 체크
 

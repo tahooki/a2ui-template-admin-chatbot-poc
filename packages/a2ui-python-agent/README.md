@@ -16,17 +16,14 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 
 For an internal company gateway, point `OPENAI_BASE_URL` at the internal OpenAI-compatible `/v1` endpoint. The API key value is never required in source code.
 
-Equipment data must come from configured API sources. The Next equipment routes do not generate mock rows internally:
+The Python Agent calls the Next app equipment routes through `A2UI_NEXT_API_BASE_URL`. Those routes serve local fixture data by default, so `A2UI_EQUIPMENT_STATUS_API_URL` and `A2UI_EQUIPMENT_CATALOG_API_URL` are optional external-source overrides.
 
-```bash
-A2UI_EQUIPMENT_STATUS_API_URL=https://example.internal/equipment-status
-A2UI_EQUIPMENT_CATALOG_API_URL=https://example.internal/equipment-catalog
-```
-
-For local development, run the equipment data source server from the repo root:
+For external-source testing, run the standalone equipment data source server from the repo root and set the override env values:
 
 ```bash
 npm run equipment-source:dev
+A2UI_EQUIPMENT_STATUS_API_URL=http://localhost:8100/equipment-status
+A2UI_EQUIPMENT_CATALOG_API_URL=http://localhost:8100/equipment-catalog
 ```
 
 ## Run

@@ -75,8 +75,17 @@ async function main() {
   }
   console.log("[ok] MCP apiId enum includes large-data test APIs");
 
-  await fetchJson("/api/equipment-status", { optional: true });
-  await fetchJson("/api/equipment-catalog", { optional: true });
+  const status = await fetchJson("/api/equipment-status");
+  const statusRows = rows(status, "status API");
+  expect(statusRows.length > 0, "status API should return local default rows without equipment env");
+  expect(String(statusRows[0].id).startsWith("eq-status-"), "status API should use default status fixture ids");
+  console.log(`[ok] status API default rows=${statusRows.length}`);
+
+  const catalogData = await fetchJson("/api/equipment-catalog");
+  const catalogRows = rows(catalogData, "catalog API");
+  expect(catalogRows.length > 0, "catalog API should return local default rows without equipment env");
+  expect(String(catalogRows[0].id).startsWith("eq-catalog-"), "catalog API should use default catalog fixture ids");
+  console.log(`[ok] catalog API default rows=${catalogRows.length}`);
 
   const wide = await fetchJson("/api/equipment-status-wide-columns");
   const wideRows = rows(wide, "wide columns API");

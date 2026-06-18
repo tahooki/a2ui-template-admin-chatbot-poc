@@ -34,7 +34,6 @@ The combined dev command starts:
 ```text
 Next app:              http://localhost:3001
 Python Agent:          http://localhost:8000
-Equipment data source: http://localhost:8100
 Admin MCP proxy:       http://localhost:4100
 ```
 
@@ -54,10 +53,18 @@ A2UI_A2A_FALLBACK_TO_MCP=true
 A2UI_NEXT_API_BASE_URL=http://localhost:3001
 A2UI_A2A_URL=http://localhost:3001/api/a2a
 PYTHON_AGENT_URL=http://localhost:8000
-
-A2UI_EQUIPMENT_STATUS_API_URL=http://localhost:8100/equipment-status
-A2UI_EQUIPMENT_CATALOG_API_URL=http://localhost:8100/equipment-catalog
 ```
+
+The Next equipment API routes work without equipment-source env variables. They serve local fixture data by default:
+
+```text
+GET http://localhost:3001/api/equipment-status
+GET http://localhost:3001/api/equipment-catalog
+GET http://localhost:3001/api/equipment-status-wide-columns
+GET http://localhost:3001/api/equipment-status-large-rows
+```
+
+To proxy status/catalog to an external equipment source instead, set `A2UI_EQUIPMENT_STATUS_API_URL` and `A2UI_EQUIPMENT_CATALOG_API_URL`. If those env values point at a local source such as `localhost:8100` and that source is not running, the routes fall back to the local fixtures.
 
 The Python Agent expects an OpenAI-compatible chat completions endpoint:
 
@@ -83,12 +90,6 @@ Expected signals:
   "llmConfigured": true,
   "openaiModel": "사내모델명"
 }
-```
-
-Check the local equipment source:
-
-```bash
-curl http://localhost:8100/health
 ```
 
 Check the Next app:
