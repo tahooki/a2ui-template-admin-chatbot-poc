@@ -20,8 +20,11 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
             },
         )
         captured = {}
+        fallback_called = False
 
         async def fake_fallback(**kwargs):
+            nonlocal fallback_called
+            fallback_called = True
             captured["fallback_kwargs"] = kwargs
             return "fallback text"
 
@@ -64,6 +67,7 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result.profile["rowCount"], 1)
+        self.assertFalse(fallback_called)
         self.assertEqual(captured["render"]["tool_metadata"]["sourceToolName"], "get_equipment_status")
         self.assertEqual(captured["render"]["tool_metadata"]["sourceDataHash"], "abc")
         self.assertEqual(captured["render"]["tool_metadata"]["renderToolName"], "a2ui_render")
@@ -98,8 +102,11 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
             },
         )
         captured = {}
+        fallback_called = False
 
         async def fake_fallback(**kwargs):
+            nonlocal fallback_called
+            fallback_called = True
             return "fallback text"
 
         async def fake_render_or_fallback(
@@ -131,6 +138,7 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
             result = await render_business_tool_result("데이터가 많은 장비 상태 목록 보여줘", business_result)
 
         self.assertEqual(captured["api_id"], "equipment-status-large-rows")
+        self.assertFalse(fallback_called)
         self.assertEqual(captured["sample_data_preview"]["rowCount"], 1000)
         self.assertLess(captured["sample_data_preview"]["sampleSize"], 1000)
         self.assertTrue(captured["sample_data_preview"]["truncated"])
@@ -138,6 +146,69 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["tool_metadata"]["sourceToolName"], "get_equipment_status_large_rows")
         self.assertEqual(captured["tool_metadata"]["sourceRowCount"], 1000)
         self.assertEqual(result.metadata["previewRowCount"], 1000)
+
+    async def test_text_fallback_generation_uses_bounded_preview_only(self) -> None:
+        rows = [
+            {
+                "id": f"eq-large-{index}",
+                "name": f"Large CNC {index}",
+                "isOnline": True,
+                "isRunning": index % 2 == 0,
+                "hasAlarm": False,
+                "needsInspection": False,
+                "isReserved": False,
+            }
+            for index in range(1000)
+        ]
+        business_result = BusinessToolResult(
+            tool_name="get_equipment_status_large_rows",
+            api_id="equipment-status-large-rows",
+            data={"items": rows, "total": 1000, "page": 1, "pageSize": 1000},
+            metadata={
+                "sourceToolName": "get_equipment_status_large_rows",
+                "sourceToolResultId": "tool-result-large",
+                "sourceDataHash": "large-hash",
+                "sourceRowCount": 1000,
+            },
+        )
+        captured = {}
+
+        async def fake_fallback(**kwargs):
+            captured["fallback_kwargs"] = kwargs
+            return "LLM fallback text"
+
+        async def fake_render_or_fallback(
+            query,
+            api_id,
+            data,
+            profile,
+            fallback_text,
+            display_data,
+            derived_schema,
+            sample_data_preview,
+            tool_metadata=None,
+        ):
+            captured["render_fallback_text"] = fallback_text
+            return A2UIResponse(
+                type="text_fallback",
+                text=fallback_text,
+                reason="No matching template.",
+                source_tool=tool_metadata,
+                data_integrity={"matched": True},
+            )
+
+        with (
+            patch("app.render_boundary.generate_equipment_fallback_text", fake_fallback),
+            patch("app.render_boundary.render_or_fallback", fake_render_or_fallback),
+        ):
+            result = await render_business_tool_result("데이터가 많은 장비 상태 목록 보여줘", business_result)
+
+        fallback_data = captured["fallback_kwargs"]["data"]
+        self.assertEqual(fallback_data["total"], 1000)
+        self.assertLess(len(fallback_data["items"]), 1000)
+        self.assertEqual(result.fallback_text, "LLM fallback text")
+        self.assertEqual(result.a2ui.text, "LLM fallback text")
+        self.assertIn("bounded preview", captured["render_fallback_text"])
 
 
 if __name__ == "__main__":

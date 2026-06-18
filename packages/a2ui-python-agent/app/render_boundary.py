@@ -34,6 +34,15 @@ def profile_trace_metadata(profile: dict[str, Any], sample_data_preview: dict[st
     }
 
 
+def deterministic_fallback_text(api_id: str, profile: dict[str, Any], sample_data_preview: dict[str, Any]) -> str:
+    row_count = sample_data_preview.get("rowCount", profile.get("rowCount", 0))
+    sample_size = sample_data_preview.get("sampleSize", 0)
+    return (
+        f"{api_id} 데이터를 확인했습니다. 총 {row_count}건 중 {sample_size}건의 bounded preview로 "
+        "스키마를 판단했지만, 표시 가능한 A2UI 템플릿을 찾지 못했습니다."
+    )
+
+
 async def _fallback_text(
     message: str,
     api_id: str,
@@ -56,6 +65,33 @@ async def _fallback_text(
     raise RenderBoundaryError("LLM equipment fallback generation failed: empty response text.")
 
 
+async def _llm_fallback_text_for_preview(
+    message: str,
+    api_id: str,
+    sample_data_preview: dict[str, Any],
+    profile: dict[str, Any],
+    reason: str | None,
+) -> str:
+    preview_data = sample_data_preview.get("data")
+    data = preview_data if isinstance(preview_data, dict) else {"items": [], "total": sample_data_preview.get("rowCount", 0)}
+    return await _fallback_text(message, api_id, data, profile, reason)
+
+
+def a2ui_with_text(a2ui: A2UIResponse, text: str) -> A2UIResponse:
+    return A2UIResponse(
+        type=a2ui.type,
+        text=text,
+        surface=a2ui.surface,
+        reason=a2ui.reason,
+        strategy=a2ui.strategy,
+        score=a2ui.score,
+        candidates=a2ui.candidates,
+        mapping=a2ui.mapping,
+        source_tool=a2ui.source_tool,
+        data_integrity=a2ui.data_integrity,
+    )
+
+
 async def render_business_tool_result(
     query: str,
     business_tool_result: BusinessToolResult,
@@ -70,7 +106,7 @@ async def render_business_tool_result(
     profile = build_data_profile(display_data)
     sample_data_preview = build_sample_data_preview(display_data, source_id=api_id)
     derived_schema = build_derived_schema(display_data, source_id=api_id, sample_data_preview=sample_data_preview)
-    fallback_text = await _fallback_text(query, api_id, display_data, profile)
+    fallback_text = deterministic_fallback_text(api_id, profile, sample_data_preview)
     tool_metadata = {
         **(extra_metadata or {}),
         **business_tool_result.metadata,
@@ -96,6 +132,9 @@ async def render_business_tool_result(
         sample_data_preview,
         tool_metadata=tool_metadata,
     )
+    if a2ui.type != "surface":
+        fallback_text = await _llm_fallback_text_for_preview(query, api_id, sample_data_preview, profile, a2ui.reason)
+        a2ui = a2ui_with_text(a2ui, fallback_text)
     metadata = {
         **tool_metadata,
         **profile_trace_metadata(profile, sample_data_preview),

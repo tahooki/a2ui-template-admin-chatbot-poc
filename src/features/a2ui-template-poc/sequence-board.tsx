@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
 import styles from "./styles.module.css";
 import type { AgentFlowActor, AgentFlowBranch, AgentFlowEvent, AgentFlowPhase } from "./agent-flow-types";
 import type { DataBoundaryScenarioTrace } from "./data-boundary-lab";
@@ -528,14 +528,45 @@ function stepDisplayLabel(step: SequenceStep, trace: DataBoundaryScenarioTrace |
   return step.label;
 }
 
+function eventForStep(step: SequenceStep, events: AgentFlowEvent[]) {
+  return events.findLast((event) => eventMatchesStep(step, event));
+}
+
 function SequenceTraceDetail({
   selectedStep,
+  selectedEvent,
   trace,
 }: {
   selectedStep: string;
+  selectedEvent?: AgentFlowEvent;
   trace?: DataBoundaryScenarioTrace;
 }) {
   if (!trace) {
+    if (selectedEvent) {
+      return (
+        <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
+          <div className={styles.sequenceDetailHeader}>
+            <span>Live Event</span>
+            <strong>{selectedEvent.label}</strong>
+          </div>
+          <DetailRows
+            rows={[
+              ["phase", selectedEvent.phase],
+              ["event", selectedEvent.event],
+              ["branch", selectedEvent.branch],
+              ["emitter", selectedEvent.physicalEmitter],
+              ["from", selectedEvent.from],
+              ["to", selectedEvent.to],
+              ["severity", selectedEvent.severity],
+              ["at", selectedEvent.at],
+            ]}
+          />
+          {selectedEvent.detail ? <DetailRows rows={[["detail", selectedEvent.detail]]} /> : null}
+          <JsonBlock value={selectedEvent.data ?? selectedEvent} />
+        </aside>
+      );
+    }
+
     return (
       <aside className={styles.sequenceTraceDetail} aria-label="Sequence trace detail">
         <div className={styles.sequenceDetailHeader}>
@@ -698,6 +729,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
   const lastTurnIdRef = useRef<string | undefined>(undefined);
   const lastEventCountRef = useRef(events.length);
   const didPlaceInitialViewRef = useRef(false);
+  const modalOpenedAtRef = useRef(0);
   const [isPanning, setIsPanning] = useState(false);
   const [zoom, setZoom] = useState(overviewZoom);
   const [traceModalStep, setTraceModalStep] = useState<string | null>(null);
@@ -710,6 +742,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
   const activeStep = visibleSteps.find((step) => isActiveStep(step, active));
   const focusStep = activeStep ?? stepForDoneEvent(active, visibleSteps);
   const modalStep = visibleSteps.find((step) => step.id === traceModalStep);
+  const modalStepEvent = modalStep ? eventForStep(modalStep, events) : undefined;
   const modalStepLabel = modalStep ? stepDisplayLabel(modalStep, dataBoundaryTrace, events) : "Trace detail";
 
   function focusCamera(region: FocusRegion, nextZoom: number, behavior: ScrollBehavior = "smooth") {
@@ -842,6 +875,16 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
     }
   }
 
+  function openTraceDetail(stepId: string, openedAt: number) {
+    modalOpenedAtRef.current = openedAt;
+    setTraceModalStep(stepId);
+  }
+
+  function closeTraceDetailFromBackdrop(event: ReactMouseEvent<HTMLDivElement>) {
+    if (event.timeStamp - modalOpenedAtRef.current < 320) return;
+    setTraceModalStep(null);
+  }
+
   return (
     <div className={styles.sequenceBoardShell}>
       <div
@@ -923,27 +966,37 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
 
             {visibleSteps.map((step) => {
               const position = labelPosition(step);
-              const clickable = Boolean(dataBoundaryTrace) && clickableStepIds.has(step.id);
+              const liveEvent = eventForStep(step, events);
+              const clickable = Boolean(liveEvent) || (Boolean(dataBoundaryTrace) && clickableStepIds.has(step.id));
+              const displayLabel = stepDisplayLabel(step, dataBoundaryTrace, events);
               return (
                 <div
                   className={`${stepClass(step, completed, active)} ${clickable ? styles.sequenceStepClickable : ""} ${traceModalStep === step.id ? styles.sequenceStepSelected : ""}`}
                   data-sequence-branch={step.branch ?? "main"}
                   data-sequence-step={step.id}
                   key={`${step.id}-label`}
+                  onDoubleClick={clickable ? (event) => {
+                    event.stopPropagation();
+                    openTraceDetail(step.id, event.timeStamp);
+                  } : undefined}
                   style={{ left: position.left, top: position.top }}
                 >
                   {clickable ? (
                     <button
                       aria-pressed={traceModalStep === step.id}
-                      onClick={() => setTraceModalStep(step.id)}
+                      onClick={(event) => openTraceDetail(step.id, event.timeStamp)}
+                      onDoubleClick={(event) => {
+                        event.stopPropagation();
+                        openTraceDetail(step.id, event.timeStamp);
+                      }}
                       onPointerDown={(event) => event.stopPropagation()}
-                      title="View data trace"
+                      title={displayLabel}
                       type="button"
                     >
-                      {stepDisplayLabel(step, dataBoundaryTrace, events)}
+                      {displayLabel}
                     </button>
                   ) : (
-                    <span>{stepDisplayLabel(step, dataBoundaryTrace, events)}</span>
+                    <span title={displayLabel}>{displayLabel}</span>
                   )}
                 </div>
               );
@@ -991,8 +1044,8 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
           Fit
         </button>
       </div>
-      {traceModalStep && dataBoundaryTrace ? (
-        <div className={styles.sequenceModalBackdrop} onClick={() => setTraceModalStep(null)} role="presentation">
+      {traceModalStep && (dataBoundaryTrace || modalStepEvent) ? (
+        <div className={styles.sequenceModalBackdrop} onClick={closeTraceDetailFromBackdrop} role="presentation">
           <div
             aria-label="Sequence trace detail"
             aria-modal="true"
@@ -1014,7 +1067,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
                 Close
               </button>
             </div>
-            <SequenceTraceDetail selectedStep={traceModalStep} trace={dataBoundaryTrace} />
+            <SequenceTraceDetail selectedEvent={modalStepEvent} selectedStep={traceModalStep} trace={dataBoundaryTrace} />
           </div>
         </div>
       ) : null}

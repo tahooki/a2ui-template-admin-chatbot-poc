@@ -73,6 +73,61 @@ def _compact_json(value: object, limit: int = 5000) -> str:
     return text[:limit]
 
 
+def _compact_fallback_profile(profile: dict[str, Any], field_limit: int = 18) -> dict[str, Any]:
+    fields = profile.get("fields") if isinstance(profile.get("fields"), list) else []
+    compact_fields: list[dict[str, Any]] = []
+    for field in fields[:field_limit]:
+        if not isinstance(field, dict):
+            continue
+        compact_fields.append(
+            {
+                "key": field.get("key"),
+                "type": field.get("type"),
+                "roles": field.get("roleCandidates") or field.get("roles") or [],
+            }
+        )
+
+    return {
+        "shape": profile.get("shape"),
+        "rowCount": profile.get("rowCount"),
+        "fieldCount": len(fields),
+        "shownFieldCount": len(compact_fields),
+        "omittedFieldCount": max(0, len(fields) - len(compact_fields)),
+        "booleanFieldCount": profile.get("booleanFieldCount"),
+        "hasImageField": profile.get("hasImageField"),
+        "fields": compact_fields,
+    }
+
+
+def _compact_fallback_rows(rows: list[Any], row_limit: int = 3, field_limit: int = 10) -> list[Any]:
+    preferred_keys = [
+        "id",
+        "name",
+        "equipmentName",
+        "status",
+        "isOnline",
+        "isRunning",
+        "hasAlarm",
+        "needsInspection",
+        "isReserved",
+        "location",
+        "updatedAt",
+    ]
+    compact_rows: list[Any] = []
+    for row in rows[:row_limit]:
+        if not isinstance(row, dict):
+            compact_rows.append(row)
+            continue
+        keys = [key for key in preferred_keys if key in row]
+        for key in row.keys():
+            if len(keys) >= field_limit:
+                break
+            if key not in keys:
+                keys.append(key)
+        compact_rows.append({key: row.get(key) for key in keys})
+    return compact_rows
+
+
 def _compact_error_text(value: str, limit: int = 700) -> str:
     compacted = " ".join(value.split())
     return compacted[:limit]
@@ -306,15 +361,17 @@ async def generate_equipment_fallback_text(
     reason: str | None = None,
 ) -> str:
     rows = data.get("items") if isinstance(data.get("items"), list) else []
-    sample_rows = rows[:6]
+    total_rows = data.get("total") if isinstance(data.get("total"), int) else len(rows)
+    compact_profile = _compact_fallback_profile(profile)
+    sample_rows = _compact_fallback_rows(rows)
     content = await _chat_completion(
         [
             {
                 "role": "system",
                 "content": (
-                    "You are a Korean A2UI agent. Write a concise natural answer from the provided equipment data. "
-                    "Do not invent rows, counts, URLs, statuses, or fields. If no A2UI surface is available, explain "
-                    "the data as bullet points. Keep it practical and demo-ready."
+                    "You are a Korean A2UI fallback writer. The UI renderer may have no matching surface, so write a "
+                    "very short answer from bounded metadata only. Do not list every row or field. Do not invent "
+                    "counts, statuses, URLs, or fields."
                 ),
             },
             {
@@ -323,15 +380,16 @@ async def generate_equipment_fallback_text(
                     f"User request: {message}\n"
                     f"Selected API: {api_id}\n"
                     f"A2UI fallback reason: {reason or '(none)'}\n"
-                    f"Total rows: {data.get('total', len(sample_rows))}\n"
-                    f"Data profile: {_compact_json(profile, 3000)}\n"
-                    f"First rows: {_compact_json(sample_rows, 5000)}\n"
-                    "Write Korean bullet points. Start by saying what data was checked."
+                    f"Total rows: {total_rows}\n"
+                    f"Profile summary: {_compact_json(compact_profile, 1400)}\n"
+                    f"Sample rows: {_compact_json(sample_rows, 1600)}\n"
+                    "Write 2-4 Korean bullet points, 360 Korean characters or fewer. "
+                    "Mention total rows once. If rows were sampled, say it is a sample-based summary."
                 ),
             },
         ],
         stage="equipment_fallback_text",
         temperature=0.2,
-        max_tokens=900,
+        max_tokens=360,
     )
     return content

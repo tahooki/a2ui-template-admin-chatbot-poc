@@ -408,7 +408,7 @@
   position: relative;
   flex: 0 0 auto;
   min-width: 292px;
-  max-width: 348px;
+  max-width: 640px;
   height: calc(100vh - 61px);
   display: flex;
   flex-direction: column;
@@ -1236,7 +1236,7 @@
   content: "";
   position: absolute;
   right: -1px;
-  top: -5px;
+  top: -6px;
   width: 0;
   height: 0;
   border-top: 5px solid transparent;
@@ -1263,7 +1263,7 @@
   right: auto;
   left: -1px;
   top: auto;
-  bottom: -5px;
+  bottom: -6px;
   border-right: 8px solid currentColor;
   border-left: 0;
 }
@@ -1279,6 +1279,14 @@
   color: var(--a2ui-teal);
   opacity: 1;
   filter: drop-shadow(0 0 8px rgba(31, 122, 109, 0.38));
+}
+
+.sequenceMessageLineComplete:not(.sequenceMessageLineSelf)::after {
+  top: -6.2px;
+}
+
+.sequenceMessageLineActive:not(.sequenceMessageLineSelf)::after {
+  top: -6.75px;
 }
 
 .sequenceMessageLinePreview {
@@ -1317,11 +1325,10 @@
 
 .sequenceStep span,
 .sequenceStep button {
-  display: inline-flex;
+  display: block;
+  box-sizing: border-box;
   max-width: 208px;
   min-height: 28px;
-  align-items: center;
-  justify-content: center;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.96);
@@ -1331,7 +1338,10 @@
   font-size: 11px;
   font-weight: 900;
   line-height: 1.25;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   word-break: normal;
   box-shadow: 0 0 0 4px rgba(248, 250, 252, 0.86), 0 8px 16px rgba(20, 35, 52, 0.06);
 }
@@ -1446,9 +1456,14 @@
 }
 
 .sequencePacketRailSelf::after {
-  left: calc(100% - 6px);
-  top: calc(50% - 6px);
-  animation: packetPulse 1.25s ease-in-out infinite;
+  left: -6px;
+  top: -6px;
+  animation: packetTravelSelf 1.25s ease-in-out infinite, packetPulse 1.25s ease-in-out infinite;
+}
+
+.sequencePacketRailSelf {
+  height: auto;
+  transform: none;
 }
 
 .sequencePacketRail_data::after {
@@ -1482,6 +1497,25 @@
   }
   100% {
     left: 0;
+  }
+}
+
+@keyframes packetTravelSelf {
+  0% {
+    left: -6px;
+    top: -6px;
+  }
+  38% {
+    left: calc(100% - 6px);
+    top: -6px;
+  }
+  62% {
+    left: calc(100% - 6px);
+    top: calc(100% - 6px);
+  }
+  100% {
+    left: -6px;
+    top: calc(100% - 6px);
   }
 }
 

@@ -14,6 +14,9 @@ import type { DataBoundaryScenarioId } from "./data-boundary-lab";
 
 const flowEventDisplayIntervalMs = 1000;
 const maxFlowEvents = 180;
+const minChatWidth = 292;
+const maxChatWidth = 640;
+const resizeViewportReserve = 520;
 
 export function A2UITemplatePocPage() {
   const { templates, version, saveTemplate, resetRegistry, isLoading, error } = useTemplateRegistry();
@@ -99,7 +102,8 @@ export function A2UITemplatePocPage() {
     function move(pointerEvent: PointerEvent) {
       if (!draggingRef.current) return;
       const delta = initialX - pointerEvent.clientX;
-      setChatWidth(Math.min(348, Math.max(292, initialWidth + delta)));
+      const viewportMax = Math.max(minChatWidth, Math.min(maxChatWidth, window.innerWidth - resizeViewportReserve));
+      setChatWidth(Math.min(viewportMax, Math.max(minChatWidth, initialWidth + delta)));
     }
 
     function stop() {
