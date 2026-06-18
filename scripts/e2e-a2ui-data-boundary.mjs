@@ -1,5 +1,7 @@
 const baseUrl = process.env.A2UI_E2E_BASE_URL || "http://localhost:3001";
 const commonStatusTemplateId = "equipment.commonStatusTable";
+const A2A_RENDER_REQUEST = "application/vnd.a2ui.render-request+json";
+const A2A_SURFACE = "application/vnd.a2ui.surface+json";
 
 function fail(message) {
   throw new Error(message);
@@ -9,14 +11,10 @@ function expect(condition, message) {
   if (!condition) fail(message);
 }
 
-async function fetchJson(path, { optional = false } = {}) {
+async function fetchJson(path, init) {
   const url = `${baseUrl}${path}`;
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await fetch(url, { cache: "no-store", ...init });
   if (!response.ok) {
-    if (optional) {
-      console.warn(`[skip] ${path} returned ${response.status}`);
-      return undefined;
-    }
     fail(`${path} returned ${response.status}`);
   }
   return response.json();
@@ -27,53 +25,89 @@ function rows(data, label) {
   return data.items;
 }
 
-async function callMcpTool(name, args) {
-  const response = await fetch(`${baseUrl}/api/mcp`, {
+function intentKey(apiId) {
+  return apiId === "equipment-catalog" ? "equipment.catalog.lookup" : "equipment.status.lookup";
+}
+
+function a2aPayload({ query, apiId, data }) {
+  const id = `${apiId}-${Date.now()}`;
+  const fallbackText = `${query} fallback`;
+  return {
+    configuration: {
+      acceptedOutputModes: [A2A_SURFACE, "text/plain"],
+      returnImmediately: false,
+    },
+    message: {
+      messageId: `msg-${id}`,
+      contextId: `ctx-${id}`,
+      role: "ROLE_USER",
+      parts: [
+        { text: query },
+        {
+          mediaType: A2A_RENDER_REQUEST,
+          data: {
+            kind: "a2ui.render.request",
+            query,
+            intentKey: intentKey(apiId),
+            apiId,
+            facts: {
+              apiId,
+              data,
+              fallbackText,
+              profile: { rowCount: data.total ?? data.items?.length ?? 0 },
+            },
+            data,
+            fallbackText,
+            a2uiOptions: {
+              includeTrace: true,
+              allowIntentFallback: true,
+            },
+          },
+        },
+      ],
+    },
+  };
+}
+
+function findPart(task, predicate) {
+  for (const artifact of task.artifacts ?? []) {
+    for (const part of artifact.parts ?? []) {
+      if (predicate(part)) return part;
+    }
+  }
+  return undefined;
+}
+
+async function callA2A({ query, apiId, data }) {
+  const body = await fetchJson("/api/a2a/message:send", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: `${name}-${Date.now()}`,
-      method: "tools/call",
-      params: { name, arguments: args },
-    }),
+    headers: {
+      "Content-Type": "application/a2a+json",
+      "A2A-Version": "1.0",
+    },
+    body: JSON.stringify(a2aPayload({ query, apiId, data })),
   });
-  expect(response.ok, `/api/mcp tools/call ${name} returned ${response.status}`);
-  const body = await response.json();
-  expect(!body.error, `/api/mcp tools/call ${name} returned JSON-RPC error`);
-  const text = body.result?.content?.[0]?.text;
-  expect(typeof text === "string", `/api/mcp tools/call ${name} returned no text content`);
-  return JSON.parse(text);
+  const task = body.task;
+  expect(task?.status?.state === "TASK_STATE_COMPLETED", `${apiId} A2A task should complete`);
+  return task;
 }
 
 async function assertStatusTemplate({ label, query, apiId, data }) {
-  const recommendation = await callMcpTool("a2ui.recommendTemplate", {
-    query,
-    apiId,
-    facts: { data, apiId },
-    options: { includeTrace: true },
-  });
-  expect(recommendation.mode === "render_surface", `${label} should render a surface`);
-  expect(recommendation.templateId === commonStatusTemplateId, `${label} should select ${commonStatusTemplateId}, got ${recommendation.templateId}`);
-  expect(recommendation.derivedSchema?.rowCount === data.total, `${label} should keep derivedSchema rowCount`);
-  console.log(`[ok] ${label}: ${recommendation.templateId} score=${recommendation.score}`);
+  const task = await callA2A({ query, apiId, data });
+  const surfacePart = findPart(task, (part) => part.mediaType === A2A_SURFACE && part.data?.surface);
+  const tracePart = findPart(task, (part) => part.data?.kind === "a2ui.matcher.trace");
+  const surface = surfacePart?.data?.surface;
+  const decision = surfacePart?.data?.decision ?? {};
+
+  expect(surface, `${label} should return an A2UI surface`);
+  expect(surface.templateId === commonStatusTemplateId, `${label} should select ${commonStatusTemplateId}, got ${surface.templateId}`);
+  expect(decision.strategy === "derived_schema", `${label} should use derived_schema strategy`);
+  expect(tracePart?.data?.candidateCount > 0, `${label} should include matcher trace candidates`);
+  console.log(`[ok] ${label}: ${surface.templateId} score=${decision.score}`);
 }
 
 async function main() {
   console.log(`[info] A2UI data boundary E2E base=${baseUrl}`);
-
-  const mcp = await fetchJson("/api/mcp");
-  const catalog = await callMcpTool("a2ui.listTemplates", {});
-  const templateIds = catalog.templates?.map((template) => template.componentId) ?? [];
-  expect(templateIds.includes(commonStatusTemplateId), `fixed template ${commonStatusTemplateId} must be registered`);
-  console.log(`[ok] fixed A2UI template registered: ${commonStatusTemplateId}`);
-
-  const recommendTool = mcp.tools?.find((tool) => tool.name === "a2ui.recommendTemplate");
-  const enumValues = recommendTool?.inputSchema?.properties?.apiId?.enum ?? [];
-  for (const apiId of ["equipment-status-wide-columns", "equipment-status-large-rows"]) {
-    expect(enumValues.includes(apiId), `/api/mcp schema must include ${apiId}`);
-  }
-  console.log("[ok] MCP apiId enum includes large-data test APIs");
 
   const status = await fetchJson("/api/equipment-status");
   const statusRows = rows(status, "status API");

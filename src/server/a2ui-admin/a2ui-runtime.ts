@@ -9,7 +9,7 @@ import type {
   A2UITemplateRegistration,
   EquipmentApiResponse,
 } from "@/features/a2ui-template-poc/template-types";
-import { getTemplate, readTemplateCatalog, templateSummary } from "./catalog-store";
+import { getTemplate, readTemplateCatalog } from "./catalog-store";
 import type { DerivedSchema } from "./schema-matcher/derived-schema-types";
 import { buildDerivedSchema, derivedSchemaFromDataProfile } from "./schema-matcher/derived-schema-builder";
 import { buildSampleDataPreview, type SampleDataPreview } from "./schema-matcher/sample-data-preview";
@@ -55,11 +55,6 @@ export type A2UIRecommendation =
       candidates?: A2UICandidateTrace[];
       derivedSchema?: DerivedSchema;
     };
-
-export type McpToolCallResult = {
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
-};
 
 function normalizeMatchText(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9가-힣]+/g, "");
@@ -451,142 +446,4 @@ export async function resolveTemplateData({
       mapping: renderPlan.mapping,
     },
   };
-}
-
-function readString(value: unknown, fallback = "") {
-  return typeof value === "string" ? value : fallback;
-}
-
-function readApiId(value: unknown): EquipmentApiId | undefined {
-  return isEquipmentApiId(value) ? value : undefined;
-}
-
-function readData(value: unknown): EquipmentApiResponse<unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const record = value as Partial<EquipmentApiResponse<unknown>>;
-  if (!Array.isArray(record.items)) return undefined;
-  return {
-    items: record.items,
-    total: typeof record.total === "number" ? record.total : record.items.length,
-    page: typeof record.page === "number" ? record.page : 1,
-    pageSize: typeof record.pageSize === "number" ? record.pageSize : record.items.length,
-  };
-}
-
-function readSampleDataPreview(value: unknown): SampleDataPreview | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const record = value as Partial<SampleDataPreview>;
-  if (!record.data || typeof record.rowCount !== "number") return undefined;
-  return {
-    ...record,
-    primaryArrayPath: typeof record.primaryArrayPath === "string" ? record.primaryArrayPath : undefined,
-    sourceId: typeof record.sourceId === "string" ? record.sourceId : "unknown",
-    sourceKind: record.sourceKind ?? "api_response",
-    shape: record.shape ?? "unknown",
-    rowCount: record.rowCount,
-    sampleSize: typeof record.sampleSize === "number" ? record.sampleSize : 0,
-    truncated: Boolean(record.truncated),
-    byteLength: typeof record.byteLength === "number" ? record.byteLength : 0,
-    maskedFields: Array.isArray(record.maskedFields) ? record.maskedFields : [],
-    data: record.data,
-  };
-}
-
-function readDerivedSchema(value: unknown): DerivedSchema | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const record = value as Partial<DerivedSchema>;
-  if (!record.shape || !Array.isArray(record.fields) || !record.capabilities) return undefined;
-  return {
-    ...record,
-    sourceId: typeof record.sourceId === "string" ? record.sourceId : "derived-schema",
-    sourceKind: record.sourceKind ?? "api_response",
-    shape: record.shape,
-    primaryArrayPath: typeof record.primaryArrayPath === "string" ? record.primaryArrayPath : undefined,
-    rowCount: record.rowCount,
-    sampleSize: record.sampleSize,
-    fields: record.fields,
-    capabilities: record.capabilities,
-  };
-}
-
-function readMapping(value: unknown): A2UIMappingDecision | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const record = value as Partial<A2UIMappingDecision>;
-  if (!record.templateId || !Array.isArray(record.mappings)) return undefined;
-  return record as A2UIMappingDecision;
-}
-
-function readOptions(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const record = value as Record<string, unknown>;
-  return {
-    allowIntentFallback:
-      typeof record.allowIntentFallback === "boolean" ? record.allowIntentFallback : undefined,
-    includeTrace: typeof record.includeTrace === "boolean" ? record.includeTrace : undefined,
-  };
-}
-
-export async function executeA2UITool(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
-  if (name === "a2ui.listTemplates") {
-    return templateSummary();
-  }
-
-  if (name === "a2ui.recommendTemplate") {
-    const facts = args.facts && typeof args.facts === "object" && !Array.isArray(args.facts)
-      ? (args.facts as Record<string, unknown>)
-      : {};
-    const query = readString(args.query, readString(args.input, readString(facts.query, readString(args.intentKey, ""))));
-    return recommendTemplate({
-      query,
-      apiId: readApiId(args.apiId) ?? readApiId(facts.apiId),
-      data: readData(args.data) ?? readData(facts.data),
-      derivedSchema: readDerivedSchema(args.derivedSchema) ?? readDerivedSchema(facts.derivedSchema),
-      sampleDataPreview: readSampleDataPreview(args.sampleDataPreview) ?? readSampleDataPreview(facts.sampleDataPreview),
-      options: readOptions(args.options),
-    });
-  }
-
-  if (name === "a2ui.resolveTemplateData") {
-    const context = args.context && typeof args.context === "object" && !Array.isArray(args.context)
-      ? (args.context as Record<string, unknown>)
-      : {};
-    return resolveTemplateData({
-      templateId: readString(args.templateId),
-      query: readString(args.query, readString(context.query, readString(context.intentKey, ""))),
-      apiId: readApiId(args.apiId) ?? readApiId(context.apiId),
-      data: readData(args.data) ?? readData(context.data),
-      derivedSchema: readDerivedSchema(args.derivedSchema) ?? readDerivedSchema(context.derivedSchema),
-      sampleDataPreview: readSampleDataPreview(args.sampleDataPreview) ?? readSampleDataPreview(context.sampleDataPreview),
-      mapping: readMapping(args.mapping) ?? readMapping(context.mapping),
-    });
-  }
-
-  if (name === "a2ui.getTemplateContract") {
-    const template = await getTemplate(readString(args.templateId));
-    return template
-      ? {
-          templateId: template.componentId,
-          schemaSpec: template.schemaSpec,
-          inputSchema: template.inputSchema,
-          surfaceConfig: template.surfaceConfig,
-          selectionGuide: template.selectionGuide,
-        }
-      : { error: "Template not found" };
-  }
-
-  throw new Error(`Unknown A2UI tool: ${name}`);
-}
-
-export async function toolResult(name: string, args: Record<string, unknown> = {}): Promise<McpToolCallResult> {
-  try {
-    const result = await executeA2UITool(name, args);
-    return {
-      content: [{ type: "text", text: JSON.stringify(result) }],
-    };
-  } catch (error) {
-    return {
-      content: [{ type: "text", text: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) }],
-      isError: true,
-    };
-  }
 }

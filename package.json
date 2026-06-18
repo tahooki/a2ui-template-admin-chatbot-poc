@@ -4,10 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "web:dev": "next dev -p 3001",
     "dev:all": "node scripts/dev-all.mjs",
-    "mcp:dev": "A2UI_NEXT_APP_URL=http://localhost:3001 node packages/a2ui-admin-mcp-server/server.mjs",
     "equipment-source:dev": "PYTHONPATH=packages/equipment-data-source packages/a2ui-python-agent/.venv/bin/python -m uvicorn app.main:app --reload --port 8100 --app-dir packages/equipment-data-source",
-    "main-agent:dev": "A2UI_NEXT_API_BASE_URL=http://localhost:3001 A2UI_A2A_URL=http://localhost:3001/api/a2a A2UI_A2A_ENABLED=true PYTHONPATH=packages/a2ui-python-agent packages/a2ui-python-agent/.venv/bin/python -m uvicorn app.main:app --reload --port 8000 --app-dir packages/a2ui-python-agent",
+    "main-agent:dev": "A2UI_NEXT_API_BASE_URL=http://localhost:3001 A2UI_A2A_URL=http://localhost:3001/api/a2a PYTHONPATH=packages/a2ui-python-agent packages/a2ui-python-agent/.venv/bin/python -m uvicorn app.main:app --reload --port 8000 --app-dir packages/a2ui-python-agent",
     "main-agent:test": "PYTHONPATH=packages/a2ui-python-agent python3 -m unittest discover packages/a2ui-python-agent/tests",
     "e2e:data-boundary": "node scripts/e2e-a2ui-data-boundary.mjs",
     "build": "next build",

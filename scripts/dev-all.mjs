@@ -2,8 +2,7 @@ import { spawn } from "node:child_process";
 import readline from "node:readline";
 
 const services = [
-  { name: "web", command: "npm", args: ["run", "dev", "--", "-p", "3001"] },
-  { name: "mcp", command: "npm", args: ["run", "mcp:dev"] },
+  { name: "web", command: "npm", args: ["run", "web:dev"] },
   { name: "main-agent", command: "npm", args: ["run", "main-agent:dev"] },
 ];
 
@@ -49,4 +48,4 @@ for (const service of services) {
 process.on("SIGINT", () => stopAll("SIGINT"));
 process.on("SIGTERM", () => stopAll("SIGTERM"));
 
-console.log("[dev:all] starting web:3001, mcp:4100 fallback, main-agent:8000 with A2A primary");
+console.log("[dev:all] starting web:3001 and main-agent:8000 with A2A");

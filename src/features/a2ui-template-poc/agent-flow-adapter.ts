@@ -439,7 +439,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
     return events;
   }
 
-  if (status === "a2a" || status === "mcp") {
+  if (status === "a2a") {
     return [
       newFlowEvent(source, 0, {
         event: `state:${status}`,

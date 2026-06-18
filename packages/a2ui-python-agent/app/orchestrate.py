@@ -275,14 +275,14 @@ async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = 
                 "data",
             ),
         )
-        transport = "a2a" if settings.a2a_enabled else "mcp"
+        transport = "a2a"
         yield sse_event(
             "state",
             trace_payload(
                 turn_id,
                 {
                     "status": transport,
-                    "label": "A2UI Agent" if settings.a2a_enabled else "a2ui.recommendTemplate",
+                    "label": "A2UI Agent",
                     "transport": transport,
                 },
                 "data",

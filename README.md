@@ -29,12 +29,18 @@ Start all local services:
 npm run dev:all
 ```
 
+If the combined command does not work in your local environment, start the required services in separate terminals:
+
+```bash
+npm run web:dev
+npm run main-agent:dev
+```
+
 The combined dev command starts:
 
 ```text
 Next app:              http://localhost:3001
 Python Agent:          http://localhost:8000
-Admin MCP proxy:       http://localhost:4100
 ```
 
 Open [http://localhost:3001](http://localhost:3001) in the browser.
@@ -48,8 +54,6 @@ OPENAI_API_KEY=사내_게이트웨이_키
 OPENAI_MODEL=사내모델명
 OPENAI_BASE_URL=https://사내-llm-gateway.example.com/v1
 
-A2UI_A2A_ENABLED=true
-A2UI_A2A_FALLBACK_TO_MCP=true
 A2UI_NEXT_API_BASE_URL=http://localhost:3001
 A2UI_A2A_URL=http://localhost:3001/api/a2a
 PYTHON_AGENT_URL=http://localhost:8000

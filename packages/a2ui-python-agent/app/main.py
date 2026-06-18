@@ -37,10 +37,7 @@ async def health() -> dict[str, Any]:
     return {
         "ok": True,
         "name": "a2ui-template-main-agent",
-        "mcpUrl": settings.mcp_url,
         "a2aUrl": settings.a2a_url,
-        "a2aEnabled": settings.a2a_enabled,
-        "a2aFallbackToMcp": settings.a2a_fallback_to_mcp,
         "nextApiBaseUrl": settings.next_api_base_url,
         "llmConfigured": bool(settings.openai_api_key),
         "openaiModel": settings.openai_model,

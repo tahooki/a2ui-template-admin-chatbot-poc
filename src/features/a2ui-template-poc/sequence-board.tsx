@@ -174,7 +174,7 @@ const steps: SequenceStep[] = [
   {
     id: "registry-request",
     phase: "registry_loaded",
-    events: ["state:a2a", "state:mcp"],
+    events: ["state:a2a"],
     from: "a2ui",
     to: "registry",
     label: "Load template contracts",
