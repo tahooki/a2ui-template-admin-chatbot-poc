@@ -84,6 +84,48 @@ async def _chat_completion(
         return None
 
 
+async def check_llm_connection() -> dict[str, Any]:
+    if not is_llm_available():
+        return {
+            "ok": False,
+            "reason": "missing_api_key",
+            "baseUrl": settings.openai_base_url,
+            "model": settings.openai_model,
+        }
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.post(
+                f"{settings.openai_base_url.rstrip('/')}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.openai_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": settings.openai_model,
+                    "messages": [
+                        {"role": "system", "content": "Reply with ok."},
+                        {"role": "user", "content": "health"},
+                    ],
+                    "temperature": 0,
+                    "max_tokens": 4,
+                },
+            )
+        return {
+            "ok": response.is_success,
+            "statusCode": response.status_code,
+            "baseUrl": settings.openai_base_url,
+            "model": settings.openai_model,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": exc.__class__.__name__,
+            "baseUrl": settings.openai_base_url,
+            "model": settings.openai_model,
+        }
+
+
 async def classify_equipment_intent_with_llm(
     message: str,
     history: list[dict[str, Any]] | None = None,
