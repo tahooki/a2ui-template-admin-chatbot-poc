@@ -19,16 +19,10 @@ npm install
 Create the Python virtual environment used by the agent services:
 
 ```bash
-python3 -m venv packages/a2ui-python-agent/.venv
-packages/a2ui-python-agent/.venv/bin/pip install -r packages/a2ui-python-agent/requirements.txt
+npm run setup:agent
 ```
 
-On Windows with Git Bash, the virtualenv uses `Scripts` instead of `bin`:
-
-```bash
-python3 -m venv packages/a2ui-python-agent/.venv
-packages/a2ui-python-agent/.venv/Scripts/python.exe -m pip install -r packages/a2ui-python-agent/requirements.txt
-```
+The setup command works on macOS, Linux, and Windows. It creates `packages/a2ui-python-agent/.venv` and installs `packages/a2ui-python-agent/requirements.txt`.
 
 Start all local services:
 
@@ -41,13 +35,6 @@ If the combined command does not work in your local environment, start the requi
 ```bash
 npm run web:dev
 npm run main-agent:dev
-```
-
-On Windows with Git Bash, if `npm run main-agent:dev` fails with a `PYTHONPATH` command error, keep `npm run web:dev` running and start the Python Agent directly in another terminal:
-
-```bash
-PYTHONPATH=packages/a2ui-python-agent \
-packages/a2ui-python-agent/.venv/Scripts/python.exe -m uvicorn app.main:app --reload --port 8000 --app-dir packages/a2ui-python-agent
 ```
 
 The combined dev command starts:

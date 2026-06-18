@@ -29,13 +29,8 @@ A2UI_EQUIPMENT_CATALOG_API_URL=http://localhost:8100/equipment-catalog
 ## Run
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-OPENAI_API_KEY=... \
-OPENAI_MODEL=gpt-4.1-mini \
-OPENAI_BASE_URL=https://api.openai.com/v1 \
-python -m uvicorn app.main:app --reload --port 8000
+npm run setup:agent
+npm run main-agent:dev
 ```
 
 Keep the Next app running at `http://localhost:3001`. The A2A URL defaults to `http://localhost:3001/api/a2a`.
