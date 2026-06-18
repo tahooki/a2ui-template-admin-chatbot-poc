@@ -53,11 +53,9 @@ Create a local `.env.local` file in the repo root. Do not commit real keys.
 OPENAI_API_KEY=사내_게이트웨이_키
 OPENAI_MODEL=사내모델명
 OPENAI_BASE_URL=https://사내-llm-gateway.example.com/v1
-
-A2UI_NEXT_API_BASE_URL=http://localhost:3001
-A2UI_A2A_URL=http://localhost:3001/api/a2a
-PYTHON_AGENT_URL=http://localhost:8000
 ```
+
+Local service URLs default to `http://localhost:3001` for Next/A2A and `http://localhost:8000` for the Python Agent. You only need URL env overrides if you change those ports.
 
 The Next equipment API routes work without equipment-source env variables. They serve local fixture data by default:
 

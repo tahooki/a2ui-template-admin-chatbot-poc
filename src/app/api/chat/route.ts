@@ -39,7 +39,7 @@ function isDevelopmentErrorProbe(message: string) {
 }
 
 async function proxyMainAgent(body: ChatRequestBody) {
-  const mainAgentUrl = (process.env.MAIN_AGENT_URL ?? "http://localhost:8000").replace(/\/$/, "");
+  const mainAgentUrl = (process.env.MAIN_AGENT_URL ?? process.env.PYTHON_AGENT_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
   const controller = new AbortController();
   const configuredTimeoutMs = Number(process.env.MAIN_AGENT_CONNECT_TIMEOUT_MS ?? "2500");

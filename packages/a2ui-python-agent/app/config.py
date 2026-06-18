@@ -40,9 +40,9 @@ def _float_env(name: str, default: float) -> float:
 
 @dataclass(frozen=True)
 class Settings:
-    a2a_url: str = _env("A2UI_A2A_URL", "http://localhost:3000/api/a2a")
+    a2a_url: str = _env("A2UI_A2A_URL", "http://localhost:3001/api/a2a")
     a2a_token: str = _env("A2UI_A2A_TOKEN")
-    next_api_base_url: str = _env("A2UI_NEXT_API_BASE_URL", "http://localhost:3000")
+    next_api_base_url: str = _env("A2UI_NEXT_API_BASE_URL", "http://localhost:3001")
     request_timeout_seconds: float = _float_env("A2UI_AGENT_TIMEOUT_SECONDS", 6)
     openai_api_key: str = _env("OPENAI_API_KEY")
     openai_model: str = _env("OPENAI_MODEL", "gpt-4.1-mini")
