@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
 import styles from "./styles.module.css";
 import type { AgentFlowActor, AgentFlowBranch, AgentFlowEvent, AgentFlowPhase } from "./agent-flow-types";
 import type { DataBoundaryScenarioTrace } from "./data-boundary-lab";
@@ -23,6 +23,12 @@ type SequenceStep = {
   y: number;
 };
 
+type SequenceStepGap = "row" | "section" | "selfLoop";
+
+type SequenceStepSpec = Omit<SequenceStep, "y"> & {
+  gapBefore?: SequenceStepGap;
+};
+
 type BranchBlock = {
   id: AgentFlowBranch;
   label: string;
@@ -30,6 +36,13 @@ type BranchBlock = {
   width: number;
   top: number;
   height: number;
+};
+
+type BranchBlockSpec = {
+  id: AgentFlowBranch;
+  label: string;
+  firstStepId: string;
+  lastStepId: string;
 };
 
 type FocusRegion = {
@@ -73,14 +86,26 @@ const laneGutter = 38;
 const canvasLeftInset = 110;
 const canvasRightInset = 130;
 const canvasWidth = canvasLeftInset + canvasRightInset + lanes.length * laneWidth + (lanes.length - 1) * laneGutter;
-const canvasHeight = 1786;
 const overviewZoom = 0.86;
 const focusZoom = 1;
 const minZoom = 0.65;
 const maxZoom = 1.25;
 const zoomStep = 0.1;
 const manualAutoFollowPauseMs = 1600;
-const messageLabelOffset = 42;
+const sequenceLayout = {
+  firstLineY: 124,
+  labelHeight: 30,
+  labelLineGap: 14,
+  selfLoopHeight: 44,
+  branchPaddingTop: 12,
+  branchPaddingBottom: 42,
+  canvasBottomPadding: 80,
+} as const;
+const sequenceStepGaps: Record<SequenceStepGap, number> = {
+  row: 70,
+  section: 84,
+  selfLoop: 92,
+};
 const clickableStepIds = new Set([
   "business-tool-result",
   "a2ui-tool-call",
@@ -100,13 +125,24 @@ const diagramLeft = laneX("chat") - actorNodeWidth / 2 - 36;
 const diagramRight = laneX("registry") + actorNodeWidth / 2 + 36;
 const diagramWidth = diagramRight - diagramLeft;
 
-const steps: SequenceStep[] = [
-  { id: "request", phase: "request", events: ["request_start"], from: "chat", to: "next", label: "POST /api/chat", y: 124 },
-  { id: "bridge", phase: "bridge", events: ["response_open"], from: "next", to: "main_agent", label: "Open /chat/stream", y: 194 },
-  { id: "planning", phase: "planning", events: ["state:planning"], from: "main_agent", to: "main_agent", label: "Plan turn", y: 264 },
-  { id: "intent", phase: "intent", events: ["state:intent"], from: "main_agent", to: "llm", label: "Intent classify", y: 360 },
-  { id: "general-llm", phase: "general_chat", events: ["llm:answer"], from: "llm", to: "main_agent", label: "Text answer", branch: "general", y: 458 },
-  { id: "general-stream", phase: "general_chat", events: ["text", "delta"], from: "main_agent", to: "chat", label: "Stream to chat", branch: "general", y: 512 },
+function buildSequenceSteps(specs: SequenceStepSpec[]) {
+  let currentY = sequenceLayout.firstLineY;
+  return specs.map((spec, index) => {
+    const gapBefore = spec.gapBefore;
+    if (index > 0) currentY += sequenceStepGaps[gapBefore ?? "row"];
+    const step = { ...spec };
+    delete step.gapBefore;
+    return { ...step, y: currentY } as SequenceStep;
+  });
+}
+
+const steps: SequenceStep[] = buildSequenceSteps([
+  { id: "request", phase: "request", events: ["request_start"], from: "chat", to: "next", label: "POST /api/chat" },
+  { id: "bridge", phase: "bridge", events: ["response_open"], from: "next", to: "main_agent", label: "Open /chat/stream" },
+  { id: "planning", phase: "planning", events: ["state:planning"], from: "main_agent", to: "main_agent", label: "Plan turn" },
+  { id: "intent", phase: "intent", events: ["state:intent"], from: "main_agent", to: "llm", label: "Intent classify", gapBefore: "selfLoop" },
+  { id: "general-llm", phase: "general_chat", events: ["llm:answer"], from: "llm", to: "main_agent", label: "Text answer", branch: "general", gapBefore: "selfLoop" },
+  { id: "general-stream", phase: "general_chat", events: ["text", "delta"], from: "main_agent", to: "chat", label: "Stream to chat" },
   {
     id: "business-tool-selected",
     phase: "intent",
@@ -115,7 +151,7 @@ const steps: SequenceStep[] = [
     to: "main_agent",
     label: "Select business API",
     branch: "data",
-    y: 600,
+    gapBefore: "section",
   },
   {
     id: "business-tool-call",
@@ -125,7 +161,7 @@ const steps: SequenceStep[] = [
     to: "business_db",
     label: "Call get_equipment_*",
     branch: "data",
-    y: 668,
+    gapBefore: "selfLoop",
   },
   {
     id: "business-tool-result",
@@ -135,7 +171,6 @@ const steps: SequenceStep[] = [
     to: "main_agent",
     label: "Source data for compare",
     branch: "data",
-    y: 736,
   },
   {
     id: "a2ui-tool-selected",
@@ -145,7 +180,6 @@ const steps: SequenceStep[] = [
     to: "main_agent",
     label: "Select a2ui_render",
     branch: "data",
-    y: 804,
   },
   {
     id: "a2ui-tool-call",
@@ -156,7 +190,7 @@ const steps: SequenceStep[] = [
     label: "Send compare payload",
     branch: "data",
     a2uiSubstep: true,
-    y: 872,
+    gapBefore: "selfLoop",
   },
   {
     id: "profile",
@@ -167,7 +201,6 @@ const steps: SequenceStep[] = [
     label: "Derived schema input",
     branch: "data",
     a2uiSubstep: true,
-    y: 940,
   },
   {
     id: "registry-request",
@@ -177,7 +210,6 @@ const steps: SequenceStep[] = [
     to: "registry",
     label: "Request template contracts",
     branch: "data",
-    y: 1008,
   },
   {
     id: "registry-loaded",
@@ -187,9 +219,8 @@ const steps: SequenceStep[] = [
     to: "a2ui",
     label: "Template contract input",
     branch: "data",
-    y: 1076,
   },
-  { id: "matcher", phase: "matcher", events: ["state:matcher"], from: "a2ui", to: "a2ui", label: "Compare data vs template", branch: "data", a2uiSubstep: true, y: 1144 },
+  { id: "matcher", phase: "matcher", events: ["state:matcher"], from: "a2ui", to: "a2ui", label: "Compare data vs template", branch: "data", a2uiSubstep: true },
   {
     id: "a2ui-tool-result",
     phase: "matcher",
@@ -199,7 +230,7 @@ const steps: SequenceStep[] = [
     label: "Decision: select template",
     branch: "data",
     a2uiSubstep: true,
-    y: 1212,
+    gapBefore: "selfLoop",
   },
   {
     id: "matched-summary",
@@ -209,7 +240,7 @@ const steps: SequenceStep[] = [
     to: "chat",
     label: "Text summary",
     branch: "matched",
-    y: 1342,
+    gapBefore: "section",
   },
   {
     id: "surface",
@@ -219,7 +250,6 @@ const steps: SequenceStep[] = [
     to: "chat",
     label: "Return selected template",
     branch: "matched",
-    y: 1410,
   },
   {
     id: "no-template",
@@ -229,7 +259,7 @@ const steps: SequenceStep[] = [
     to: "a2ui",
     label: "No compatible template",
     branch: "no_template",
-    y: 1522,
+    gapBefore: "section",
   },
   {
     id: "fallback",
@@ -239,18 +269,54 @@ const steps: SequenceStep[] = [
     to: "chat",
     label: "Emit fallback text",
     branch: "no_template",
-    y: 1584,
+    gapBefore: "selfLoop",
   },
-  { id: "error", phase: "error", events: ["error", "request_error", "response_error"], from: "main_agent", to: "chat", label: "Runtime error", branch: "error", y: 1672 },
+  { id: "error", phase: "error", events: ["error", "request_error", "response_error"], from: "main_agent", to: "chat", label: "Runtime error", branch: "error", gapBefore: "section" },
+]);
+
+const stepById = new Map(steps.map((step) => [step.id, step]));
+
+function isSelfLoopStep(step: SequenceStep) {
+  return laneX(step.from) === laneX(step.to);
+}
+
+function stepLabelTop(step: SequenceStep) {
+  return step.y - sequenceLayout.labelHeight - sequenceLayout.labelLineGap;
+}
+
+function stepLineBottom(step: SequenceStep) {
+  return step.y + (isSelfLoopStep(step) ? sequenceLayout.selfLoopHeight : 0);
+}
+
+function branchBlockFromSpec(spec: BranchBlockSpec): BranchBlock {
+  const firstStep = stepById.get(spec.firstStepId);
+  const lastStep = stepById.get(spec.lastStepId);
+  if (!firstStep || !lastStep) {
+    throw new Error(`Missing sequence step for branch ${spec.id}`);
+  }
+  const top = stepLabelTop(firstStep) - sequenceLayout.branchPaddingTop;
+  const bottom = stepLineBottom(lastStep) + sequenceLayout.branchPaddingBottom;
+  return {
+    id: spec.id,
+    label: spec.label,
+    left: diagramLeft,
+    width: diagramWidth,
+    top,
+    height: bottom - top,
+  };
+}
+
+const branchBlockSpecs: BranchBlockSpec[] = [
+  { id: "general", label: "alt general chat", firstStepId: "general-llm", lastStepId: "general-stream" },
+  { id: "data", label: "else data task", firstStepId: "business-tool-selected", lastStepId: "a2ui-tool-result" },
+  { id: "matched", label: "then matched: SurfaceEnvelope", firstStepId: "matched-summary", lastStepId: "surface" },
+  { id: "no_template", label: "else no template: fallback text", firstStepId: "no-template", lastStepId: "fallback" },
+  { id: "error", label: "else error", firstStepId: "error", lastStepId: "error" },
 ];
 
-const branchBlocks: BranchBlock[] = [
-  { id: "general", label: "alt general chat", left: diagramLeft, width: diagramWidth, top: 398, height: 152 },
-  { id: "data", label: "else data task", left: diagramLeft, width: diagramWidth, top: 552, height: 704 },
-  { id: "matched", label: "then matched: SurfaceEnvelope", left: diagramLeft, width: diagramWidth, top: 1290, height: 158 },
-  { id: "no_template", label: "else no template: fallback text", left: diagramLeft, width: diagramWidth, top: 1468, height: 148 },
-  { id: "error", label: "else error", left: diagramLeft, width: diagramWidth, top: 1622, height: 84 },
-];
+const branchBlocks: BranchBlock[] = branchBlockSpecs.map(branchBlockFromSpec);
+
+const canvasHeight = Math.ceil(Math.max(...branchBlocks.map((block) => block.top + block.height)) + sequenceLayout.canvasBottomPadding);
 
 function isDataOutcomeBranch(branch?: AgentFlowBranch) {
   return branch === "matched" || branch === "no_template" || branch === "error";
@@ -339,15 +405,15 @@ function stepEndpoints(step: SequenceStep) {
   const fromX = laneX(step.from);
   const toX = laneX(step.to);
   if (fromX === toX) {
-    return { x1: fromX, x2: fromX, y1: step.y, y2: step.y + 44, loopX: fromX + 118 };
+    return { x1: fromX, x2: fromX, y1: step.y, y2: step.y + sequenceLayout.selfLoopHeight, loopX: fromX + 118 };
   }
   return { x1: fromX, x2: toX, y1: step.y, y2: step.y };
 }
 
 function labelPosition(step: SequenceStep) {
   const { x1, x2, y1, loopX } = stepEndpoints(step);
-  if (loopX) return { left: x1 + (loopX - x1) / 2, top: y1 - messageLabelOffset };
-  return { left: Math.min(x1, x2) + Math.abs(x2 - x1) / 2, top: y1 - messageLabelOffset };
+  if (loopX) return { left: x1 + (loopX - x1) / 2, top: y1 };
+  return { left: Math.min(x1, x2) + Math.abs(x2 - x1) / 2, top: y1 };
 }
 
 function messageLineStyle(step: SequenceStep) {
@@ -1025,6 +1091,10 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
   const modalStep = visibleSteps.find((step) => step.id === traceModalStep);
   const modalStepEvent = modalStep ? eventForStep(modalStep, events) : undefined;
   const modalStepLabel = modalStep ? stepDisplayLabel(modalStep, dataBoundaryTrace, events) : "Trace detail";
+  const sequenceBoardStyle = {
+    "--sequence-label-height": `${sequenceLayout.labelHeight}px`,
+    "--sequence-label-line-gap": `${sequenceLayout.labelLineGap}px`,
+  } as CSSProperties;
 
   function clearAutoFollowPauseTimer() {
     if (!autoFollowPauseTimerRef.current) return;
@@ -1191,7 +1261,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
   }
 
   return (
-    <div className={styles.sequenceBoardShell}>
+    <div className={styles.sequenceBoardShell} style={sequenceBoardStyle}>
       <div
         className={`${styles.sequenceViewport} ${isPanning ? styles.sequenceViewportPanning : ""}`}
         onPointerCancel={stopPan}

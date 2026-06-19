@@ -1488,7 +1488,7 @@
 .sequenceStep {
   position: absolute;
   z-index: 4;
-  transform: translateX(-50%);
+  transform: translate(-50%, calc(-100% - var(--sequence-label-line-gap, 14px)));
   pointer-events: none;
 }
 
@@ -1497,7 +1497,7 @@
   display: block;
   box-sizing: border-box;
   max-width: 208px;
-  min-height: 28px;
+  min-height: var(--sequence-label-height, 30px);
   border: 1px solid #cbd5e1;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.96);
