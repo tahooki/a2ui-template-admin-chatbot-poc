@@ -1272,18 +1272,18 @@
 
 .branchBlock span {
   position: absolute;
-  left: 0;
-  top: 0;
-  border-right: 1px solid rgba(100, 116, 139, 0.26);
-  border-bottom: 1px solid rgba(100, 116, 139, 0.26);
-  border-radius: 5px 0 6px 0;
-  background: #fff;
+  left: 8px;
+  top: 6px;
+  border: 1px solid rgba(100, 116, 139, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
   color: var(--a2ui-muted);
-  padding: 4px 9px;
+  padding: 3px 8px;
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 10px;
   font-weight: 900;
   line-height: 1.2;
+  box-shadow: 0 0 0 3px rgba(248, 250, 252, 0.72);
 }
 
 .branchBlockActive {

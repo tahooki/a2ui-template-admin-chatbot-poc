@@ -105,7 +105,7 @@ const sequenceLayout = {
 } as const;
 const sequenceStepGaps: Record<SequenceStepGap, number> = {
   row: 34,
-  section: 52,
+  section: sequenceLayout.branchPaddingTop + sequenceLayout.labelLineGap,
   selfLoop: 34,
 };
 const clickableStepIds = new Set([
@@ -147,7 +147,7 @@ const steps: SequenceStep[] = buildSequenceSteps([
   { id: "bridge", phase: "bridge", events: ["response_open"], from: "next", to: "main_agent", label: "Open /chat/stream" },
   { id: "planning", phase: "planning", events: ["state:planning"], from: "main_agent", to: "main_agent", label: "Plan turn" },
   { id: "intent", phase: "intent", events: ["state:intent"], from: "main_agent", to: "llm", label: "Intent classify", gapBefore: "selfLoop" },
-  { id: "general-llm", phase: "general_chat", events: ["llm:answer"], from: "llm", to: "main_agent", label: "Text answer", branch: "general", gapBefore: "selfLoop" },
+  { id: "general-llm", phase: "general_chat", events: ["llm:answer"], from: "llm", to: "main_agent", label: "Text answer", branch: "general", gapBefore: "section" },
   { id: "general-stream", phase: "general_chat", events: ["text", "delta"], from: "main_agent", to: "chat", label: "Stream to chat" },
   {
     id: "business-tool-selected",
