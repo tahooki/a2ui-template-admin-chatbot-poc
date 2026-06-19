@@ -1442,6 +1442,14 @@
   filter: drop-shadow(0 0 8px rgba(31, 122, 109, 0.38));
 }
 
+.sequenceMessageLineSelf.sequenceMessageLineComplete {
+  border-width: 2.4px;
+}
+
+.sequenceMessageLineSelf.sequenceMessageLineActive {
+  border-width: 3.2px;
+}
+
 .sequenceMessageLineComplete:not(.sequenceMessageLineSelf)::after {
   top: -6.2px;
 }
@@ -1617,8 +1625,9 @@
 }
 
 .sequencePacketRailSelf::after {
-  left: -6px;
-  top: -6px;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
   animation: packetTravelSelf 1.25s ease-in-out infinite, packetPulse 1.25s ease-in-out infinite;
 }
 
@@ -1663,20 +1672,20 @@
 
 @keyframes packetTravelSelf {
   0% {
-    left: -6px;
-    top: -6px;
+    left: 0;
+    top: 0;
   }
   38% {
-    left: calc(100% - 6px);
-    top: -6px;
+    left: 100%;
+    top: 0;
   }
   62% {
-    left: calc(100% - 6px);
-    top: calc(100% - 6px);
+    left: 100%;
+    top: 100%;
   }
   100% {
-    left: -6px;
-    top: calc(100% - 6px);
+    left: 0;
+    top: 100%;
   }
 }
 
