@@ -105,12 +105,13 @@ const sequenceLayout = {
   branchLabelInsetTop: 6,
   branchLabelHeight: 20,
   branchPaddingBottom: 34,
+  branchBetweenGap: 18,
   canvasBottomPadding: 80,
 } as const;
 const branchHeaderHeight = sequenceLayout.branchBorderWidth + sequenceLayout.branchLabelInsetTop + sequenceLayout.branchLabelHeight + sequenceLayout.labelLineGap;
 const sequenceStepGaps: Record<SequenceStepGap, number> = {
   row: 34,
-  section: branchHeaderHeight + sequenceLayout.labelLineGap + sequenceLayout.lineStrokeWidth,
+  section: branchHeaderHeight + sequenceLayout.branchPaddingBottom + sequenceLayout.branchBetweenGap,
   selfLoop: 34,
 };
 const clickableStepIds = new Set([
