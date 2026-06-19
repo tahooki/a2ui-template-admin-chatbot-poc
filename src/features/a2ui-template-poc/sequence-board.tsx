@@ -20,12 +20,14 @@ type SequenceStep = {
   label: string;
   branch?: AgentFlowBranch;
   a2uiSubstep?: boolean;
+  rowTop: number;
+  rowBottom: number;
   y: number;
 };
 
 type SequenceStepGap = "row" | "section" | "selfLoop";
 
-type SequenceStepSpec = Omit<SequenceStep, "y"> & {
+type SequenceStepSpec = Omit<SequenceStep, "rowTop" | "rowBottom" | "y"> & {
   gapBefore?: SequenceStepGap;
 };
 
@@ -93,18 +95,18 @@ const maxZoom = 1.25;
 const zoomStep = 0.1;
 const manualAutoFollowPauseMs = 1600;
 const sequenceLayout = {
-  firstLineY: 124,
+  firstRowTop: 80,
   labelHeight: 30,
-  labelLineGap: 14,
+  labelLineGap: 18,
   selfLoopHeight: 44,
-  branchPaddingTop: 12,
-  branchPaddingBottom: 42,
+  branchPaddingTop: 30,
+  branchPaddingBottom: 34,
   canvasBottomPadding: 80,
 } as const;
 const sequenceStepGaps: Record<SequenceStepGap, number> = {
-  row: 70,
-  section: 84,
-  selfLoop: 92,
+  row: 34,
+  section: 52,
+  selfLoop: 34,
 };
 const clickableStepIds = new Set([
   "business-tool-result",
@@ -126,13 +128,17 @@ const diagramRight = laneX("registry") + actorNodeWidth / 2 + 36;
 const diagramWidth = diagramRight - diagramLeft;
 
 function buildSequenceSteps(specs: SequenceStepSpec[]) {
-  let currentY = sequenceLayout.firstLineY;
+  let currentRowTop: number = sequenceLayout.firstRowTop;
   return specs.map((spec, index) => {
     const gapBefore = spec.gapBefore;
-    if (index > 0) currentY += sequenceStepGaps[gapBefore ?? "row"];
+    if (index > 0) currentRowTop += sequenceStepGaps[gapBefore ?? "row"];
     const step = { ...spec };
     delete step.gapBefore;
-    return { ...step, y: currentY } as SequenceStep;
+    const y = currentRowTop + sequenceLayout.labelHeight + sequenceLayout.labelLineGap;
+    const rowBottom = y + (laneX(step.from) === laneX(step.to) ? sequenceLayout.selfLoopHeight : 0);
+    const sequenceStep = { ...step, rowTop: currentRowTop, rowBottom, y } as SequenceStep;
+    currentRowTop = rowBottom;
+    return sequenceStep;
   });
 }
 
@@ -276,16 +282,12 @@ const steps: SequenceStep[] = buildSequenceSteps([
 
 const stepById = new Map(steps.map((step) => [step.id, step]));
 
-function isSelfLoopStep(step: SequenceStep) {
-  return laneX(step.from) === laneX(step.to);
-}
-
 function stepLabelTop(step: SequenceStep) {
-  return step.y - sequenceLayout.labelHeight - sequenceLayout.labelLineGap;
+  return step.rowTop;
 }
 
 function stepLineBottom(step: SequenceStep) {
-  return step.y + (isSelfLoopStep(step) ? sequenceLayout.selfLoopHeight : 0);
+  return step.rowBottom;
 }
 
 function branchBlockFromSpec(spec: BranchBlockSpec): BranchBlock {
@@ -411,9 +413,9 @@ function stepEndpoints(step: SequenceStep) {
 }
 
 function labelPosition(step: SequenceStep) {
-  const { x1, x2, y1, loopX } = stepEndpoints(step);
-  if (loopX) return { left: x1 + (loopX - x1) / 2, top: y1 };
-  return { left: Math.min(x1, x2) + Math.abs(x2 - x1) / 2, top: y1 };
+  const { x1, x2, loopX } = stepEndpoints(step);
+  if (loopX) return { left: x1 + (loopX - x1) / 2, top: step.rowTop };
+  return { left: Math.min(x1, x2) + Math.abs(x2 - x1) / 2, top: step.rowTop };
 }
 
 function messageLineStyle(step: SequenceStep) {
