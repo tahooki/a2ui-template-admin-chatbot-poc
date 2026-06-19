@@ -1272,17 +1272,25 @@
 
 .branchBlock span {
   position: absolute;
-  left: 8px;
-  top: 6px;
+  left: var(--sequence-branch-label-inset-x, 8px);
+  top: var(--sequence-branch-label-inset-top, 6px);
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  max-width: calc(100% - 24px);
+  height: var(--sequence-branch-label-height, 20px);
   border: 1px solid rgba(100, 116, 139, 0.24);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.96);
   color: var(--a2ui-muted);
-  padding: 3px 8px;
+  padding: 0 8px;
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 10px;
   font-weight: 900;
   line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   box-shadow: 0 0 0 3px rgba(248, 250, 252, 0.72);
 }
 

@@ -98,14 +98,19 @@ const sequenceLayout = {
   firstRowTop: 80,
   labelHeight: 30,
   labelLineGap: 18,
+  lineStrokeWidth: 2,
   selfLoopHeight: 44,
-  branchPaddingTop: 30,
+  branchBorderWidth: 1,
+  branchLabelInsetX: 8,
+  branchLabelInsetTop: 6,
+  branchLabelHeight: 20,
   branchPaddingBottom: 34,
   canvasBottomPadding: 80,
 } as const;
+const branchHeaderHeight = sequenceLayout.branchBorderWidth + sequenceLayout.branchLabelInsetTop + sequenceLayout.branchLabelHeight + sequenceLayout.labelLineGap;
 const sequenceStepGaps: Record<SequenceStepGap, number> = {
   row: 34,
-  section: sequenceLayout.branchPaddingTop + sequenceLayout.labelLineGap,
+  section: branchHeaderHeight + sequenceLayout.labelLineGap + sequenceLayout.lineStrokeWidth,
   selfLoop: 34,
 };
 const clickableStepIds = new Set([
@@ -296,7 +301,7 @@ function branchBlockFromSpec(spec: BranchBlockSpec): BranchBlock {
   if (!firstStep || !lastStep) {
     throw new Error(`Missing sequence step for branch ${spec.id}`);
   }
-  const top = stepLabelTop(firstStep) - sequenceLayout.branchPaddingTop;
+  const top = stepLabelTop(firstStep) - branchHeaderHeight;
   const bottom = stepLineBottom(lastStep) + sequenceLayout.branchPaddingBottom;
   return {
     id: spec.id,
@@ -1096,6 +1101,9 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
   const sequenceBoardStyle = {
     "--sequence-label-height": `${sequenceLayout.labelHeight}px`,
     "--sequence-label-line-gap": `${sequenceLayout.labelLineGap}px`,
+    "--sequence-branch-label-height": `${sequenceLayout.branchLabelHeight}px`,
+    "--sequence-branch-label-inset-x": `${sequenceLayout.branchLabelInsetX}px`,
+    "--sequence-branch-label-inset-top": `${sequenceLayout.branchLabelInsetTop}px`,
   } as CSSProperties;
 
   function clearAutoFollowPauseTimer() {
