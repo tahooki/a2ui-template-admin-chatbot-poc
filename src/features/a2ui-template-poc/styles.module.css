@@ -1182,26 +1182,11 @@
 }
 
 .sequenceLane::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 76px;
-  bottom: 24px;
-  border-left: 1px dashed rgba(71, 85, 105, 0.28);
-  transform: translateX(-50%);
+  content: none;
 }
 
 .sequenceLane::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 76px;
-  bottom: 24px;
-  width: 12px;
-  border-radius: 999px;
-  background: transparent;
-  transform: translateX(-50%);
-  transition: background 160ms ease, box-shadow 160ms ease;
+  content: none;
 }
 
 .sequenceLane span {
@@ -1246,11 +1231,6 @@
   transform: translateX(-50%);
   word-break: keep-all;
   box-shadow: 0 8px 18px rgba(20, 35, 52, 0.08);
-}
-
-.sequenceLaneActive::after {
-  background: rgba(31, 122, 109, 0.08);
-  box-shadow: 0 0 0 1px rgba(31, 122, 109, 0.08);
 }
 
 .sequenceActorChipActive {
