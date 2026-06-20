@@ -296,6 +296,10 @@ function stepLineBottom(step: SequenceStep) {
   return step.rowBottom;
 }
 
+function isSelfLoopStep(step: SequenceStep) {
+  return step.from === step.to;
+}
+
 function branchBlockFromSpec(spec: BranchBlockSpec): BranchBlock {
   const firstStep = stepById.get(spec.firstStepId);
   const lastStep = stepById.get(spec.lastStepId);
@@ -1329,7 +1333,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
 
             <div className={styles.sequenceActivationLayer} aria-hidden="true">
               {visibleSteps
-                .filter((step) => completed.has(step.id) || isActiveStep(step, active, completed))
+                .filter((step) => !isSelfLoopStep(step) && (completed.has(step.id) || isActiveStep(step, active, completed)))
                 .map((step) => (
                   <span
                     className={activationClass(step, completed, active)}
