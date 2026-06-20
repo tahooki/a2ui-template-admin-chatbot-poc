@@ -1325,64 +1325,6 @@
   background: rgba(254, 242, 242, 0.66);
 }
 
-.sequenceActivationLayer {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  pointer-events: none;
-}
-
-.sequenceActivation {
-  position: absolute;
-  width: 14px;
-  border: 1px solid rgba(31, 122, 109, 0.22);
-  border-radius: 999px;
-  background: rgba(31, 122, 109, 0.1);
-  box-shadow: 0 0 0 3px rgba(248, 250, 252, 0.72);
-  opacity: 0.74;
-  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
-}
-
-.sequenceActivationComplete {
-  border-color: rgba(42, 70, 94, 0.24);
-  background: rgba(42, 70, 94, 0.1);
-}
-
-.sequenceActivationActive {
-  border-color: rgba(31, 122, 109, 0.58);
-  background: rgba(31, 122, 109, 0.2);
-  box-shadow: 0 0 0 3px rgba(228, 243, 240, 0.9), 0 0 18px rgba(31, 122, 109, 0.18);
-  opacity: 1;
-}
-
-.sequenceActivationMuted {
-  opacity: 0.18;
-}
-
-.sequenceActivation_data.sequenceActivationActive,
-.sequenceActivation_data.sequenceActivationComplete {
-  border-color: rgba(37, 99, 235, 0.36);
-  background: rgba(37, 99, 235, 0.12);
-}
-
-.sequenceActivation_matched.sequenceActivationActive,
-.sequenceActivation_matched.sequenceActivationComplete {
-  border-color: rgba(16, 125, 82, 0.38);
-  background: rgba(16, 125, 82, 0.12);
-}
-
-.sequenceActivation_no_template.sequenceActivationActive,
-.sequenceActivation_no_template.sequenceActivationComplete {
-  border-color: rgba(217, 119, 6, 0.42);
-  background: rgba(217, 119, 6, 0.13);
-}
-
-.sequenceActivation_error.sequenceActivationActive,
-.sequenceActivation_error.sequenceActivationComplete {
-  border-color: rgba(220, 38, 38, 0.42);
-  background: rgba(220, 38, 38, 0.12);
-}
-
 .sequenceMessageLayer {
   position: absolute;
   inset: 0;

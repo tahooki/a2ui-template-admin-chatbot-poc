@@ -296,10 +296,6 @@ function stepLineBottom(step: SequenceStep) {
   return step.rowBottom;
 }
 
-function isSelfLoopStep(step: SequenceStep) {
-  return step.from === step.to;
-}
-
 function branchBlockFromSpec(spec: BranchBlockSpec): BranchBlock {
   const firstStep = stepById.get(spec.firstStepId);
   const lastStep = stepById.get(spec.lastStepId);
@@ -392,17 +388,6 @@ function messageLineClass(step: SequenceStep, completed: Set<string>, active?: A
   return classes.filter(Boolean).join(" ");
 }
 
-function activationClass(step: SequenceStep, completed: Set<string>, active?: AgentFlowEvent) {
-  const classes = [styles.sequenceActivation];
-  if (step.branch) classes.push(styles[`sequenceActivation_${step.branch}`]);
-  if (completed.has(step.id)) classes.push(styles.sequenceActivationComplete);
-  if (isActiveStep(step, active, completed)) classes.push(styles.sequenceActivationActive);
-  if (step.branch && active?.branch && step.branch !== active.branch && !(step.branch === "data" && isDataOutcomeBranch(active.branch))) {
-    classes.push(styles.sequenceActivationMuted);
-  }
-  return classes.filter(Boolean).join(" ");
-}
-
 function branchClass(block: BranchBlock, branches: Set<AgentFlowBranch>, active?: AgentFlowEvent) {
   const classes = [styles.branchBlock, styles[`branchBlock_${block.id}`]];
   if (branches.has(block.id) || active?.branch === block.id || (block.id === "data" && isDataOutcomeBranch(active?.branch))) {
@@ -432,15 +417,6 @@ function messageLineStyle(step: SequenceStep) {
   const { x1, x2, y1, y2, loopX } = stepEndpoints(step);
   if (loopX) return { left: x1, top: y1, width: loopX - x1, height: y2 - y1 };
   return { left: Math.min(x1, x2), top: y1, width: Math.abs(x2 - x1) };
-}
-
-function activationStyle(step: SequenceStep) {
-  const { y1, y2, loopX } = stepEndpoints(step);
-  return {
-    left: laneX(step.to) - 7,
-    top: loopX ? y1 - 12 : y1 - 18,
-    height: loopX ? y2 - y1 + 28 : 36,
-  };
 }
 
 function packetRailClass(step: SequenceStep) {
@@ -1330,18 +1306,6 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
                 <span>{block.label}</span>
               </div>
             ))}
-
-            <div className={styles.sequenceActivationLayer} aria-hidden="true">
-              {visibleSteps
-                .filter((step) => !isSelfLoopStep(step) && (completed.has(step.id) || isActiveStep(step, active, completed)))
-                .map((step) => (
-                  <span
-                    className={activationClass(step, completed, active)}
-                    key={`${step.id}-activation`}
-                    style={activationStyle(step)}
-                  />
-                ))}
-            </div>
 
             <div className={styles.sequenceMessageLayer} aria-label="A2UI agent sequence diagram" role="img">
               {visibleSteps.map((step) => (
