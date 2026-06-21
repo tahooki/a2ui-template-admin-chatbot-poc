@@ -842,6 +842,38 @@ function isConcreteTelemetryMetricPath(path?: string) {
   return Boolean(key && /^(telemetry_|metric_)/i.test(key));
 }
 
+function keepSelectedTemplateSlotMappings(plan: AIPlannerPlan) {
+  const selectedTemplateId = plan.selectedTemplateId;
+  const slotMappings = Array.isArray(plan.slotMappings) ? plan.slotMappings : [];
+  if (!selectedTemplateId || !slotMappings.length) {
+    return {
+      plan,
+      removedCount: 0,
+      removedTemplateIds: [] as string[],
+    };
+  }
+
+  const kept = slotMappings.filter((item) => !item.templateId || item.templateId === selectedTemplateId);
+  const removed = slotMappings.filter((item) => item.templateId && item.templateId !== selectedTemplateId);
+
+  if (!removed.length) {
+    return {
+      plan,
+      removedCount: 0,
+      removedTemplateIds: [] as string[],
+    };
+  }
+
+  return {
+    plan: {
+      ...plan,
+      slotMappings: kept,
+    },
+    removedCount: removed.length,
+    removedTemplateIds: Array.from(new Set(removed.map((item) => item.templateId).filter((templateId): templateId is string => Boolean(templateId)))),
+  };
+}
+
 function validatePlan({
   plan,
   templates,
@@ -1338,12 +1370,15 @@ export async function planA2UISurfaceWithAI({
     },
   });
 
+  let slotMappingCleanup = keepSelectedTemplateSlotMappings(plan);
+  plan = slotMappingCleanup.plan;
   let validation = validatePlan({ plan, templates, extracted });
   if (!validation.ok && process.env.A2UI_AI_SURFACE_PLANNER_MOCK !== "1") {
     const retry = await requestAIPlan(prompt, { previousPlan: plan, validationErrors: validation.errors });
     if (retry.plan) {
       ai = retry;
-      plan = retry.plan;
+      slotMappingCleanup = keepSelectedTemplateSlotMappings(retry.plan);
+      plan = slotMappingCleanup.plan;
       validation = validatePlan({ plan, templates, extracted });
     }
   }
@@ -1352,7 +1387,11 @@ export async function planA2UISurfaceWithAI({
   await emitProgress(onProgress, {
     status: "plan_validation",
     label: "Validate AI plan",
-    detail: validation.ok ? "validator accepted returned plan" : `validator rejected plan: ${validation.errors.length} errors`,
+    detail: validation.ok
+      ? slotMappingCleanup.removedCount > 0
+        ? `validator accepted returned plan after selected-template slot cleanup (${slotMappingCleanup.removedCount} removed)`
+        : "validator accepted returned plan"
+      : `validator rejected plan: ${validation.errors.length} errors`,
     data: {
       mode: validation.ok ? "validated" : "invalid",
       templateId: plan.selectedTemplateId,
@@ -1360,6 +1399,12 @@ export async function planA2UISurfaceWithAI({
       score: plan.confidence,
       candidateCount: validatedCandidates.length,
       validation,
+      slotMappingCleanup: slotMappingCleanup.removedCount > 0
+        ? {
+            removedCount: slotMappingCleanup.removedCount,
+            removedTemplateIds: slotMappingCleanup.removedTemplateIds,
+          }
+        : undefined,
       candidates: validatedCandidates,
       mapping: plan.selectedTemplateId
         ? {
