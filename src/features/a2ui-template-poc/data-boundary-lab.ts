@@ -102,6 +102,7 @@ export type AiSurfacePlanDemoTrace = {
   displayShape: string;
   sourceDataHash: string;
   displayDataHash: string;
+  sourceSampleRows: Record<string, unknown>[];
   rules: Array<{
     rowIndex: number;
     sourceField: string;
@@ -711,6 +712,7 @@ function planDisplayData(source: unknown, scenario: DataBoundaryScenario, select
       displayShape: dataShape(displayData),
       sourceDataHash: sourceFingerprint.dataHash,
       displayDataHash: displayFingerprint.dataHash,
+      sourceSampleRows: extracted.rows.slice(0, 3) as Record<string, unknown>[],
       rules,
       beforeRows: extracted.rows.slice(0, 2) as Record<string, unknown>[],
       afterRows: displayData.items.slice(0, 2) as Record<string, unknown>[],

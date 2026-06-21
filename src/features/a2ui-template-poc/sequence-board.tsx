@@ -785,12 +785,6 @@ function sourceFieldPathsFromEvent(event?: AgentFlowEvent) {
   return stringArray(data.sourceFieldPaths).length ? stringArray(data.sourceFieldPaths) : stringArray(trace.sourceFieldPaths);
 }
 
-function rawToolResultFromEvent(event?: AgentFlowEvent) {
-  const data = recordValue(event?.data);
-  const renderPayload = recordValue(data.a2uiRenderPayload);
-  return data.rawToolResult ?? renderPayload.data;
-}
-
 function stepEvent(step: SequenceStep, events: AgentFlowEvent[]) {
   const stepEvents = step.events ?? [];
   return events.findLast((event) => stepEvents.includes(event.event));
@@ -811,6 +805,25 @@ function stepDisplayLabel(step: SequenceStep, trace: DataBoundaryScenarioTrace |
   return step.label;
 }
 
+function aiCompareInputFromTrace(trace?: Record<string, unknown>) {
+  if (!trace) return undefined;
+  const fieldPaths = stringArray(trace.sourceFieldPaths);
+  const sampleRows = Array.isArray(trace.sourceSampleRows) ? trace.sourceSampleRows : undefined;
+  const rowCount = trace.sourceRowCount ?? trace.rowCount;
+  return cleanJsonValue({
+    promptVersion: trace.promptVersion,
+    model: trace.model,
+    source: {
+      shape: trace.sourceShape,
+      detectedPrimaryArrayPath: trace.sourceArrayPath ?? "items",
+      rowCount,
+      fieldPathCount: fieldPaths.length || undefined,
+      fieldPaths: fieldPaths.length ? fieldPaths : undefined,
+      sampleRows,
+    },
+  });
+}
+
 function sourcePreviewEvidenceView(trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]): DetailViewModel {
   const businessEvent = latestEvent(events, ["state:business_tool_result", "state:data_loaded"]);
   const toolCallEvent = latestEvent(events, ["state:a2ui_tool_call", "transport:a2a_send"]);
@@ -818,12 +831,12 @@ function sourcePreviewEvidenceView(trace: DataBoundaryScenarioTrace | undefined,
   const toolResultEvent = latestEvent(events, ["state:a2ui_tool_result", "transport:a2a_result", "done"]);
   const aiSurfacePlanTrace = trace?.aiSurfacePlanTrace ?? aiSurfaceTraceFromEvents(event, toolResultEvent, businessEvent, toolCallEvent);
   const sourceTool = sourceToolFromEvent(toolResultEvent) ?? sourceToolFromEvent(businessEvent) ?? sourceToolFromEvent(toolCallEvent);
-  const rawToolResult = rawToolResultFromEvent(businessEvent) ?? rawToolResultFromEvent(toolCallEvent);
-  const inputJson = trace?.sourceData ?? cleanJsonValue({
-    rawToolResult,
-    businessToolResultEvent: eventPayload(businessEvent),
-    a2uiRenderRequestEvent: eventPayload(toolCallEvent),
-  });
+  const inputJson = trace
+    ? aiCompareInputFromTrace(trace.aiSurfacePlanTrace)
+    : aiCompareInputFromTrace(aiSurfacePlanTrace) ?? aiCompareInputFromTrace(recordValue(event?.data)) ?? cleanJsonValue({
+        sourcePreviewEvent: eventPayload(event),
+        a2uiRenderRequestEvent: eventPayload(toolCallEvent),
+      });
   const outputJson = trace
     ? cleanJsonValue({
         sampleDataPreview: trace.sampleDataPreview,
@@ -835,7 +848,7 @@ function sourcePreviewEvidenceView(trace: DataBoundaryScenarioTrace | undefined,
           sourceArrayPath: trace.aiSurfacePlanTrace.sourceArrayPath,
           sourceRowCount: trace.aiSurfacePlanTrace.sourceRowCount,
           sourceFieldPaths: trace.aiSurfacePlanTrace.sourceFieldPaths,
-          sourceSampleRows: trace.aiSurfacePlanTrace.beforeRows.length ? trace.aiSurfacePlanTrace.beforeRows : undefined,
+          sourceSampleRows: trace.aiSurfacePlanTrace.sourceSampleRows,
           beforeRows: trace.aiSurfacePlanTrace.beforeRows,
         },
         a2uiRenderPayload: trace.a2uiRenderPayload,
@@ -850,9 +863,9 @@ function sourcePreviewEvidenceView(trace: DataBoundaryScenarioTrace | undefined,
   return {
     eyebrow: `Evidence: ${eventEvidenceText(event, trace ? "sample" : "pending")}`,
     title: "비교용 데이터로 변환",
-    purpose: "원본 API 데이터가 A2UI 비교 입력값으로 바뀐 input/output JSON입니다. 받은 값은 요약하지 않고 그대로 표시합니다.",
+    purpose: "원본 API 데이터에서 실제 AI 비교에 쓰는 bounded input으로 변환한 input/output JSON입니다.",
     jsonPanels: [
-      { title: "Input JSON: API 데이터", value: inputJson },
+      { title: "Input JSON: AI 비교 입력값", value: inputJson },
       { title: "Output JSON: 비교용 데이터", value: outputJson },
     ],
   };
