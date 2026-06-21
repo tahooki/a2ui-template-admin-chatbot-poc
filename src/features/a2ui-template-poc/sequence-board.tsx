@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
 import styles from "./styles.module.css";
 import type { AgentFlowActor, AgentFlowBranch, AgentFlowEvent, AgentFlowEvidenceKind, AgentFlowPhase } from "./agent-flow-types";
@@ -115,11 +115,13 @@ const sequenceStepGaps: Record<SequenceStepGap, number> = {
   selfLoop: 34,
 };
 const clickableStepIds = new Set([
+  "business-tool-call",
   "business-tool-result",
   "a2ui-tool-call",
   "a2a-send",
   "a2ui-source-preview",
-  "registry-loaded",
+  "template-contracts",
+  "template-contracts-loaded",
   "matcher",
   "plan-validation",
   "mapping-applied",
@@ -153,31 +155,17 @@ function buildSequenceSteps(specs: SequenceStepSpec[]) {
 }
 
 const steps: SequenceStep[] = buildSequenceSteps([
-  { id: "request", phase: "request", events: ["request_start"], from: "chat", to: "next", label: "POST /api/chat" },
-  { id: "bridge", phase: "bridge", events: ["response_open"], from: "next", to: "main_agent", label: "Open /chat/stream" },
-  { id: "planning", phase: "planning", events: ["state:planning"], from: "main_agent", to: "main_agent", label: "Plan turn" },
-  { id: "intent", phase: "intent", events: ["state:intent"], from: "main_agent", to: "llm", label: "Intent classify", gapBefore: "selfLoop" },
-  { id: "general-llm", phase: "general_chat", events: ["llm:answer"], from: "llm", to: "main_agent", label: "Text answer", branch: "general", gapBefore: "section" },
-  { id: "general-stream", phase: "general_chat", events: ["text", "delta"], from: "main_agent", to: "chat", label: "Stream to chat", branch: "general" },
-  {
-    id: "business-tool-selected",
-    phase: "intent",
-    events: ["state:business_tool_selected"],
-    from: "main_agent",
-    to: "main_agent",
-    label: "Select business API",
-    branch: "data",
-    gapBefore: "section",
-  },
+  { id: "chat-stream", phase: "request", events: ["request_start", "response_open"], from: "chat", to: "main_agent", label: "Open chat stream" },
+  { id: "intent", phase: "intent", events: ["state:planning", "state:intent"], from: "main_agent", to: "llm", label: "Classify data request", gapBefore: "selfLoop" },
   {
     id: "business-tool-call",
-    phase: "data_loaded",
-    events: ["state:business_tool_call", "state:tool"],
+    phase: "intent",
+    events: ["state:business_tool_selected", "state:business_tool_call", "state:tool"],
     from: "main_agent",
     to: "business_db",
-    label: "Call get_equipment_*",
+    label: "Select and call business API",
     branch: "data",
-    gapBefore: "selfLoop",
+    gapBefore: "section",
   },
   {
     id: "business-tool-result",
@@ -189,23 +177,13 @@ const steps: SequenceStep[] = buildSequenceSteps([
     branch: "data",
   },
   {
-    id: "a2ui-tool-selected",
-    phase: "registry_loaded",
-    events: ["state:a2ui_tool_selected"],
-    from: "main_agent",
-    to: "main_agent",
-    label: "Select a2ui_render",
-    branch: "data",
-  },
-  {
     id: "a2ui-tool-call",
     phase: "registry_loaded",
-    events: ["state:a2ui_tool_call"],
+    events: ["state:a2ui_tool_selected", "state:a2ui_tool_call"],
     from: "main_agent",
     to: "a2ui_render_tool",
     label: "Invoke a2ui_render boundary",
     branch: "data",
-    gapBefore: "selfLoop",
   },
   {
     id: "a2a-send",
@@ -228,7 +206,7 @@ const steps: SequenceStep[] = buildSequenceSteps([
     a2uiSubstep: true,
   },
   {
-    id: "registry-request",
+    id: "template-contracts",
     phase: "registry_loaded",
     events: ["state:template_contracts", "state:a2a"],
     from: "a2ui",
@@ -237,7 +215,7 @@ const steps: SequenceStep[] = buildSequenceSteps([
     branch: "data",
   },
   {
-    id: "registry-loaded",
+    id: "template-contracts-loaded",
     phase: "registry_loaded",
     events: ["state:registry_loaded"],
     from: "registry",
@@ -270,45 +248,15 @@ const steps: SequenceStep[] = buildSequenceSteps([
     gapBefore: "selfLoop",
   },
   {
-    id: "matched-summary",
-    phase: "surface",
-    events: ["text", "delta"],
-    from: "main_agent",
-    to: "chat",
-    label: "Text summary",
-    branch: "matched",
-    gapBefore: "section",
-  },
-  {
     id: "surface",
     phase: "surface",
-    events: ["surface"],
+    events: ["text", "delta", "surface"],
     from: "main_agent",
     to: "chat",
-    label: "Return SurfaceEnvelope",
+    label: "Return selected A2UI surface",
     branch: "matched",
-  },
-  {
-    id: "no-template",
-    phase: "no_template",
-    events: ["matcher:no_template"],
-    from: "a2ui",
-    to: "a2ui",
-    label: "No compatible template",
-    branch: "no_template",
     gapBefore: "section",
   },
-  {
-    id: "fallback",
-    phase: "text_fallback",
-    events: ["text", "delta"],
-    from: "main_agent",
-    to: "chat",
-    label: "Emit fallback text",
-    branch: "no_template",
-    gapBefore: "selfLoop",
-  },
-  { id: "error", phase: "error", events: ["error", "request_error", "response_error"], from: "main_agent", to: "chat", label: "Runtime error", branch: "error", gapBefore: "section" },
 ]);
 
 const stepById = new Map(steps.map((step) => [step.id, step]));
@@ -340,11 +288,8 @@ function branchBlockFromSpec(spec: BranchBlockSpec): BranchBlock {
 }
 
 const branchBlockSpecs: BranchBlockSpec[] = [
-  { id: "general", label: "alt general chat", firstStepId: "general-llm", lastStepId: "general-stream" },
-  { id: "data", label: "else data task", firstStepId: "business-tool-selected", lastStepId: "a2ui-tool-result" },
-  { id: "matched", label: "then matched: SurfaceEnvelope", firstStepId: "matched-summary", lastStepId: "surface" },
-  { id: "no_template", label: "else no template: fallback text", firstStepId: "no-template", lastStepId: "fallback" },
-  { id: "error", label: "else error", firstStepId: "error", lastStepId: "error" },
+  { id: "data", label: "A2UI render path", firstStepId: "business-tool-call", lastStepId: "a2ui-tool-result" },
+  { id: "matched", label: "Selected A2UI output", firstStepId: "surface", lastStepId: "surface" },
 ];
 
 const branchBlocks: BranchBlock[] = branchBlockSpecs.map(branchBlockFromSpec);
@@ -352,7 +297,7 @@ const branchBlocks: BranchBlock[] = branchBlockSpecs.map(branchBlockFromSpec);
 const canvasHeight = Math.ceil(Math.max(...branchBlocks.map((block) => block.top + block.height)) + sequenceLayout.canvasBottomPadding);
 
 function isDataOutcomeBranch(branch?: AgentFlowBranch) {
-  return branch === "matched" || branch === "no_template" || branch === "error";
+  return branch === "matched";
 }
 
 function eventMatchesStep(step: SequenceStep, event?: AgentFlowEvent) {
@@ -386,7 +331,7 @@ function completedStepSet(events: AgentFlowEvent[], visibleSteps: SequenceStep[]
 }
 
 function isMatchedSurfaceStep(step: SequenceStep) {
-  return step.branch === "matched" && step.phase === "surface" && (step.id === "matched-summary" || step.id === "surface");
+  return step.branch === "matched" && step.phase === "surface" && step.id === "surface";
 }
 
 function isMatchedSurfaceEvent(event?: AgentFlowEvent) {
@@ -395,7 +340,7 @@ function isMatchedSurfaceEvent(event?: AgentFlowEvent) {
 
 function isActiveStep(step: SequenceStep, active: AgentFlowEvent | undefined, completed: Set<string>) {
   if (eventMatchesStep(step, active)) return true;
-  return Boolean(active?.event === "surface" && isMatchedSurfaceEvent(active) && isMatchedSurfaceStep(step) && completed.has("matched-summary"));
+  return Boolean(active?.event === "surface" && isMatchedSurfaceEvent(active) && isMatchedSurfaceStep(step) && completed.has("surface"));
 }
 
 function stepClass(step: SequenceStep, completed: Set<string>, active?: AgentFlowEvent, evidenceKind?: AgentFlowEvidenceKind) {
@@ -488,7 +433,6 @@ function clampZoom(value: number) {
 }
 
 function stepCameraZoom(step: SequenceStep) {
-  if (step.id === "fallback") return 0.78;
   if (step.branch === "matched" || step.branch === "error") return overviewZoom;
   return focusZoom;
 }
@@ -561,10 +505,12 @@ function scrollTargetForStepElement(stepId: string, viewport: HTMLDivElement) {
 function stepForDoneEvent(active: AgentFlowEvent | undefined, visibleSteps: SequenceStep[]) {
   if (active?.phase !== "done") return undefined;
   if (active.branch === "matched") return visibleSteps.find((step) => step.id === "surface");
-  if (active.branch === "no_template") return visibleSteps.find((step) => step.id === "fallback");
-  if (active.branch === "error") return visibleSteps.find((step) => step.id === "error");
-  if (active.branch === "general") return visibleSteps.find((step) => step.id === "general-stream");
   return undefined;
+}
+
+export function sequenceDisplayStepIdForEvent(event: AgentFlowEvent, showA2UISubsteps = true) {
+  const visibleSteps = steps.filter((step) => showA2UISubsteps || !step.a2uiSubstep);
+  return visibleSteps.find((step) => eventMatchesStep(step, event))?.id ?? stepForDoneEvent(event, visibleSteps)?.id;
 }
 
 function cameraStateForScroll(target: string, left: number, top: number, zoom: number, mode: CameraState["mode"]): CameraState {
@@ -747,10 +693,6 @@ function plannerRuleSummary(trace: DataBoundaryScenarioTrace): DetailFlowItem[] 
   }));
 }
 
-function sourceToolResultId(trace: DataBoundaryScenarioTrace) {
-  return `demo-tool-result-${trace.id}`;
-}
-
 function DetailMetrics({ items }: { items: DetailMetric[] }) {
   return (
     <div className={styles.sequenceDetailCards}>
@@ -869,8 +811,7 @@ function stepToolName(step: SequenceStep, trace: DataBoundaryScenarioTrace | und
 
 function stepDisplayLabel(step: SequenceStep, trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]) {
   const toolName = stepToolName(step, trace, events);
-  if (step.id === "business-tool-call" && toolName) return `Call ${toolName}`;
-  if (step.id === "business-tool-selected" && toolName) return `Select ${toolName}`;
+  if (step.id === "business-tool-call" && toolName) return `Use ${toolName}`;
   return step.label;
 }
 
@@ -922,7 +863,6 @@ function liveDetailView(selectedEvent: AgentFlowEvent): DetailViewModel {
 
 function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace): DetailViewModel {
   const renderToolMetadata = recordValue(trace.a2uiRenderPayload.toolMetadata);
-  const renderToolName = typeof renderToolMetadata.renderToolName === "string" ? renderToolMetadata.renderToolName : "a2ui_render";
   const sourceToolName = typeof renderToolMetadata.sourceToolName === "string" ? renderToolMetadata.sourceToolName : trace.businessToolName;
   const mappingRows = trace.mappingComparison.map((row) => ({
     source: compactPath(row.derivedField),
@@ -930,37 +870,19 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
     decision: `${row.decision}${row.aliasOrNormalization !== "direct" ? ` via ${formatStrategy(row.aliasOrNormalization)}` : ""}`,
   }));
 
-  if (selectedStep === "business-tool-selected") {
-    return {
-      eyebrow: "Tool choice",
-      title: trace.businessToolName,
-      purpose: "The Main Agent chooses which business API should answer the user's request. This is not UI template selection yet.",
-      metrics: [
-        { label: "User asks", value: trace.query },
-        { label: "Selected API", value: trace.apiId },
-        { label: "Tool", value: trace.businessToolName },
-        { label: "Next arrow", value: "call business API" },
-      ],
-      flow: [
-        { title: "Read intent", body: "The request is treated as a data task." },
-        { title: "Pick data source", body: `${trace.businessToolName} is selected for ${trace.apiRoute}.` },
-        { title: "Keep rendering separate", body: "A2UI field/template planning starts only after raw data comes back." },
-      ],
-    };
-  }
-
   if (selectedStep === "business-tool-call") {
     return {
-      eyebrow: "Business API call",
+      eyebrow: "Business data source",
       title: trace.apiRoute,
-      purpose: "This arrow sends the chosen data request to the business API. It carries the question and API identity, not an A2UI schema.",
+      purpose: "The Main Agent selects the business data source and calls it. This creates raw API data for A2UI, but no UI template has been selected yet.",
       metrics: [
-        { label: "Arrow carries", value: "API request" },
+        { label: "Step carries", value: "source selection + API request" },
         { label: "Tool", value: trace.businessToolName },
         { label: "Route", value: trace.apiRoute },
         { label: "Query", value: trace.query },
       ],
       flow: [
+        { title: "Select data source", body: `${trace.businessToolName} is selected for ${trace.apiRoute}.` },
         { title: "Call source system", body: "Main Agent asks the business data boundary for equipment data." },
         { title: "Wait for raw result", body: "The next step receives rows exactly from the API response." },
       ],
@@ -986,29 +908,11 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
     };
   }
 
-  if (selectedStep === "a2ui-tool-selected") {
-    return {
-      eyebrow: "Render boundary",
-      title: renderToolName,
-      purpose: "The Main Agent selects a2ui_render because business data exists and now needs a render decision. The template is still not chosen here.",
-      metrics: [
-        { label: "Input condition", value: "business data ready" },
-        { label: "Selected tool", value: renderToolName },
-        { label: "Source result", value: sourceToolResultId(trace) },
-        { label: "Template choice", value: "later in AI planner" },
-      ],
-      flow: [
-        { title: "Choose render tool", body: "The flow crosses from chat orchestration into A2UI rendering logic." },
-        { title: "Defer UI selection", body: "The actual component is selected after the AI planner compares source fields with registry contracts." },
-      ],
-    };
-  }
-
   if (selectedStep === "a2ui-tool-call") {
     return {
       eyebrow: "Planner payload",
       title: "Invoke Python render boundary",
-      purpose: "The Main Agent invokes the local a2ui_render boundary with the raw business API result. This is still not the A2UI server-side template decision.",
+      purpose: "The Main Agent chooses the a2ui_render boundary and invokes it with the raw business API result. This is still not the A2UI server-side template decision.",
       metrics: [
         { label: "Source", value: sourceToolName },
         { label: "Rows", value: formatCount(trace.aiSurfacePlanTrace.sourceRowCount) },
@@ -1016,6 +920,7 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
         { label: "Next arrow", value: "A2A message:send" },
       ],
       flow: [
+        { title: "Choose render boundary", body: "The flow crosses from chat orchestration into A2UI rendering logic." },
         { title: "Call boundary", body: "The Python wrapper receives already-fetched raw business data." },
         { title: "Keep data raw", body: "No Python-side displayData or alias conversion should decide the final A2UI schema." },
         { title: "Judgment comes later", body: "The A2UI Agent chooses the template after receiving the A2A render request." },
@@ -1062,21 +967,42 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
     };
   }
 
-  if (selectedStep === "registry-request" || selectedStep === "registry-loaded") {
+  if (selectedStep === "template-contracts") {
     return {
-      eyebrow: "AI planner input",
-      title: trace.templateContract.componentId,
-      purpose: "These are the registered A2UI template contracts the AI planner compares against the source preview.",
+      eyebrow: "Registry request",
+      title: "Load template contracts",
+      purpose: "The A2UI Agent asks the A2UI Registry for registered template contracts. This is the outbound request before AI comparison can run.",
       metrics: [
-        { label: "View type", value: trace.templateContract.surfaceConfig.viewType },
-        { label: "Required slots", value: requiredSlotSummary(trace) },
-        { label: "Required capabilities", value: templateCapabilitySummary(trace) },
+        { label: "From", value: "A2UI Agent" },
+        { label: "To", value: "A2UI Registry" },
+        { label: "Request", value: "template contracts" },
         { label: "Candidate", value: trace.templateContract.componentId },
+      ],
+      flow: [
+        { title: "Request registry contracts", body: "A2UI asks the registry for templates that can be compared with the source preview." },
+        { title: "No selection yet", body: "The AI planner has not selected a template in this step." },
+        { title: "Wait for response", body: "The next step is the registry returning the available template contracts back to A2UI." },
+      ],
+      outcome: "This step is only the request. The returned contracts appear in the next step.",
+    };
+  }
+
+  if (selectedStep === "template-contracts-loaded") {
+    return {
+      eyebrow: "Registry response",
+      title: "Template contracts loaded",
+      purpose: "The A2UI Registry returns candidate template contracts to the A2UI Agent. These contracts become the right-hand AI comparison input.",
+      metrics: [
+        { label: "From", value: "A2UI Registry" },
+        { label: "To", value: "A2UI Agent" },
+        { label: "Returned candidates", value: formatCount(trace.renderPlan.candidates?.length ?? 1) },
+        { label: "Selected later", value: trace.templateContract.componentId },
       ],
       comparison: comparisonInput(trace),
       flow: [
+        { title: "Receive contracts", body: "The registry response gives A2UI the template schemas and surface requirements." },
         { title: "Contract requirement", body: `${trace.templateContract.componentId} accepts ${trace.templateContract.surfaceConfig.viewType}.` },
-        { title: "Comparison target", body: `AI checks whether source fields can fill ${requiredSlotSummary(trace)}.` },
+        { title: "Planner input ready", body: `AI can now compare source fields against ${requiredSlotSummary(trace)} and choose the best template.` },
       ],
     };
   }
@@ -1154,25 +1080,6 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
       flow: [
         { title: "A2UI decision complete", body: decisionReason(trace) },
         { title: "Boundary unwraps artifact", body: "Python extracts the surface result and metadata before returning A2UIRenderToolResult to Main Agent." },
-      ],
-    };
-  }
-
-  if (selectedStep === "matched-summary") {
-    return {
-      eyebrow: "Matched output",
-      title: "Text summary",
-      purpose: "The Main Agent sends a short human-readable summary beside the SurfaceEnvelope. It explains the rendered result but does not decide the UI template.",
-      metrics: [
-        { label: "Arrow carries", value: "summary text" },
-        { label: "Paired with", value: "SurfaceEnvelope" },
-        { label: "Template", value: trace.surfaceEnvelope.templateId },
-        { label: "Rows summarized", value: formatCount(trace.surfaceEnvelope.payload.data.items.length) },
-      ],
-      flow: [
-        { title: "Use render decision", body: `The selected template is already ${trace.surfaceEnvelope.templateId}.` },
-        { title: "Send readable text", body: "The chat bubble gets concise context for the surface that appears with it." },
-        { title: "Move with envelope", body: "Summary and SurfaceEnvelope are treated as the same matched output moment in the diagram." },
       ],
     };
   }
@@ -1332,7 +1239,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
     return () => window.cancelAnimationFrame(initialFrame);
   }, [events.length, zoom]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || !focusStep) return;
 
@@ -1357,12 +1264,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
       });
       return () => window.cancelAnimationFrame(zoomFrame);
     }
-    const focusFrame = window.requestAnimationFrame(() => {
-      focusCamera(region, zoom, "auto", focusStep.id);
-    });
-    return () => {
-      window.cancelAnimationFrame(focusFrame);
-    };
+    focusCamera(region, zoom, "auto", focusStep.id);
   }, [active?.branch, active?.event, active?.phase, active?.turnId, focusStep, zoom]);
 
   useEffect(() => {

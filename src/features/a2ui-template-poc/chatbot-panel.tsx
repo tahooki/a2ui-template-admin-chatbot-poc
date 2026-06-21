@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { A2UIDemoRenderer } from "./a2ui-demo-renderer";
 import styles from "./styles.module.css";
-import type { ChatFlowSourceEvent } from "./agent-flow-types";
+import type { ChatFlowDisplayTiming, ChatFlowSourceEvent } from "./agent-flow-types";
 import type {
   A2UICandidateTrace,
   A2UIDataProfile,
@@ -172,18 +172,38 @@ export function ChatbotPanel({
   resetKey: number;
   width: number;
   onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
-  onFlowEvent?: (event: ChatFlowSourceEvent) => void;
+  onFlowEvent?: (event: ChatFlowSourceEvent) => ChatFlowDisplayTiming | void;
 }) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([introMessage]);
   const [isRunning, setIsRunning] = useState(false);
   const resetKeyRef = useRef(resetKey);
   const messageListRef = useRef<HTMLDivElement | null>(null);
+  const surfaceDisplayTimersRef = useRef<number[]>([]);
+
+  const clearSurfaceDisplayTimers = useCallback(() => {
+    surfaceDisplayTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    surfaceDisplayTimersRef.current = [];
+  }, []);
+
+  const scheduleSurfaceDisplay = useCallback((callback: () => void, delayMs = 0) => {
+    if (delayMs <= 0) {
+      callback();
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      surfaceDisplayTimersRef.current = surfaceDisplayTimersRef.current.filter((item) => item !== timer);
+      callback();
+    }, delayMs);
+    surfaceDisplayTimersRef.current.push(timer);
+  }, []);
 
   const runQuery = useCallback(
     async (query: string) => {
       const trimmed = query.trim();
       if (!trimmed) return;
+      clearSurfaceDisplayTimers();
 
       const userMessage: ChatMessage = { id: newId(), role: "user", content: trimmed };
       const assistantId = newId();
@@ -194,7 +214,7 @@ export function ChatbotPanel({
       let emittedError = false;
 
       function emitFlow(kind: ChatFlowSourceEvent["kind"], event: string, data: Record<string, unknown> = {}) {
-        onFlowEvent?.({
+        return onFlowEvent?.({
           kind,
           event,
           data,
@@ -226,7 +246,7 @@ export function ChatbotPanel({
         emitFlow("local", "response_open", { status: response.status });
 
         await consumeSse(response, ({ event, data }) => {
-          emitFlow("sse", event, data);
+          const flowTiming = emitFlow("sse", event, data);
 
           if (event === "text" || event === "delta") {
             const text = typeof data.text === "string" ? data.text : typeof data.delta === "string" ? data.delta : "";
@@ -249,8 +269,13 @@ export function ChatbotPanel({
           if (event === "surface") {
             const surface = surfaceFromEnvelope(data.surface ?? data);
             if (!surface) return;
-            setMessages((current) =>
-              current.map((message) => (message.id === assistantId ? { ...message, surface } : message)),
+            scheduleSurfaceDisplay(
+              () => {
+                setMessages((current) =>
+                  current.map((message) => (message.id === assistantId ? { ...message, surface } : message)),
+                );
+              },
+              flowTiming?.surfaceDelayMs,
             );
             return;
           }
@@ -298,16 +323,19 @@ export function ChatbotPanel({
         setIsRunning(false);
       }
     },
-    [messages, onFlowEvent, registryVersion],
+    [clearSurfaceDisplayTimers, messages, onFlowEvent, registryVersion, scheduleSurfaceDisplay],
   );
 
   useEffect(() => {
     if (resetKeyRef.current === resetKey) return;
     resetKeyRef.current = resetKey;
+    clearSurfaceDisplayTimers();
     setMessages([introMessage]);
     setInput("");
     setIsRunning(false);
-  }, [resetKey]);
+  }, [clearSurfaceDisplayTimers, resetKey]);
+
+  useEffect(() => () => clearSurfaceDisplayTimers(), [clearSurfaceDisplayTimers]);
 
   useEffect(() => {
     const currentList = messageListRef.current;

@@ -60,6 +60,10 @@ export type ChatFlowSourceEvent = {
   at: string;
 };
 
+export type ChatFlowDisplayTiming = {
+  surfaceDelayMs?: number;
+};
+
 export type AgentFlowAdapterState = {
   hasDataTask: boolean;
   hasMatcher: boolean;

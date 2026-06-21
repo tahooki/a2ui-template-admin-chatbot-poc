@@ -7,9 +7,10 @@ import { AgentTracePanel } from "./agent-trace-panel";
 import { AdminPanel } from "./admin-panel";
 import { ChatbotPanel } from "./chatbot-panel";
 import { buildDataBoundaryScenarioTrace } from "./data-boundary-lab";
+import { sequenceDisplayStepIdForEvent } from "./sequence-board";
 import { useTemplateRegistry } from "./template-store";
 import styles from "./styles.module.css";
-import type { AgentFlowEvent, ChatFlowSourceEvent } from "./agent-flow-types";
+import type { AgentFlowEvent, ChatFlowDisplayTiming, ChatFlowSourceEvent } from "./agent-flow-types";
 import type { DataBoundaryScenarioId } from "./data-boundary-lab";
 
 const flowEventDisplayIntervalMs = 1000;
@@ -41,12 +42,40 @@ export function A2UITemplatePocPage() {
     displayTimerRef.current = null;
   }
 
-  function isMatchedSurfaceOutput(event?: AgentFlowEvent) {
-    return Boolean(event && event.branch === "matched" && event.phase === "surface" && ["delta", "surface", "text"].includes(event.event));
+  function sameSequenceDisplayStep(firstEvent: AgentFlowEvent | undefined, nextEvent: AgentFlowEvent | undefined) {
+    if (!firstEvent || !nextEvent || firstEvent.turnId !== nextEvent.turnId) return false;
+    const firstStepId = sequenceDisplayStepIdForEvent(firstEvent);
+    const nextStepId = sequenceDisplayStepIdForEvent(nextEvent);
+    return Boolean(firstStepId && firstStepId === nextStepId);
   }
 
   function shouldDisplayInSameFrame(firstEvent: AgentFlowEvent, nextEvent: AgentFlowEvent) {
-    return firstEvent.turnId === nextEvent.turnId && isMatchedSurfaceOutput(firstEvent) && isMatchedSurfaceOutput(nextEvent);
+    return sameSequenceDisplayStep(firstEvent, nextEvent);
+  }
+
+  function appendDisplayedFlowEvents(events: AgentFlowEvent[]) {
+    if (events.length === 0) return;
+    const nextDisplayedEvents = [...displayedFlowEventsRef.current, ...events].slice(-maxFlowEvents);
+    displayedFlowEventsRef.current = nextDisplayedEvents;
+    setFlowEvents(nextDisplayedEvents);
+  }
+
+  function pushDisplayableFlowEvents(events: AgentFlowEvent[]) {
+    const immediateEvents: AgentFlowEvent[] = [];
+
+    events.forEach((event) => {
+      if (!sequenceDisplayStepIdForEvent(event)) return;
+
+      const lastDisplayedEvent = immediateEvents.at(-1) ?? displayedFlowEventsRef.current.at(-1);
+      if (sameSequenceDisplayStep(lastDisplayedEvent, event)) {
+        immediateEvents.push(event);
+        return;
+      }
+
+      displayQueueRef.current.push(event);
+    });
+
+    appendDisplayedFlowEvents(immediateEvents);
   }
 
   function shouldCatchUpFlowPlayback(turnId?: string) {
@@ -54,6 +83,29 @@ export function A2UITemplatePocPage() {
       if (turnId && event.turnId !== turnId) return false;
       return event.event === "surface" || event.phase === "done";
     });
+  }
+
+  function queuedFrameIndexForEvent(eventId: string) {
+    let frameIndex = 0;
+    let queueIndex = 0;
+
+    while (queueIndex < displayQueueRef.current.length) {
+      const firstEvent = displayQueueRef.current[queueIndex];
+      if (!firstEvent) break;
+      const frame = [firstEvent];
+      queueIndex += 1;
+
+      while (displayQueueRef.current[queueIndex] && shouldDisplayInSameFrame(firstEvent, displayQueueRef.current[queueIndex])) {
+        const nextEvent = displayQueueRef.current[queueIndex];
+        if (nextEvent) frame.push(nextEvent);
+        queueIndex += 1;
+      }
+
+      if (frame.some((event) => event.id === eventId)) return frameIndex;
+      frameIndex += 1;
+    }
+
+    return undefined;
   }
 
   function showNextQueuedFlowEventFrame() {
@@ -95,7 +147,7 @@ export function A2UITemplatePocPage() {
     setSelectedBoundaryScenario("status");
   }
 
-  function handleFlowEvent(source: ChatFlowSourceEvent) {
+  function handleFlowEvent(source: ChatFlowSourceEvent): ChatFlowDisplayTiming | undefined {
     const current = logicalFlowEventsRef.current;
     const currentTurnEvents = current.filter((event) => event.turnId === source.turnId);
     const nextEvents = agentFlowEventsFromSource(source, currentTurnEvents);
@@ -111,16 +163,27 @@ export function A2UITemplatePocPage() {
       return id === event.id ? event : { ...event, id };
     });
 
-    const isDisplayIdle = displayQueueRef.current.length === 0 && !displayTimerRef.current;
     logicalFlowEventsRef.current = [...current, ...uniqueNextEvents].slice(-maxFlowEvents);
-    displayQueueRef.current.push(...uniqueNextEvents);
+    const wasDisplayIdle = displayQueueRef.current.length === 0 && !displayTimerRef.current;
+    pushDisplayableFlowEvents(uniqueNextEvents);
 
-    if (isDisplayIdle && showNextQueuedFlowEventFrame().length) {
+    const surfaceEvent = uniqueNextEvents.find((event) => event.event === "surface" && event.turnId === source.turnId);
+    const surfaceAlreadyDisplayed = Boolean(surfaceEvent && displayedFlowEventsRef.current.some((event) => event.id === surfaceEvent.id));
+    const surfaceFrameIndex = surfaceEvent && !surfaceAlreadyDisplayed ? queuedFrameIndexForEvent(surfaceEvent.id) : undefined;
+    const timing = typeof surfaceFrameIndex === "number"
+      ? { surfaceDelayMs: (surfaceFrameIndex + (wasDisplayIdle ? 0 : 1)) * flowEventDisplayIntervalMs }
+      : surfaceAlreadyDisplayed
+        ? { surfaceDelayMs: 0 }
+      : undefined;
+
+    if (wasDisplayIdle && showNextQueuedFlowEventFrame().length) {
       scheduleNextFlowEvent();
-    } else {
+    } else if (displayQueueRef.current.length > 0) {
       if (shouldCatchUpFlowPlayback(source.turnId)) clearFlowDisplayTimer();
       scheduleNextFlowEvent(shouldCatchUpFlowPlayback(source.turnId) ? flowEventCatchUpIntervalMs : flowEventDisplayIntervalMs);
     }
+
+    return timing;
   }
 
   function startResize(event: ReactPointerEvent<HTMLDivElement>) {
