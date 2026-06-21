@@ -1182,7 +1182,13 @@
 }
 
 .sequenceLane::before {
-  content: none;
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 76px;
+  bottom: 24px;
+  border-left: 1px dashed rgba(71, 85, 105, 0.22);
+  transform: translateX(-50%);
 }
 
 .sequenceLane::after {
@@ -1343,18 +1349,22 @@
 }
 
 .sequenceMessageLineSelf {
+  --sequence-self-line-width: 2px;
+  --sequence-self-arrow-bottom: -4px;
   height: auto;
-  border-top: 2px solid currentColor;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  border-radius: 0 10px 10px 0;
+  border: 0;
+  border-radius: 0;
+  background:
+    linear-gradient(currentColor, currentColor) 0 0 / 100% var(--sequence-self-line-width) no-repeat,
+    linear-gradient(currentColor, currentColor) 100% 0 / var(--sequence-self-line-width) 100% no-repeat,
+    linear-gradient(currentColor, currentColor) 0 100% / 100% var(--sequence-self-line-width) no-repeat;
 }
 
 .sequenceMessageLineSelf::after {
   right: auto;
   left: -1px;
   top: auto;
-  bottom: -6px;
+  bottom: var(--sequence-self-arrow-bottom);
   border-right: 8px solid currentColor;
   border-left: 0;
 }
@@ -1373,11 +1383,13 @@
 }
 
 .sequenceMessageLineSelf.sequenceMessageLineComplete {
-  border-width: 2.4px;
+  --sequence-self-line-width: 2.4px;
+  --sequence-self-arrow-bottom: -3.8px;
 }
 
 .sequenceMessageLineSelf.sequenceMessageLineActive {
-  border-width: 3.2px;
+  --sequence-self-line-width: 3.2px;
+  --sequence-self-arrow-bottom: -3.4px;
 }
 
 .sequenceMessageLineComplete:not(.sequenceMessageLineSelf)::after {
