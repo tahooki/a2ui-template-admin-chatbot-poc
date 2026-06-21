@@ -281,6 +281,14 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
 
   if (status === "intent") {
     const isGeneral = label === "general";
+    const detail = [
+      `intent=${label || "unknown"}`,
+      source.data.source ? `source=${String(source.data.source)}` : undefined,
+      source.data.llmConfigured !== undefined ? `llm=${String(source.data.llmConfigured)}` : undefined,
+    ]
+      .filter(Boolean)
+      .join(" | ");
+    const branch = isGeneral ? "general" : "data";
     return [
       newFlowEvent(source, 0, {
         event: "state:intent",
@@ -288,15 +296,21 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         from: "main_agent",
         to: "llm",
         label: isGeneral ? "Classify as general chat" : "Classify as data task",
-        detail: [
-          `intent=${label || "unknown"}`,
-          source.data.source ? `source=${String(source.data.source)}` : undefined,
-          source.data.llmConfigured !== undefined ? `llm=${String(source.data.llmConfigured)}` : undefined,
-        ]
-          .filter(Boolean)
-          .join(" | "),
-        branch: isGeneral ? "general" : "data",
+        detail,
+        branch,
         severity: "info",
+        physicalEmitter: "main-agent",
+        data: source.data,
+      }),
+      newFlowEvent(source, 1, {
+        event: "state:intent_result",
+        phase: "intent",
+        from: "llm",
+        to: "main_agent",
+        label: isGeneral ? "Return general intent" : "Return selected business intent",
+        detail,
+        branch,
+        severity: "success",
         physicalEmitter: "main-agent",
         data: source.data,
       }),
