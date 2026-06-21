@@ -76,6 +76,13 @@ type ValidationResult = {
   errors: string[];
 };
 
+type AIPlannerRequestResult = {
+  plan?: AIPlannerPlan;
+  model?: string;
+  error?: string;
+  internalError?: string;
+};
+
 export type A2UISurfacePlanTrace = {
   promptVersion: typeof promptVersion;
   model?: string;
@@ -146,6 +153,8 @@ const promptVersion = "2026-06-21.a2ui-surface-plan.v1" as const;
 const allowedTransforms: PlannerTransform[] = ["copy", "boolean_code", "number_to_boolean", "default_false"];
 const maxPromptFieldPaths = 64;
 const maxPromptSampleRows = 3;
+const plannerTokenBudgets = [3500, 6000];
+const aiPlannerIncompleteReason = "AI가 화면 조건 비교 결과를 끝까지 완성하지 못해 선택을 확정하지 못했습니다.";
 const canonicalTargetFields = new Set([
   "id",
   "name",
@@ -412,6 +421,10 @@ function stripCodeFence(text: string) {
   return text.trim().replace(/^```(?:json|JSON)?\s*/, "").replace(/\s*```$/, "").trim();
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function openAIConfig() {
   return {
     apiKey: process.env.OPENAI_API_KEY,
@@ -593,12 +606,17 @@ function buildPrompt({
 async function requestAIPlan(
   prompt: ReturnType<typeof buildPrompt>,
   correction?: { previousPlan: AIPlannerPlan; validationErrors: string[] },
-): Promise<{ plan?: AIPlannerPlan; model?: string; error?: string }> {
+): Promise<AIPlannerRequestResult> {
   if (process.env.A2UI_AI_SURFACE_PLANNER_MOCK === "1") return { model: "mock-a2ui-surface-planner" };
 
   const config = openAIConfig();
   if (!config.apiKey) {
-    return { model: config.model, error: "A2UI AI surface planning requires OPENAI_API_KEY." };
+    console.warn("[a2ui] AI surface planner skipped because OPENAI_API_KEY is missing");
+    return {
+      model: config.model,
+      error: aiPlannerIncompleteReason,
+      internalError: "A2UI AI surface planning requires OPENAI_API_KEY.",
+    };
   }
 
   const userPayload = correction
@@ -626,37 +644,79 @@ async function requestAIPlan(
     },
   ];
 
-  try {
-    const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages,
-        temperature: 0,
-        max_tokens: 2500,
-        response_format: plannerResponseFormatFor({
-          templateIds: prompt.allowedTemplateIds,
-          sourcePaths: prompt.source.fieldPaths,
-          targetFields: prompt.allowedTargetFields,
-          slots: prompt.allowedSlots,
+  let lastInternalError: string | undefined;
+  for (const [attemptIndex, maxTokens] of plannerTokenBudgets.entries()) {
+    try {
+      const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages,
+          temperature: 0,
+          max_tokens: maxTokens,
+          response_format: plannerResponseFormatFor({
+            templateIds: prompt.allowedTemplateIds,
+            sourcePaths: prompt.source.fieldPaths,
+            targetFields: prompt.allowedTargetFields,
+            slots: prompt.allowedSlots,
+          }),
         }),
-      }),
-    });
-    const rawText = await response.text();
-    console.info("[a2ui] AI surface planner raw response", response.status, rawText.slice(0, 6000));
-    if (!response.ok) return { model: config.model, error: `A2UI AI surface planning request failed with status ${response.status}.` };
+      });
+      const rawText = await response.text();
+      console.info("[a2ui] AI surface planner raw response", response.status, `attempt=${attemptIndex + 1}`, `maxTokens=${maxTokens}`, rawText.slice(0, 6000));
+      if (!response.ok) {
+        lastInternalError = `A2UI AI surface planning request failed with status ${response.status}.`;
+        console.warn("[a2ui] AI surface planner request failed", lastInternalError, rawText.slice(0, 2000));
+        break;
+      }
 
-    const payload = JSON.parse(rawText) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = payload.choices?.[0]?.message?.content;
-    if (!content) return { model: config.model, error: "A2UI AI surface planning response did not include content." };
-    return { model: config.model, plan: JSON.parse(stripCodeFence(content)) as AIPlannerPlan };
-  } catch (error) {
-    return { model: config.model, error: `A2UI AI surface planning failed: ${error instanceof Error ? error.message : String(error)}` };
+      let payload: { choices?: Array<{ finish_reason?: string; message?: { content?: string } }> };
+      try {
+        payload = JSON.parse(rawText) as typeof payload;
+      } catch (error) {
+        lastInternalError = `A2UI AI surface planning response was not JSON: ${errorMessage(error)}`;
+        console.warn("[a2ui] AI surface planner envelope parse failed", lastInternalError, rawText.slice(0, 2000));
+        break;
+      }
+
+      const choice = payload.choices?.[0];
+      const content = choice?.message?.content;
+      if (!content) {
+        lastInternalError = "A2UI AI surface planning response did not include content.";
+        console.warn("[a2ui] AI surface planner response missing content", { finishReason: choice?.finish_reason });
+        break;
+      }
+
+      try {
+        return { model: config.model, plan: JSON.parse(stripCodeFence(content)) as AIPlannerPlan };
+      } catch (error) {
+        lastInternalError = `A2UI AI surface planning content was not valid JSON: ${errorMessage(error)}`;
+        console.warn("[a2ui] AI surface planner content parse failed", {
+          attempt: attemptIndex + 1,
+          maxTokens,
+          finishReason: choice.finish_reason,
+          contentLength: content.length,
+          error: errorMessage(error),
+          contentPreview: content.slice(0, 2000),
+        });
+        if (attemptIndex < plannerTokenBudgets.length - 1) continue;
+      }
+    } catch (error) {
+      lastInternalError = `A2UI AI surface planning request failed: ${errorMessage(error)}`;
+      console.warn("[a2ui] AI surface planner request threw", lastInternalError);
+      break;
+    }
   }
+
+  return {
+    model: config.model,
+    error: aiPlannerIncompleteReason,
+    internalError: lastInternalError,
+  };
 }
 
 function pathForKey(paths: string[], keys: string[]) {
@@ -1170,7 +1230,7 @@ function buildTrace({
     sourceShape: dataShape(rawData),
     sourceArrayPath: extracted.arrayPath,
     sourceFieldPaths: fieldPaths(extracted.rows, extracted.arrayPath ?? "items"),
-    sourceSampleRows: extracted.rows.slice(0, 5),
+    sourceSampleRows: extracted.rows.slice(0, maxPromptSampleRows),
     sourceRowCount: extracted.rowCount,
     renderRowCount: data?.total,
     sourceDataHash: dataHash(rawData),
@@ -1216,10 +1276,12 @@ export async function planA2UISurfaceWithAI({
     data: {
       rowCount: extracted.rowCount,
       previewRowCount: extracted.rowCount,
-      previewSampleSize: extracted.rows.slice(0, 5).length,
+      previewSampleSize: extracted.rows.slice(0, maxPromptSampleRows).length,
       sourceShape: dataShape(rawData),
       sourceArrayPath: extracted.arrayPath,
       sourceFieldCount: fieldPaths(extracted.rows, extracted.arrayPath ?? "items").length,
+      sourceFieldPaths: fieldPaths(extracted.rows, extracted.arrayPath ?? "items").slice(0, maxPromptFieldPaths),
+      sourceSampleRows: extracted.rows.slice(0, maxPromptSampleRows),
     },
   });
 
@@ -1245,9 +1307,12 @@ export async function planA2UISurfaceWithAI({
   });
 
   if (apiId === "equipment-catalog" && !registeredImageCardTemplate) {
-    const reason = "장비 목록은 장비 이미지 카드 템플릿이 등록되어 있어야 A2UI로 렌더링할 수 있습니다.";
+    const reason = "맞는 A2UI 템플릿이 없습니다.";
     const candidateEvaluations: PlannerCandidateEvaluation[] = registeredTemplates.map((template) => {
       const isTelemetry = template.componentId === "equipment.telemetryStatusTable";
+      const rejectionReason = isTelemetry
+        ? "장비 목록 데이터는 계측 수치/상태 테이블 조건과 맞지 않습니다."
+        : "장비 목록 데이터는 상태/알람/점검 테이블 조건과 맞지 않습니다.";
       return {
         templateId: template.componentId,
         decision: "reject",
@@ -1256,7 +1321,7 @@ export async function planA2UISurfaceWithAI({
         queryFit: 0.2,
         semanticFit: 0.18,
         renderFit: 0.1,
-        reason: "장비 목록 API는 장비 이미지 카드 템플릿이 등록된 경우에만 렌더링할 수 있으므로 이 템플릿은 선택하지 않습니다.",
+        reason: rejectionReason,
         missingRequiredSlots: isTelemetry ? ["items[].statusFlags", "items[].metrics"] : ["items[].statusFlags"],
         risks: ["equipment.imageCardList template is not registered"],
       };
@@ -1264,7 +1329,7 @@ export async function planA2UISurfaceWithAI({
     const candidates = candidateEvaluations.map(candidateTrace);
     const validation: ValidationResult = {
       ok: false,
-      errors: ["Missing registered template equipment.imageCardList"],
+      errors: [reason],
     };
     const plan: AIPlannerPlan = {
       confidence: 0,
@@ -1340,15 +1405,61 @@ export async function planA2UISurfaceWithAI({
   let ai = await requestAIPlan(prompt);
   let plan = ai.plan ?? (process.env.A2UI_AI_SURFACE_PLANNER_MOCK === "1" ? mockPlan({ query, apiId, extracted, templates }) : undefined);
   if (!plan) {
-    const reason = ai.error ?? "A2UI AI surface planner did not return a plan.";
+    const reason = ai.error ?? aiPlannerIncompleteReason;
+    if (ai.internalError) console.warn("[a2ui] AI surface planner hidden failure detail", ai.internalError);
+    const candidateEvaluations: PlannerCandidateEvaluation[] = registeredTemplates.map((template) => ({
+      templateId: template.componentId,
+      decision: "reject",
+      score: 0,
+      schemaFit: 0,
+      queryFit: 0,
+      semanticFit: 0,
+      renderFit: 0,
+      reason: "AI 비교 결과가 완성되지 않아 선택하지 않았습니다.",
+      missingRequiredSlots: [],
+      risks: ["ai_surface_plan_incomplete"],
+    }));
+    const candidates = candidateEvaluations.map(candidateTrace);
+    const validation: ValidationResult = { ok: false, errors: [reason] };
+    const failurePlan: AIPlannerPlan = {
+      confidence: 0,
+      reason,
+      primaryArrayPath: extracted.arrayPath,
+      fieldMappings: [],
+      slotMappings: [],
+      candidateEvaluations,
+    };
+    const trace = buildTrace({ rawData, extracted, model: ai.model, plan: failurePlan, validation });
+    await emitProgress(onProgress, {
+      status: "plan_validation",
+      label: "Validate AI plan",
+      detail: "planner did not return a complete JSON plan",
+      data: {
+        mode: "invalid",
+        templateId: null,
+        reason,
+        strategy: "ai_surface_planner",
+        score: 0,
+        candidateCount: candidates.length,
+        validation,
+        candidates,
+        mapping: null,
+      },
+    });
     return {
       mode: "text_fallback",
       apiId,
       apiTitle: title,
       registryVersion: catalog.version,
-      renderPlan: fallbackRenderPlan({ registryVersion: catalog.version, reason }),
+      renderPlan: {
+        ...fallbackRenderPlan({ registryVersion: catalog.version, reason, candidates }),
+        aiSurfacePlanTrace: trace,
+      },
       reason,
+      score: 0,
       strategy: "ai_surface_planner",
+      candidates,
+      trace,
       error: reason,
     };
   }
