@@ -14,7 +14,12 @@ import {
 import { asRecord, textFromMessage } from "./a2a-types";
 import { message, newA2AId, surfaceArtifact, task, traceArtifact } from "./a2ui-artifacts";
 import { setTask } from "./a2ui-task-store";
-import { type A2UISurfacePlanResult, type A2UISurfacePlanTrace, planA2UISurfaceWithAI } from "@/server/a2ui-admin/a2ui-ai-surface-planner";
+import {
+  type A2UISurfacePlanProgress,
+  type A2UISurfacePlanResult,
+  type A2UISurfacePlanTrace,
+  planA2UISurfaceWithAI,
+} from "@/server/a2ui-admin/a2ui-ai-surface-planner";
 import {
   type EquipmentApiId,
   chooseEquipmentApiForPrompt,
@@ -24,7 +29,61 @@ import {
 export type A2AStreamEvent =
   | { task: A2ATask }
   | { statusUpdate: { taskId: string; status: A2ATask["status"] } }
-  | { artifactUpdate: { taskId: string; artifact: NonNullable<A2ATask["artifacts"]>[number] } };
+  | { artifactUpdate: { taskId: string; artifact: NonNullable<A2ATask["artifacts"]>[number] } }
+  | { progressUpdate: A2AProgressUpdate };
+
+export type A2AProgressUpdate = {
+  taskId: string;
+  status: A2UISurfacePlanProgress["status"];
+  label: string;
+  detail?: string;
+  emittedAt: string;
+  data?: Record<string, unknown>;
+};
+
+type RenderTaskProgressHandler = (progress: A2UISurfacePlanProgress) => void | Promise<void>;
+
+function createAsyncQueue<T>() {
+  const values: T[] = [];
+  let closed = false;
+  let resolve: ((result: IteratorResult<T>) => void) | undefined;
+
+  return {
+    push(value: T) {
+      if (closed) return;
+      if (resolve) {
+        const pending = resolve;
+        resolve = undefined;
+        pending({ value, done: false });
+        return;
+      }
+      values.push(value);
+    },
+    close() {
+      closed = true;
+      if (resolve) {
+        const pending = resolve;
+        resolve = undefined;
+        pending({ value: undefined as T, done: true });
+      }
+    },
+    async *iterate() {
+      while (true) {
+        const value = values.shift();
+        if (value) {
+          yield value;
+          continue;
+        }
+        if (closed) return;
+        const result = await new Promise<IteratorResult<T>>((next) => {
+          resolve = next;
+        });
+        if (result.done) return;
+        yield result.value;
+      }
+    },
+  };
+}
 
 function readApiId(value: unknown): EquipmentApiId | undefined {
   return isEquipmentApiId(value) ? value : undefined;
@@ -279,7 +338,7 @@ function failedTask(
   });
 }
 
-async function renderTask(body: A2ASendMessageRequest, taskId?: string): Promise<A2ATask> {
+async function renderTask(body: A2ASendMessageRequest, taskId?: string, onProgress?: RenderTaskProgressHandler): Promise<A2ATask> {
   const renderData = readRenderData(body);
   const query = renderData?.query?.trim() || textFromMessage(body.message).trim();
   const contextId = body.message?.contextId;
@@ -305,11 +364,12 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string): Promise
   let dataIntegrity = buildDataIntegrity(rawData, sourceTool);
 
   try {
-    const plan = await planA2UISurfaceWithAI({
-      query,
-      apiId,
-      rawData,
-    });
+	    const plan = await planA2UISurfaceWithAI({
+	      query,
+	      apiId,
+	      rawData,
+	      onProgress,
+	    });
     sourceTool = withPlanningMetadata(sourceTool, apiId, plan.trace);
     dataIntegrity = buildDataIntegrity(rawData, sourceTool);
 
@@ -425,7 +485,7 @@ export async function handleA2AMessageSend(body: A2ASendMessageRequest): Promise
   return { task: completed };
 }
 
-export async function buildA2AStreamEvents(body: A2ASendMessageRequest): Promise<A2AStreamEvent[]> {
+export async function* buildA2AStreamEvents(body: A2ASendMessageRequest): AsyncGenerator<A2AStreamEvent> {
   const taskId = newA2AId("task");
   const contextId = body.message?.contextId;
   const working = task({
@@ -436,31 +496,58 @@ export async function buildA2AStreamEvents(body: A2ASendMessageRequest): Promise
   });
   setTask(working);
 
-  const completed = actionTask(body, taskId) ?? (await renderTask(body, taskId));
-  setTask(completed);
-
-  const events: A2AStreamEvent[] = [
-    { task: working },
-    {
-      statusUpdate: {
-        taskId,
-        status: {
-          state: "TASK_STATE_WORKING",
-          message: message("ROLE_AGENT", "데이터 스키마를 분석하고 있습니다.", contextId),
-        },
-      },
-    },
-  ];
-
-  for (const artifact of completed.artifacts ?? []) {
-    events.push({ artifactUpdate: { taskId, artifact } });
-  }
-
-  events.push({
+  yield { task: working };
+  yield {
     statusUpdate: {
       taskId,
-      status: completed.status,
+      status: {
+        state: "TASK_STATE_WORKING",
+        message: message("ROLE_AGENT", "데이터 스키마를 분석하고 있습니다.", contextId),
+      },
     },
-  });
-  return events;
+  };
+
+  const action = actionTask(body, taskId);
+  if (action) {
+    setTask(action);
+    yield { task: action };
+    yield { statusUpdate: { taskId, status: action.status } };
+    return;
+  }
+
+  const queue = createAsyncQueue<A2AStreamEvent>();
+  const render = (async () => {
+    const completed = await renderTask(body, taskId, async (progress) => {
+      const progressUpdate: A2AProgressUpdate = {
+        taskId,
+        status: progress.status,
+        label: progress.label,
+        detail: progress.detail,
+        emittedAt: new Date().toISOString(),
+        data: progress.data,
+      };
+      queue.push({ progressUpdate });
+      queue.push({
+        statusUpdate: {
+          taskId,
+          status: {
+            state: "TASK_STATE_WORKING",
+            message: message("ROLE_AGENT", progress.detail || progress.label, contextId),
+          },
+        },
+      });
+    });
+    setTask(completed);
+    for (const artifact of completed.artifacts ?? []) {
+      queue.push({ artifactUpdate: { taskId, artifact } });
+    }
+    queue.push({ statusUpdate: { taskId, status: completed.status } });
+    queue.push({ task: completed });
+    queue.close();
+  })();
+
+  for await (const event of queue.iterate()) {
+    yield event;
+  }
+  await render;
 }

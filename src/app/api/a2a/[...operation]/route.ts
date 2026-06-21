@@ -43,12 +43,12 @@ function sse(data: unknown) {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
 
-function stream(events: unknown[]) {
+function stream(events: Iterable<unknown> | AsyncIterable<unknown>) {
   const encoder = new TextEncoder();
   return new Response(
     new ReadableStream<Uint8Array>({
-      start(controller) {
-        for (const event of events) {
+      async start(controller) {
+        for await (const event of events) {
           controller.enqueue(encoder.encode(sse(event)));
         }
         controller.close();
@@ -115,7 +115,7 @@ export async function POST(request: Request, ctx: A2ARouteContext) {
   }
 
   if (op === "message:stream") {
-    return stream(await buildA2AStreamEvents(body as A2ASendMessageRequest));
+    return stream(buildA2AStreamEvents(body as A2ASendMessageRequest));
   }
 
   return problem(404, `Unsupported A2A POST operation: ${op || "(empty)"}`, {

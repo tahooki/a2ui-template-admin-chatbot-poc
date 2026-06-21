@@ -181,17 +181,39 @@ export type A2UIRenderPlan = {
     reason?: string;
     primaryArrayPath?: string;
     selectedTemplateId?: string;
-    fieldMappings?: unknown[];
-    slotMappings?: unknown[];
+    fieldMappings?: Array<{
+      targetField?: string;
+      sourcePath?: string;
+      transform?: "copy" | "boolean_code" | "number_to_boolean" | "default_false";
+      trueValues?: unknown[];
+      falseValues?: unknown[];
+      defaultValue?: unknown;
+      reason?: string;
+    }>;
+    slotMappings?: Array<{
+      templateId?: string;
+      slot?: string;
+      sourcePath?: string;
+      targetField?: string;
+      transform?: "copy" | "boolean_code" | "number_to_boolean" | "default_false";
+      reason?: string;
+    }>;
     candidateEvaluations?: unknown[];
     validation?: {
       ok: boolean;
       errors: string[];
     };
+    sourceShape?: string;
+    sourceArrayPath?: string;
     sourceFieldPaths?: string[];
     sourceSampleRows?: unknown[];
     sourceRowCount?: number;
     renderRowCount?: number;
+    sourceDataHash?: string;
+    renderDataHash?: string;
+    renderDataByteLength?: number;
+    beforeRows?: Record<string, unknown>[];
+    afterRows?: Record<string, unknown>[];
   };
 };
 

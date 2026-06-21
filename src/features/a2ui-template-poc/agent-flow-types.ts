@@ -31,6 +31,8 @@ export type AgentFlowSeverity = "info" | "success" | "warning" | "error";
 
 export type AgentFlowEmitter = "chat" | "next" | "main-agent" | "a2ui-agent";
 
+export type AgentFlowEvidenceKind = "observed" | "inferred_transport" | "trace_derived";
+
 export type AgentFlowEvent = {
   id: string;
   turnId: string;
@@ -44,6 +46,7 @@ export type AgentFlowEvent = {
   branch?: AgentFlowBranch;
   severity?: AgentFlowSeverity;
   physicalEmitter?: AgentFlowEmitter;
+  evidenceKind?: AgentFlowEvidenceKind;
   data?: Record<string, unknown>;
 };
 

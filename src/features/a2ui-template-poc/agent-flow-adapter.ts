@@ -37,6 +37,7 @@ function newFlowEvent(
   event: Omit<AgentFlowEvent, "id" | "turnId" | "at" | "data"> & { data?: Record<string, unknown> },
 ): AgentFlowEvent {
   return {
+    evidenceKind: "observed",
     ...event,
     id: `${source.turnId}-${source.event}-${index}-${source.at}`,
     turnId: source.turnId,
@@ -46,6 +47,22 @@ function newFlowEvent(
 
 function phaseSeen(events: AgentFlowEvent[], phase: AgentFlowPhase) {
   return events.some((event) => event.phase === phase);
+}
+
+function eventSeen(events: AgentFlowEvent[], eventName: string) {
+  return events.some((event) => event.event === eventName);
+}
+
+function isLiveA2UIProgress(source: ChatFlowSourceEvent) {
+  return source.data.liveA2UIProgress === true;
+}
+
+function a2uiEvidenceKind(source: ChatFlowSourceEvent) {
+  return isLiveA2UIProgress(source) ? "observed" : "trace_derived";
+}
+
+function a2uiEmitter(source: ChatFlowSourceEvent) {
+  return isLiveA2UIProgress(source) ? "a2ui-agent" : "main-agent";
 }
 
 export function summarizeFlowState(events: AgentFlowEvent[]): AgentFlowAdapterState {
@@ -149,6 +166,25 @@ function renderToolDetail(source: ChatFlowSourceEvent) {
   ]
     .filter(Boolean)
     .join(" | ");
+}
+
+function mappingCount(source: ChatFlowSourceEvent) {
+  const mapping = recordValue(source.data.mapping);
+  const mappings = Array.isArray(mapping?.mappings) ? mapping.mappings.length : undefined;
+  return typeof mappings === "number" ? mappings : undefined;
+}
+
+function traceDerivedData(source: ChatFlowSourceEvent, extra?: Record<string, unknown>) {
+  return {
+    ...source.data,
+    traceSource: "returned A2UI artifact metadata",
+    ...extra,
+  };
+}
+
+function a2uiStepData(source: ChatFlowSourceEvent, extra?: Record<string, unknown>) {
+  if (isLiveA2UIProgress(source)) return { ...source.data, ...extra };
+  return traceDerivedData(source, extra);
 }
 
 function surfaceDetail(source: ChatFlowSourceEvent) {
@@ -359,11 +395,25 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "registry_loaded",
         from: "main_agent",
         to: "a2ui_render_tool",
-        label: "Run a2ui_render tool",
+        label: "Invoke a2ui_render boundary",
         detail: renderToolDetail(source) || label,
         branch: "data",
         severity: "info",
         physicalEmitter: "main-agent",
+        evidenceKind: "observed",
+        data: source.data,
+      }),
+      newFlowEvent(source, 1, {
+        event: "transport:a2a_send",
+        phase: "registry_loaded",
+        from: "a2ui_render_tool",
+        to: "a2ui",
+        label: "POST /api/a2a/message:send",
+        detail: "raw business result render request",
+        branch: "data",
+        severity: "info",
+        physicalEmitter: "main-agent",
+        evidenceKind: "inferred_transport",
         data: source.data,
       }),
     ];
@@ -373,15 +423,29 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
     const detail = [matcherDetail(source), renderToolDetail(source)].filter(Boolean).join(" | ");
     return [
       newFlowEvent(source, 0, {
-        event: "state:a2ui_tool_result",
+        event: "transport:a2a_result",
         phase: "matcher",
         from: "a2ui",
-        to: "main_agent",
-        label: "a2ui_render result",
+        to: "a2ui_render_tool",
+        label: "Return trace + surface artifact",
         detail,
         branch: "data",
         severity: "success",
         physicalEmitter: "main-agent",
+        evidenceKind: "inferred_transport",
+        data: source.data,
+      }),
+      newFlowEvent(source, 1, {
+        event: "state:a2ui_tool_result",
+        phase: "matcher",
+        from: "a2ui_render_tool",
+        to: "main_agent",
+        label: "Return A2UIRenderToolResult",
+        detail,
+        branch: "data",
+        severity: "success",
+        physicalEmitter: "main-agent",
+        evidenceKind: "observed",
         data: source.data,
       }),
     ];
@@ -404,7 +468,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
     ];
   }
 
-  if (status === "profile") {
+	  if (status === "profile") {
     const events: AgentFlowEvent[] = [];
     if (!phaseSeen(existingEvents, "data_loaded")) {
       events.push(
@@ -426,16 +490,17 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
       newFlowEvent(source, events.length, {
         event: "state:profile",
         phase: "profile",
-        from: "a2ui_render_tool",
+        from: "a2ui",
         to: "a2ui",
-        label: "Build profile and derived schema",
-        detail: profileDetail(source),
-        branch: "data",
-        severity: "success",
-        physicalEmitter: "main-agent",
-        data: source.data,
-      }),
-    );
+	        label: "Build A2UI source preview",
+	        detail: profileDetail(source),
+	        branch: "data",
+	        severity: "success",
+	        physicalEmitter: a2uiEmitter(source),
+	        evidenceKind: a2uiEvidenceKind(source),
+	        data: a2uiStepData(source, { traceStep: "source_preview" }),
+	      }),
+	    );
     return events;
   }
 
@@ -446,15 +511,16 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "registry_loaded",
         from: "a2ui",
         to: "registry",
-        label: "Load template contracts",
-        detail: `transport=${status}${label ? ` | ${label}` : ""}`,
-        branch: "data",
-        severity: "info",
-        physicalEmitter: "main-agent",
-        data: source.data,
-      }),
-    ];
-  }
+	        label: "Load template contracts",
+	        detail: isLiveA2UIProgress(source) ? (shortText(source.data.detail) ?? label) : `derived after A2A result | transport=${status}${label ? ` | ${label}` : ""}`,
+	        branch: "data",
+	        severity: "info",
+	        physicalEmitter: a2uiEmitter(source),
+	        evidenceKind: a2uiEvidenceKind(source),
+	        data: a2uiStepData(source, { traceStep: "template_contract_request" }),
+	      }),
+	    ];
+	  }
 
   if (status === "registry_loaded") {
     return [
@@ -464,28 +530,104 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         from: "registry",
         to: "a2ui",
         label: "Template contracts loaded",
-        detail: source.data.templateCount ? `templates=${String(source.data.templateCount)}` : undefined,
-        branch: "data",
-        severity: "success",
-        physicalEmitter: "main-agent",
-        data: source.data,
-      }),
-    ];
-  }
+	        detail: source.data.templateCount ? `templates=${String(source.data.templateCount)}` : undefined,
+	        branch: "data",
+	        severity: "success",
+	        physicalEmitter: a2uiEmitter(source),
+	        evidenceKind: a2uiEvidenceKind(source),
+	        data: a2uiStepData(source, { traceStep: "template_contracts_loaded" }),
+	      }),
+	    ];
+	  }
 
-  if (status === "matcher") {
-    return [
+	  if (status === "matcher") {
+    if (!isLiveA2UIProgress(source) && eventSeen(existingEvents, "state:matcher")) return [];
+	    const events = [
       newFlowEvent(source, 0, {
         event: "state:matcher",
         phase: "matcher",
         from: "a2ui",
         to: "a2ui",
-        label: "Match template and fields",
-        detail: matcherDetail(source),
+        label: "AI Surface Planner",
+	        detail: matcherDetail(source),
+	        branch: "data",
+	        severity: "info",
+	        physicalEmitter: a2uiEmitter(source),
+	        evidenceKind: a2uiEvidenceKind(source),
+	        data: a2uiStepData(source, { traceStep: "ai_surface_plan" }),
+	      }),
+	    ];
+	    const mode = textValue(source.data.mode);
+	    if (mode === "render_surface" && !isLiveA2UIProgress(source)) {
+	      if (!eventSeen(existingEvents, "state:plan_validation")) {
+	        events.push(newFlowEvent(source, events.length, {
+	          event: "state:plan_validation",
+	          phase: "matcher",
+	          from: "a2ui",
+          to: "a2ui",
+          label: "Validate AI plan",
+          detail: "validator accepted returned plan",
+          branch: "data",
+	          severity: "success",
+	          physicalEmitter: "main-agent",
+	          evidenceKind: "trace_derived",
+	          data: traceDerivedData(source, { traceStep: "plan_validation" }),
+	        }));
+	      }
+	      if (!eventSeen(existingEvents, "state:mapping_applied")) {
+	        events.push(newFlowEvent(source, events.length, {
+	          event: "state:mapping_applied",
+	          phase: "matcher",
+	          from: "a2ui",
+          to: "a2ui",
+          label: "Apply field/slot mapping",
+          detail: typeof mappingCount(source) === "number" ? `mappings=${mappingCount(source)}` : matcherDetail(source),
+          branch: "data",
+	          severity: "success",
+	          physicalEmitter: "main-agent",
+	          evidenceKind: "trace_derived",
+	          data: traceDerivedData(source, { traceStep: "mapping_applied" }),
+	        }));
+	      }
+	    }
+	    return events;
+	  }
+
+  if (status === "plan_validation") {
+    const validation = recordValue(source.data.validation);
+    const ok = validation?.ok === true;
+    return [
+      newFlowEvent(source, 0, {
+        event: "state:plan_validation",
+        phase: "matcher",
+        from: "a2ui",
+        to: "a2ui",
+        label: "Validate AI plan",
+        detail: shortText(source.data.detail) ?? (ok ? "validator accepted returned plan" : "validator rejected returned plan"),
         branch: "data",
-        severity: "info",
-        physicalEmitter: "main-agent",
-        data: source.data,
+        severity: ok ? "success" : "warning",
+        physicalEmitter: a2uiEmitter(source),
+        evidenceKind: a2uiEvidenceKind(source),
+        data: a2uiStepData(source, { traceStep: "plan_validation" }),
+      }),
+    ];
+  }
+
+  if (status === "mapping_applied") {
+    const count = numberValue(source.data.fieldMappingCount) ?? mappingCount(source);
+    return [
+      newFlowEvent(source, 0, {
+        event: "state:mapping_applied",
+        phase: "matcher",
+        from: "a2ui",
+        to: "a2ui",
+        label: "Apply field/slot mapping",
+        detail: typeof count === "number" ? `mappings=${count}` : shortText(source.data.detail),
+        branch: "data",
+        severity: "success",
+        physicalEmitter: a2uiEmitter(source),
+        evidenceKind: a2uiEvidenceKind(source),
+        data: a2uiStepData(source, { traceStep: "mapping_applied" }),
       }),
     ];
   }

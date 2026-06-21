@@ -129,9 +129,18 @@ export type A2UISurfacePlanResult =
       score?: number;
       strategy: "ai_surface_planner";
       candidates?: A2UICandidateTrace[];
-      trace?: A2UISurfacePlanTrace;
-      error?: string;
-    };
+	      trace?: A2UISurfacePlanTrace;
+	      error?: string;
+	    };
+
+export type A2UISurfacePlanProgress = {
+  status: "profile" | "a2a" | "registry_loaded" | "matcher" | "plan_validation" | "mapping_applied";
+  label: string;
+  detail?: string;
+  data?: Record<string, unknown>;
+};
+
+export type A2UISurfacePlanProgressHandler = (progress: A2UISurfacePlanProgress) => void | Promise<void>;
 
 const promptVersion = "2026-06-21.a2ui-surface-plan.v1" as const;
 const allowedTransforms: PlannerTransform[] = ["copy", "boolean_code", "number_to_boolean", "default_false"];
@@ -418,6 +427,10 @@ function apiTitle(apiId: EquipmentApiId) {
   return "장비 상태 API";
 }
 
+async function emitProgress(onProgress: A2UISurfacePlanProgressHandler | undefined, progress: A2UISurfacePlanProgress) {
+  if (onProgress) await onProgress(progress);
+}
+
 function templatePromptSummary(template: A2UITemplateRegistration) {
   const normalized = normalizeTemplateInputSchema(template);
   return {
@@ -516,8 +529,16 @@ function buildPrompt({
           preferSourceKeys: ["reserved_flag", "reserveFlag", "isReserved"],
         },
       ],
-      metricRule: "For metric source fields, use targetField equal to the concrete source key, such as telemetry_000. Do not use wildcard target fields. For repeated metric slots, return at most 4 concrete metric mappings.",
-      statusRule: "Alarm count fields such as alarmTotalCnt, alarm_count, or alrmCnt should usually map to canonical hasAlarm with number_to_boolean.",
+      templateSelectionRules: [
+        "equipment.telemetryStatusTable is for wide telemetry/status APIs with at least 3 concrete telemetry_* or metric_* numeric source fields.",
+        "Many rows alone does not mean telemetry. If the source has many rows but does not have at least 3 telemetry_* or metric_* source fields, prefer equipment.commonStatusTable for status-list requests.",
+        "Alarm/count fields such as alarmTotalCnt, alarm_count, alrmCnt, count, or cnt are status evidence for hasAlarm unless there are separate telemetry_* or metric_* fields. Do not use alarm count alone to justify telemetryStatusTable.",
+        "For apiId=equipment-status-large-rows, prefer equipment.commonStatusTable unless the source also has at least 3 concrete telemetry_* or metric_* fields.",
+        "For apiId=equipment-status-wide-columns, prefer equipment.telemetryStatusTable when the telemetry_* columns can fill metric slots.",
+      ],
+      metricRule:
+        "For metric source fields, use targetField equal to the concrete source key, such as telemetry_000. Metrics slots must be backed by telemetry_* or metric_* numeric source fields. Do not map canonical boolean/status targets such as hasAlarm, isOnline, isRunning, needsInspection, or isReserved to items[].metrics. Do not use wildcard target fields. For repeated metric slots, return at most 4 concrete metric mappings.",
+      statusRule: "Alarm count fields such as alarmTotalCnt, alarm_count, or alrmCnt should map to canonical hasAlarm with number_to_boolean, not to metric slots.",
       operationRunningRule:
         "If both an operation/online source field and a running source field exist, map both separately. Do not map operation_yn, opYn, or operStateCd to isRunning when running_code, runYn, or runStateYn exists; map operation fields to isOnline and running fields to isRunning.",
       renderRule: "A2UI will apply fieldMappings to create payload.items, then bind selected template slots through slotMappings.",
@@ -567,7 +588,10 @@ function buildPrompt({
   };
 }
 
-async function requestAIPlan(prompt: ReturnType<typeof buildPrompt>): Promise<{ plan?: AIPlannerPlan; model?: string; error?: string }> {
+async function requestAIPlan(
+  prompt: ReturnType<typeof buildPrompt>,
+  correction?: { previousPlan: AIPlannerPlan; validationErrors: string[] },
+): Promise<{ plan?: AIPlannerPlan; model?: string; error?: string }> {
   if (process.env.A2UI_AI_SURFACE_PLANNER_MOCK === "1") return { model: "mock-a2ui-surface-planner" };
 
   const config = openAIConfig();
@@ -575,15 +599,28 @@ async function requestAIPlan(prompt: ReturnType<typeof buildPrompt>): Promise<{ 
     return { model: config.model, error: "A2UI AI surface planning requires OPENAI_API_KEY." };
   }
 
+  const userPayload = correction
+    ? {
+        ...prompt,
+        correctionRequest: {
+          instruction:
+            "The previous plan failed A2UI validation. Re-evaluate all templates from the raw source schema and return a corrected plan. Do not patch only the invalid field; choose another template if the selected template cannot satisfy required slots.",
+          validationErrors: correction.validationErrors,
+          previousInvalidPlan: correction.previousPlan,
+        },
+      }
+    : prompt;
+
   const messages = [
     {
       role: "system",
       content:
-        "You are the A2UI server-side surface planner. You must do two jobs: map raw business API fields to A2UI display fields and template slots, then compare all registered A2UI template candidates and choose the best one. Return JSON only in the required schema. Do not return a legacy mappings object. Do not invent source fields. Use only source paths listed in source.fieldPaths. Use transforms only from allowedTransforms. Prefer the template whose inputSchema can be filled with high confidence and whose selectionGuide matches the user query and source data semantics. If both online/operation fields and running fields exist, map operation/online fields to isOnline and running fields to isRunning. If two templates are similar, explain the tie-breaker using required slots, metric/status/image evidence, row count, and user query. candidateEvaluations must include every registered template exactly once: one decision=select and all others decision=reject. For every rejected candidate, include the concrete reason. The final selected template must still satisfy required slots. For repeated metric/status slots, return one mapping per concrete source path, with at most 4 metric mappings. Do not use wildcard paths.",
+        "You are the A2UI server-side surface planner. You must do two jobs: map raw business API fields to A2UI display fields and template slots, then compare all registered A2UI template candidates and choose the best one. Return JSON only in the required schema. Do not return a legacy mappings object. Do not invent source fields. Use only source paths listed in source.fieldPaths. Use transforms only from allowedTransforms. Prefer the template whose inputSchema can be filled with high confidence and whose selectionGuide matches the user query and source data semantics. If both online/operation fields and running fields exist, map operation/online fields to isOnline and running fields to isRunning. If two templates are similar, explain the tie-breaker using required slots, metric/status/image evidence, row count, and user query. candidateEvaluations must include every registered template exactly once: one decision=select and all others decision=reject. For every rejected candidate, include the concrete reason. The final selected template must still satisfy required slots. For repeated metric/status slots, return one mapping per concrete source path, with at most 4 metric mappings. Do not use wildcard paths. " +
+        "Telemetry templates require real telemetry or metric columns: select equipment.telemetryStatusTable only when at least 3 concrete telemetry_* or metric_* numeric source fields can fill metric slots. Many rows alone is not telemetry. Alarm/count fields such as alarm_count, alarmTotalCnt, alrmCnt, count, or cnt should normally become hasAlarm status evidence, not items[].metrics.",
     },
     {
       role: "user",
-      content: compactJson(prompt),
+      content: compactJson(userPayload),
     },
   ];
 
@@ -798,6 +835,11 @@ function isAllowedTargetField(mappingItem: PlannerFieldMapping, sourceValue: unk
   return Boolean(key && mappingItem.targetField === key && rolesForKey(key, sourceFieldType).includes("metric"));
 }
 
+function isConcreteTelemetryMetricPath(path?: string) {
+  const key = sourceKey(path);
+  return Boolean(key && /^(telemetry_|metric_)/i.test(key));
+}
+
 function validatePlan({
   plan,
   templates,
@@ -880,6 +922,13 @@ function validatePlan({
       const count = counts.get(slot.slot) ?? 0;
       if (count < (slot.minCount ?? 1)) {
         errors.push(`Missing required slot ${slot.slot}: ${count}/${slot.minCount ?? 1}`);
+      }
+    }
+
+    if (selectedTemplate.componentId === "equipment.telemetryStatusTable") {
+      const telemetryMetricCount = slotMappings.filter((item) => item.slot === "items[].metrics" && isConcreteTelemetryMetricPath(item.sourcePath)).length;
+      if (telemetryMetricCount < 3) {
+        errors.push(`Telemetry template requires at least 3 concrete telemetry_* or metric_* metric slot mappings, got ${telemetryMetricCount}.`);
       }
     }
   }
@@ -1102,16 +1151,17 @@ export async function planA2UISurfaceWithAI({
   query,
   apiId,
   rawData,
+  onProgress,
 }: {
   query: string;
   apiId: EquipmentApiId;
   rawData: unknown;
+  onProgress?: A2UISurfacePlanProgressHandler;
 }): Promise<A2UISurfacePlanResult> {
-  const catalog = await readTemplateCatalog();
-  const templates = catalog.templates.map(normalizeTemplateInputSchema);
   const title = apiTitle(apiId);
   const extracted = extractRows(rawData);
   if (!extracted) {
+    const catalog = await readTemplateCatalog();
     const reason = "A2UI surface planner requires raw business API rows.";
     return {
       mode: "text_fallback",
@@ -1125,9 +1175,53 @@ export async function planA2UISurfaceWithAI({
     };
   }
 
+  await emitProgress(onProgress, {
+    status: "profile",
+    label: "Build A2UI source preview",
+    detail: `rows=${extracted.rowCount}`,
+    data: {
+      rowCount: extracted.rowCount,
+      previewRowCount: extracted.rowCount,
+      previewSampleSize: extracted.rows.slice(0, 5).length,
+      sourceShape: dataShape(rawData),
+      sourceArrayPath: extracted.arrayPath,
+      sourceFieldCount: fieldPaths(extracted.rows, extracted.arrayPath ?? "items").length,
+    },
+  });
+
+  await emitProgress(onProgress, {
+    status: "a2a",
+    label: "A2UI Registry",
+    detail: "Load template contracts",
+  });
+
+  const catalog = await readTemplateCatalog();
+  const templates = catalog.templates.map(normalizeTemplateInputSchema);
+
+  await emitProgress(onProgress, {
+    status: "registry_loaded",
+    label: "A2UI Registry",
+    detail: `templates=${templates.filter((template) => template.status === "registered").length}`,
+    data: {
+      registryVersion: catalog.version,
+      templateCount: templates.filter((template) => template.status === "registered").length,
+    },
+  });
+
   const prompt = buildPrompt({ query, apiId, rawData, extracted, templates });
-  const ai = await requestAIPlan(prompt);
-  const plan = ai.plan ?? (process.env.A2UI_AI_SURFACE_PLANNER_MOCK === "1" ? mockPlan({ query, apiId, extracted, templates }) : undefined);
+  await emitProgress(onProgress, {
+    status: "matcher",
+    label: "AI Surface Planner",
+    detail: `candidates=${prompt.allowedTemplateIds.length}`,
+    data: {
+      mode: "planning",
+      strategy: "ai_surface_planner",
+      candidateCount: prompt.allowedTemplateIds.length,
+    },
+  });
+
+  let ai = await requestAIPlan(prompt);
+  let plan = ai.plan ?? (process.env.A2UI_AI_SURFACE_PLANNER_MOCK === "1" ? mockPlan({ query, apiId, extracted, templates }) : undefined);
   if (!plan) {
     const reason = ai.error ?? "A2UI AI surface planner did not return a plan.";
     return {
@@ -1142,8 +1236,57 @@ export async function planA2UISurfaceWithAI({
     };
   }
 
-  const validation = validatePlan({ plan, templates, extracted });
   const candidates = (plan.candidateEvaluations ?? []).map(candidateTrace);
+  await emitProgress(onProgress, {
+    status: "matcher",
+    label: "AI Surface Planner",
+    detail: [plan.selectedTemplateId ? `template=${plan.selectedTemplateId}` : undefined, typeof plan.confidence === "number" ? `score=${plan.confidence.toFixed(2)}` : undefined]
+      .filter(Boolean)
+      .join(" | "),
+    data: {
+      mode: "plan_ready",
+      templateId: plan.selectedTemplateId,
+      strategy: "ai_surface_planner",
+      score: plan.confidence,
+      candidateCount: candidates.length,
+      candidates,
+    },
+  });
+
+  let validation = validatePlan({ plan, templates, extracted });
+  if (!validation.ok && process.env.A2UI_AI_SURFACE_PLANNER_MOCK !== "1") {
+    const retry = await requestAIPlan(prompt, { previousPlan: plan, validationErrors: validation.errors });
+    if (retry.plan) {
+      ai = retry;
+      plan = retry.plan;
+      validation = validatePlan({ plan, templates, extracted });
+    }
+  }
+
+  const validatedCandidates = (plan.candidateEvaluations ?? []).map(candidateTrace);
+  await emitProgress(onProgress, {
+    status: "plan_validation",
+    label: "Validate AI plan",
+    detail: validation.ok ? "validator accepted returned plan" : `validator rejected plan: ${validation.errors.length} errors`,
+    data: {
+      mode: validation.ok ? "validated" : "invalid",
+      templateId: plan.selectedTemplateId,
+      strategy: "ai_surface_planner",
+      score: plan.confidence,
+      candidateCount: validatedCandidates.length,
+      validation,
+      candidates: validatedCandidates,
+      mapping: plan.selectedTemplateId
+        ? {
+            templateId: plan.selectedTemplateId,
+            confidence: plan.confidence ?? 0,
+            reason: plan.reason ?? "AI surface planner returned a plan.",
+            mappings: plan.slotMappings ?? [],
+            missingSlots: [],
+          }
+        : undefined,
+    },
+  });
   if (!validation.ok) {
     const reason = `AI surface plan failed validation: ${validation.errors.join("; ")}`;
     const trace = buildTrace({ rawData, extracted, model: ai.model, plan, validation });
@@ -1153,13 +1296,13 @@ export async function planA2UISurfaceWithAI({
       apiTitle: title,
       registryVersion: catalog.version,
       renderPlan: {
-        ...fallbackRenderPlan({ registryVersion: catalog.version, reason, candidates }),
+	        ...fallbackRenderPlan({ registryVersion: catalog.version, reason, candidates: validatedCandidates }),
         aiSurfacePlanTrace: trace,
       },
       reason,
       score: plan.confidence,
       strategy: "ai_surface_planner",
-      candidates,
+	      candidates: validatedCandidates,
       trace,
       error: reason,
     };
@@ -1173,16 +1316,38 @@ export async function planA2UISurfaceWithAI({
       apiId,
       apiTitle: title,
       registryVersion: catalog.version,
-      renderPlan: fallbackRenderPlan({ registryVersion: catalog.version, reason, candidates }),
+	      renderPlan: fallbackRenderPlan({ registryVersion: catalog.version, reason, candidates: validatedCandidates }),
       reason,
       score: plan.confidence,
       strategy: "ai_surface_planner",
-      candidates,
+	      candidates: validatedCandidates,
       error: reason,
     };
   }
 
   const data = applyPlan(plan, extracted);
+  await emitProgress(onProgress, {
+    status: "mapping_applied",
+    label: "Apply field/slot mapping",
+    detail: `mappings=${plan.fieldMappings?.length ?? 0}`,
+    data: {
+      mode: "render_surface",
+      templateId: plan.selectedTemplateId,
+      strategy: "ai_surface_planner",
+      score: plan.confidence,
+      candidateCount: validatedCandidates.length,
+      fieldMappingCount: plan.fieldMappings?.length ?? 0,
+      slotMappingCount: plan.slotMappings?.length ?? 0,
+      renderRowCount: data.total,
+      mapping: {
+        templateId: plan.selectedTemplateId,
+        confidence: plan.confidence ?? 0,
+        reason: plan.reason ?? "AI surface planner returned a plan.",
+        mappings: plan.slotMappings ?? [],
+        missingSlots: [],
+      },
+    },
+  });
   const profile = buildA2UIDataProfile(data);
   const sampleDataPreview = buildSampleDataPreview(data, { sourceId: apiId, sourceKind: "api_response" });
   const derivedSchema = buildDerivedSchema(data, { sourceId: apiId, sourceKind: "api_response", sampleDataPreview });
@@ -1198,7 +1363,7 @@ export async function planA2UISurfaceWithAI({
     registryVersion: catalog.version,
     maxItems: template.surfaceConfig.maxItems,
     strategy: "ai_surface_planner",
-    candidates,
+	    candidates: validatedCandidates,
     mapping,
     aiSurfacePlanTrace: trace,
   };
@@ -1218,7 +1383,7 @@ export async function planA2UISurfaceWithAI({
     score: renderPlan.score,
     strategy: "ai_surface_planner",
     mapping,
-    candidates,
+	    candidates: validatedCandidates,
     trace,
   };
 }

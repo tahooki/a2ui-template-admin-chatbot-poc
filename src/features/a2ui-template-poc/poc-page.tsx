@@ -50,7 +50,7 @@ export function A2UITemplatePocPage() {
 
   function showNextQueuedFlowEventFrame() {
     const firstEvent = displayQueueRef.current.shift();
-    if (!firstEvent) return false;
+    if (!firstEvent) return [];
 
     const frame = [firstEvent];
     while (displayQueueRef.current[0] && shouldDisplayInSameFrame(firstEvent, displayQueueRef.current[0])) {
@@ -61,14 +61,25 @@ export function A2UITemplatePocPage() {
     const nextDisplayedEvents = [...displayedFlowEventsRef.current, ...frame].slice(-maxFlowEvents);
     displayedFlowEventsRef.current = nextDisplayedEvents;
     setFlowEvents(nextDisplayedEvents);
-    return true;
+    return frame;
+  }
+
+  function flushQueuedFlowEventsUntil(predicate: (event: AgentFlowEvent) => boolean) {
+    let flushed = false;
+    while (displayQueueRef.current.length > 0) {
+      const frame = showNextQueuedFlowEventFrame();
+      if (!frame.length) break;
+      flushed = true;
+      if (frame.some(predicate)) break;
+    }
+    return flushed;
   }
 
   function scheduleNextFlowEvent(delayMs = flowEventDisplayIntervalMs) {
     if (displayTimerRef.current) return;
     displayTimerRef.current = window.setTimeout(() => {
       displayTimerRef.current = null;
-      if (showNextQueuedFlowEventFrame()) scheduleNextFlowEvent();
+      if (showNextQueuedFlowEventFrame().length) scheduleNextFlowEvent();
     }, delayMs);
   }
 
@@ -101,18 +112,16 @@ export function A2UITemplatePocPage() {
       return id === event.id ? event : { ...event, id };
     });
 
-    const lastDisplayedEvent = displayedFlowEventsRef.current.at(-1);
-    const shouldFlushMatchedSurface = uniqueNextEvents.some(
-      (event) => event.event === "surface" && event.turnId === lastDisplayedEvent?.turnId && isMatchedSurfaceOutput(event) && isMatchedSurfaceOutput(lastDisplayedEvent),
-    );
+    const shouldFlushToSurface = uniqueNextEvents.some((event) => event.event === "surface" && isMatchedSurfaceOutput(event));
     const isDisplayIdle = displayQueueRef.current.length === 0 && !displayTimerRef.current;
     logicalFlowEventsRef.current = [...current, ...uniqueNextEvents].slice(-maxFlowEvents);
     displayQueueRef.current.push(...uniqueNextEvents);
 
-    if (shouldFlushMatchedSurface) {
+    if (shouldFlushToSurface) {
       clearFlowDisplayTimer();
-      if (showNextQueuedFlowEventFrame()) scheduleNextFlowEvent();
-    } else if (isDisplayIdle && showNextQueuedFlowEventFrame()) {
+      const flushed = flushQueuedFlowEventsUntil((event) => event.event === "surface" && event.turnId === source.turnId);
+      if (flushed && displayQueueRef.current.length > 0) scheduleNextFlowEvent();
+    } else if (isDisplayIdle && showNextQueuedFlowEventFrame().length) {
       scheduleNextFlowEvent();
     } else {
       scheduleNextFlowEvent();

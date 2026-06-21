@@ -1,7 +1,8 @@
 from dataclasses import dataclass
+from collections.abc import AsyncIterator
 from typing import Any
 
-from .a2ui_agent import A2UIResponse, render_or_fallback
+from .a2ui_agent import A2UIResponse, render_or_fallback, render_or_fallback_stream
 from .ai.llm_client import LLMClientError, generate_equipment_fallback_text
 from .equipment_tools import build_data_profile
 from .business_tools import BusinessToolResult
@@ -138,3 +139,67 @@ async def render_business_tool_result(
         fallback_text=fallback_text,
         metadata=metadata,
     )
+
+
+async def render_business_tool_result_stream(
+    query: str,
+    business_tool_result: BusinessToolResult,
+    extra_metadata: dict[str, Any] | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    api_id = business_tool_result.api_id
+    data = business_tool_result.data
+    profile = build_data_profile(data)
+    sample_data_preview = build_sample_data_preview(data, source_id=api_id)
+    derived_schema = build_derived_schema(data, source_id=api_id, sample_data_preview=sample_data_preview)
+    fallback_text = deterministic_fallback_text(api_id, profile, sample_data_preview)
+    tool_metadata = {
+        **(extra_metadata or {}),
+        **business_tool_result.metadata,
+        "sourceToolName": business_tool_result.tool_name,
+        "sourceApiId": api_id,
+        "renderToolName": "a2ui_render",
+        "renderToolCallPolicy": "deterministic_after_business_tool_result",
+    }
+
+    a2ui: A2UIResponse | None = None
+    async for event in render_or_fallback_stream(
+        query,
+        api_id,
+        data,
+        profile,
+        fallback_text,
+        display_data=None,
+        derived_schema=None,
+        sample_data_preview=None,
+        tool_metadata=tool_metadata,
+    ):
+        if event.get("type") == "progress":
+            yield event
+            continue
+        if event.get("type") == "result" and isinstance(event.get("response"), A2UIResponse):
+            a2ui = event["response"]
+
+    if a2ui is None:
+        raise RenderBoundaryError("A2A stream completed without an A2UI result.")
+
+    if a2ui.type != "surface":
+        fallback_text = await _llm_fallback_text_for_preview(query, api_id, sample_data_preview, profile, a2ui.reason)
+        a2ui = a2ui_with_text(a2ui, fallback_text)
+
+    metadata = {
+        **tool_metadata,
+        **profile_trace_metadata(profile, sample_data_preview),
+        "sourceTool": a2ui.source_tool,
+        "dataIntegrity": a2ui.data_integrity,
+    }
+    yield {
+        "type": "result",
+        "result": RenderBoundaryResult(
+            a2ui=a2ui,
+            profile=profile,
+            sample_data_preview=sample_data_preview,
+            derived_schema=derived_schema,
+            fallback_text=fallback_text,
+            metadata=metadata,
+        ),
+    }

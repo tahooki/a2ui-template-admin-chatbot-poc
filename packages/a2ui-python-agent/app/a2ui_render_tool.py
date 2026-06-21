@@ -1,8 +1,9 @@
 from dataclasses import dataclass, field
+from collections.abc import AsyncIterator
 from typing import Any
 
 from .business_tools import BusinessToolResult
-from .render_boundary import RenderBoundaryResult, render_business_tool_result
+from .render_boundary import RenderBoundaryResult, render_business_tool_result, render_business_tool_result_stream
 
 
 @dataclass(frozen=True)
@@ -70,3 +71,28 @@ async def run_a2ui_render_tool(tool_input: A2UIRenderToolInput) -> A2UIRenderToo
             "renderToolCallPolicy": "deterministic_after_business_tool_result",
         },
     )
+
+
+async def stream_a2ui_render_tool(tool_input: A2UIRenderToolInput) -> AsyncIterator[dict[str, Any]]:
+    async for event in render_business_tool_result_stream(
+        query=tool_input.query,
+        business_tool_result=tool_input.business_tool_result,
+        extra_metadata=tool_input.context,
+    ):
+        if event.get("type") == "progress":
+            yield event
+            continue
+        result = event.get("result")
+        if isinstance(result, RenderBoundaryResult):
+            yield {
+                "type": "result",
+                "result": A2UIRenderToolResult(
+                    tool_name="a2ui_render",
+                    boundary=result,
+                    metadata={
+                        **result.metadata,
+                        "renderToolName": "a2ui_render",
+                        "renderToolCallPolicy": "deterministic_after_business_tool_result",
+                    },
+                ),
+            }

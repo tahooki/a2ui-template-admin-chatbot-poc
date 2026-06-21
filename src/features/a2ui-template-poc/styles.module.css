@@ -1408,6 +1408,15 @@
   opacity: 0.14;
 }
 
+.sequenceMessageLineEvidence_inferred_transport {
+  border-top-style: dashed;
+}
+
+.sequenceMessageLineEvidence_trace_derived {
+  border-top-style: dashed;
+  opacity: 0.48;
+}
+
 .sequenceMessageLine_data.sequenceMessageLineComplete,
 .sequenceMessageLine_data.sequenceMessageLineActive {
   color: #2563eb;
@@ -1434,9 +1443,12 @@
   pointer-events: none;
 }
 
-.sequenceStep span,
-.sequenceStep button {
-  display: block;
+.sequenceStep > span,
+.sequenceStep > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   box-sizing: border-box;
   max-width: 208px;
   height: var(--sequence-label-height, 30px);
@@ -1482,63 +1494,93 @@
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
 }
 
-.sequenceStepComplete span,
-.sequenceStepComplete button {
+.sequenceStepComplete > span,
+.sequenceStepComplete > button {
   border-color: #9fb2c5;
   color: var(--a2ui-primary);
   opacity: 0.95;
 }
 
-.sequenceStepPreview span,
-.sequenceStepPreview button {
+.sequenceStepPreview > span,
+.sequenceStepPreview > button {
   opacity: 0.68;
 }
 
-.sequenceStepActive span,
-.sequenceStepActive button {
+.sequenceStepActive > span,
+.sequenceStepActive > button {
   border-color: #79b8aa;
   background: #f0faf8;
   color: var(--a2ui-teal);
   box-shadow: 0 0 0 3px rgba(31, 122, 109, 0.1);
 }
 
-.sequenceStepMuted span,
-.sequenceStepMuted button {
+.sequenceStepMuted > span,
+.sequenceStepMuted > button {
   opacity: 0.28;
 }
 
-.sequenceStep_general span,
-.sequenceStep_general button {
+.sequenceStep_general > span,
+.sequenceStep_general > button {
   border-color: #9dcfc4;
 }
 
-.sequenceStep_data span,
-.sequenceStep_data button {
+.sequenceStep_data > span,
+.sequenceStep_data > button {
   border-color: #bfdbfe;
   background: #eff6ff;
   color: #1d4ed8;
 }
 
-.sequenceStep_matched span,
-.sequenceStep_matched button {
+.sequenceStep_matched > span,
+.sequenceStep_matched > button {
   border-color: #86efac;
   background: #f0fdf4;
   color: #166534;
 }
 
-.sequenceStep_no_template span,
-.sequenceStep_no_template button {
+.sequenceStep_no_template > span,
+.sequenceStep_no_template > button {
   border-color: #f59e0b;
   border-style: dashed;
   background: #fffbeb;
   color: #92400e;
 }
 
-.sequenceStep_error span,
-.sequenceStep_error button {
+.sequenceStep_error > span,
+.sequenceStep_error > button {
   border-color: #f87171;
   background: #fef2f2;
   color: #b91c1c;
+}
+
+.sequenceStepText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sequenceStepEvidence {
+  flex: 0 0 auto;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 1px 4px;
+  font-size: 8px;
+  font-weight: 950;
+  line-height: 1.05;
+  opacity: 0.78;
+  text-transform: uppercase;
+}
+
+.sequenceStepEvidence_inferred_transport > span,
+.sequenceStepEvidence_inferred_transport > button {
+  border-style: dashed;
+}
+
+.sequenceStepEvidence_trace_derived > span,
+.sequenceStepEvidence_trace_derived > button {
+  border-style: dashed;
+  background: #f8fafc;
+  color: #475569;
 }
 
 .sequencePacketRail {

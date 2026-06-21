@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 from uuid import uuid4
 
-from .a2ui_render_tool import A2UIRenderToolInput, A2UIRenderToolResult, run_a2ui_render_tool
+from .a2ui_render_tool import A2UIRenderToolInput, A2UIRenderToolResult, run_a2ui_render_tool, stream_a2ui_render_tool
 from .ai.llm_client import (
     LLMClientError,
     classify_equipment_intent_with_llm,
@@ -96,6 +96,23 @@ def render_tool_event_payload(a2ui_tool_result: A2UIRenderToolResult) -> dict[st
     }
 
 
+def a2ui_progress_event_payload(progress: dict[str, Any]) -> dict[str, Any]:
+    data = progress.get("data") if isinstance(progress.get("data"), dict) else {}
+    status = progress.get("status")
+    label = progress.get("label") or status or "a2ui_progress"
+    detail = progress.get("detail")
+    return {
+        **data,
+        "status": status,
+        "label": label,
+        "detail": detail,
+        "liveA2UIProgress": True,
+        "physicalEmitter": "a2ui-agent",
+        "a2aTaskId": progress.get("taskId"),
+        "a2aProgressEmittedAt": progress.get("emittedAt"),
+    }
+
+
 async def _run_a2ui_tool(
     message: str,
     business_tool_result: BusinessToolResult,
@@ -109,6 +126,24 @@ async def _run_a2ui_tool(
                 context={"intentSource": intent_source},
             )
         )
+    except RenderBoundaryError as exc:
+        raise AgentRuntimeError(str(exc)) from exc
+
+
+async def _stream_a2ui_tool(
+    message: str,
+    business_tool_result: BusinessToolResult,
+    intent_source: str,
+) -> AsyncIterator[dict[str, Any]]:
+    try:
+        async for event in stream_a2ui_render_tool(
+            A2UIRenderToolInput(
+                query=message,
+                business_tool_result=business_tool_result,
+                context={"intentSource": intent_source},
+            )
+        ):
+            yield event
     except RenderBoundaryError as exc:
         raise AgentRuntimeError(str(exc)) from exc
 
@@ -269,48 +304,24 @@ async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = 
             ),
         )
 
-        a2ui_tool_result = await _run_a2ui_tool(message, business_tool_result, intent_source)
-        profile_metadata = a2ui_tool_result.boundary.metadata
-        yield sse_event(
-            "state",
-            trace_payload(
-                turn_id,
-                {
-                    "status": "profile",
-                    "rowCount": profile_metadata["rowCount"],
-                    "hasImageField": profile_metadata["hasImageField"],
-                    "booleanFieldCount": profile_metadata["booleanFieldCount"],
-                    "previewRowCount": profile_metadata["previewRowCount"],
-                    "previewSampleSize": profile_metadata["previewSampleSize"],
-                },
-                "data",
-            ),
-        )
-        transport = "a2a"
-        yield sse_event(
-            "state",
-            trace_payload(
-                turn_id,
-                {
-                    "status": transport,
-                    "label": "A2UI Agent",
-                    "transport": transport,
-                },
-                "data",
-            ),
-        )
-        yield sse_event(
-            "state",
-            trace_payload(
-                turn_id,
-                {
-                    "status": "registry_loaded",
-                    "label": "A2UI Registry",
-                    "transport": transport,
-                },
-                "data",
-            ),
-        )
+        a2ui_tool_result: A2UIRenderToolResult | None = None
+        async for a2ui_event in _stream_a2ui_tool(message, business_tool_result, intent_source):
+            if a2ui_event.get("type") == "progress":
+                progress = a2ui_event.get("progress") if isinstance(a2ui_event.get("progress"), dict) else {}
+                yield sse_event(
+                    "state",
+                    trace_payload(
+                        turn_id,
+                        a2ui_progress_event_payload(progress),
+                        "data",
+                    ),
+                )
+                continue
+            if a2ui_event.get("type") == "result" and isinstance(a2ui_event.get("result"), A2UIRenderToolResult):
+                a2ui_tool_result = a2ui_event["result"]
+
+        if a2ui_tool_result is None:
+            raise AgentRuntimeError("A2UI render stream completed without a result.")
 
         template_id = surface_template_id(a2ui_tool_result.surface)
         matcher_mode = "render_surface" if a2ui_tool_result.type == "surface" and a2ui_tool_result.surface else "no_template"
@@ -320,6 +331,7 @@ async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = 
                 turn_id,
                 {
                     "status": "matcher",
+                    "label": "AI Surface Planner result",
                     "mode": matcher_mode,
                     "templateId": template_id,
                     "reason": a2ui_tool_result.reason,

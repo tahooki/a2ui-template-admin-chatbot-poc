@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
 import styles from "./styles.module.css";
-import type { AgentFlowActor, AgentFlowBranch, AgentFlowEvent, AgentFlowPhase } from "./agent-flow-types";
+import type { AgentFlowActor, AgentFlowBranch, AgentFlowEvent, AgentFlowEvidenceKind, AgentFlowPhase } from "./agent-flow-types";
 import type { DataBoundaryScenarioTrace } from "./data-boundary-lab";
 
 type ActorLane = {
@@ -77,7 +77,7 @@ const lanes: ActorLane[] = [
   { id: "main_agent", label: "Main Agent" },
   { id: "llm", label: "LLM" },
   { id: "business_db", label: "Business DB/API" },
-  { id: "a2ui_render_tool", label: "a2ui_render Tool" },
+  { id: "a2ui_render_tool", label: "Python render boundary" },
   { id: "a2ui", label: "A2UI Agent" },
   { id: "registry", label: "A2UI Registry" },
 ];
@@ -117,11 +117,13 @@ const sequenceStepGaps: Record<SequenceStepGap, number> = {
 const clickableStepIds = new Set([
   "business-tool-result",
   "a2ui-tool-call",
-  "profile",
+  "a2a-send",
+  "a2ui-source-preview",
   "registry-loaded",
   "matcher",
   "plan-validation",
   "mapping-applied",
+  "a2a-result",
   "a2ui-tool-result",
   "surface",
 ]);
@@ -156,7 +158,7 @@ const steps: SequenceStep[] = buildSequenceSteps([
   { id: "planning", phase: "planning", events: ["state:planning"], from: "main_agent", to: "main_agent", label: "Plan turn" },
   { id: "intent", phase: "intent", events: ["state:intent"], from: "main_agent", to: "llm", label: "Intent classify", gapBefore: "selfLoop" },
   { id: "general-llm", phase: "general_chat", events: ["llm:answer"], from: "llm", to: "main_agent", label: "Text answer", branch: "general", gapBefore: "section" },
-  { id: "general-stream", phase: "general_chat", events: ["text", "delta"], from: "main_agent", to: "chat", label: "Stream to chat" },
+  { id: "general-stream", phase: "general_chat", events: ["text", "delta"], from: "main_agent", to: "chat", label: "Stream to chat", branch: "general" },
   {
     id: "business-tool-selected",
     phase: "intent",
@@ -201,18 +203,27 @@ const steps: SequenceStep[] = buildSequenceSteps([
     events: ["state:a2ui_tool_call"],
     from: "main_agent",
     to: "a2ui_render_tool",
-    label: "Send compare payload",
+    label: "Invoke a2ui_render boundary",
     branch: "data",
-    a2uiSubstep: true,
     gapBefore: "selfLoop",
   },
   {
-    id: "profile",
-    phase: "profile",
-    events: ["state:source_preview", "state:profile"],
+    id: "a2a-send",
+    phase: "registry_loaded",
+    events: ["transport:a2a_send"],
     from: "a2ui_render_tool",
     to: "a2ui",
-    label: "Build source preview",
+    label: "POST /api/a2a/message:send",
+    branch: "data",
+    a2uiSubstep: true,
+  },
+  {
+    id: "a2ui-source-preview",
+    phase: "profile",
+    events: ["state:source_preview", "state:profile"],
+    from: "a2ui",
+    to: "a2ui",
+    label: "Build A2UI source preview",
     branch: "data",
     a2uiSubstep: true,
   },
@@ -222,7 +233,7 @@ const steps: SequenceStep[] = buildSequenceSteps([
     events: ["state:template_contracts", "state:a2a"],
     from: "a2ui",
     to: "registry",
-    label: "Request template contracts",
+    label: "Load template contracts",
     branch: "data",
   },
   {
@@ -231,19 +242,29 @@ const steps: SequenceStep[] = buildSequenceSteps([
     events: ["state:registry_loaded"],
     from: "registry",
     to: "a2ui",
-    label: "Template contract input",
+    label: "Template contracts loaded",
     branch: "data",
   },
   { id: "matcher", phase: "matcher", events: ["state:ai_surface_plan", "state:matcher"], from: "a2ui", to: "a2ui", label: "AI Surface Planner", branch: "data", a2uiSubstep: true },
   { id: "plan-validation", phase: "matcher", events: ["state:plan_validation"], from: "a2ui", to: "a2ui", label: "Validate AI plan", branch: "data", a2uiSubstep: true },
   { id: "mapping-applied", phase: "matcher", events: ["state:mapping_applied"], from: "a2ui", to: "a2ui", label: "Apply field/slot mapping", branch: "data", a2uiSubstep: true },
   {
+    id: "a2a-result",
+    phase: "matcher",
+    events: ["transport:a2a_result"],
+    from: "a2ui",
+    to: "a2ui_render_tool",
+    label: "Return trace + surface artifact",
+    branch: "data",
+    a2uiSubstep: true,
+  },
+  {
     id: "a2ui-tool-result",
     phase: "matcher",
     events: ["state:a2ui_tool_result"],
-    from: "a2ui",
+    from: "a2ui_render_tool",
     to: "main_agent",
-    label: "Return validated surface plan",
+    label: "Return A2UIRenderToolResult",
     branch: "data",
     a2uiSubstep: true,
     gapBefore: "selfLoop",
@@ -264,7 +285,7 @@ const steps: SequenceStep[] = buildSequenceSteps([
     events: ["surface"],
     from: "main_agent",
     to: "chat",
-    label: "Return selected template",
+    label: "Return SurfaceEnvelope",
     branch: "matched",
   },
   {
@@ -344,6 +365,18 @@ function eventMatchesStep(step: SequenceStep, event?: AgentFlowEvent) {
   return step.branch === event.branch;
 }
 
+function stepEvidenceKind(step: SequenceStep, events: AgentFlowEvent[], active?: AgentFlowEvent): AgentFlowEvidenceKind | undefined {
+  if (eventMatchesStep(step, active)) return active?.evidenceKind;
+  return events.findLast((event) => eventMatchesStep(step, event))?.evidenceKind;
+}
+
+function evidenceLabel(kind?: AgentFlowEvidenceKind) {
+  if (kind === "inferred_transport") return "transport";
+  if (kind === "trace_derived") return "trace";
+  if (kind === "observed") return "event";
+  return undefined;
+}
+
 function branchSet(events: AgentFlowEvent[]) {
   return new Set(events.map((event) => event.branch).filter(Boolean) as AgentFlowBranch[]);
 }
@@ -365,9 +398,10 @@ function isActiveStep(step: SequenceStep, active: AgentFlowEvent | undefined, co
   return Boolean(active?.event === "surface" && isMatchedSurfaceEvent(active) && isMatchedSurfaceStep(step) && completed.has("matched-summary"));
 }
 
-function stepClass(step: SequenceStep, completed: Set<string>, active?: AgentFlowEvent) {
+function stepClass(step: SequenceStep, completed: Set<string>, active?: AgentFlowEvent, evidenceKind?: AgentFlowEvidenceKind) {
   const classes = [styles.sequenceStep];
   if (step.branch) classes.push(styles[`sequenceStep_${step.branch}`]);
+  if (evidenceKind) classes.push(styles[`sequenceStepEvidence_${evidenceKind}`]);
   if (completed.has(step.id)) classes.push(styles.sequenceStepComplete);
   if (isActiveStep(step, active, completed)) classes.push(styles.sequenceStepActive);
   if (!completed.has(step.id) && !isActiveStep(step, active, completed)) classes.push(styles.sequenceStepPreview);
@@ -377,10 +411,11 @@ function stepClass(step: SequenceStep, completed: Set<string>, active?: AgentFlo
   return classes.filter(Boolean).join(" ");
 }
 
-function messageLineClass(step: SequenceStep, completed: Set<string>, active?: AgentFlowEvent) {
+function messageLineClass(step: SequenceStep, completed: Set<string>, active?: AgentFlowEvent, evidenceKind?: AgentFlowEvidenceKind) {
   const { x1, x2, loopX } = stepEndpoints(step);
   const classes = [styles.sequenceMessageLine];
   if (step.branch) classes.push(styles[`sequenceMessageLine_${step.branch}`]);
+  if (evidenceKind) classes.push(styles[`sequenceMessageLineEvidence_${evidenceKind}`]);
   if (completed.has(step.id)) classes.push(styles.sequenceMessageLineComplete);
   if (isActiveStep(step, active, completed)) classes.push(styles.sequenceMessageLineActive);
   if (!completed.has(step.id) && !isActiveStep(step, active, completed)) classes.push(styles.sequenceMessageLinePreview);
@@ -624,6 +659,27 @@ function selectedMappingCount(trace: DataBoundaryScenarioTrace) {
   return trace.renderPlan.mapping?.mappings.length ?? trace.mappingComparison.length;
 }
 
+function renderTraceRecord(trace: DataBoundaryScenarioTrace) {
+  const renderTrace = trace.renderPlan.aiSurfacePlanTrace;
+  return renderTrace && typeof renderTrace === "object" && !Array.isArray(renderTrace)
+    ? (renderTrace as Record<string, unknown>)
+    : {};
+}
+
+function renderTraceArray(trace: DataBoundaryScenarioTrace, key: string) {
+  const value = renderTraceRecord(trace)[key];
+  return Array.isArray(value) ? value : undefined;
+}
+
+function mappedRowCount(trace: DataBoundaryScenarioTrace) {
+  const renderRowCount = renderTraceRecord(trace).renderRowCount;
+  return typeof renderRowCount === "number" ? renderRowCount : trace.aiSurfacePlanTrace.displayRowCount;
+}
+
+function fieldMappingCount(trace: DataBoundaryScenarioTrace) {
+  return renderTraceArray(trace, "fieldMappings")?.length ?? trace.aiSurfacePlanTrace.rules.length;
+}
+
 function comparisonInput(trace: DataBoundaryScenarioTrace): DetailViewModel["comparison"] {
   return {
     left: {
@@ -661,6 +717,14 @@ function decisionReason(trace: DataBoundaryScenarioTrace) {
 }
 
 function plannerRuleSummary(trace: DataBoundaryScenarioTrace): DetailFlowItem[] {
+  const fieldMappings = renderTraceArray(trace, "fieldMappings") as Array<Record<string, unknown>> | undefined;
+  if (fieldMappings?.length) {
+    return fieldMappings.slice(0, 4).map((mapping) => ({
+      title: `${String(mapping.sourcePath ?? "-")} -> ${String(mapping.targetField ?? "-")}`,
+      body: formatStrategy(typeof mapping.transform === "string" ? mapping.transform : undefined),
+    }));
+  }
+
   const rules = trace.aiSurfacePlanTrace.rules.slice(0, 4);
   if (rules.length === 0) {
     return [
@@ -810,25 +874,42 @@ function eventForStep(step: SequenceStep, events: AgentFlowEvent[]) {
 
 function liveDetailView(selectedEvent: AgentFlowEvent): DetailViewModel {
   const fromTo = [selectedEvent.from, selectedEvent.to].filter(Boolean).join(" -> ") || "-";
+  const mapping = recordValue(selectedEvent.data?.mapping);
+  const mappings = Array.isArray(mapping.mappings) ? mapping.mappings : undefined;
+  const candidates = Array.isArray(selectedEvent.data?.candidates) ? selectedEvent.data.candidates : undefined;
+  const evidence = evidenceLabel(selectedEvent.evidenceKind) ?? "event";
+  const traceStep = typeof selectedEvent.data?.traceStep === "string" ? selectedEvent.data.traceStep : undefined;
   return {
-    eyebrow: "Live event",
+    eyebrow: selectedEvent.evidenceKind === "trace_derived" ? "Trace-derived evidence" : selectedEvent.evidenceKind === "inferred_transport" ? "Inferred transport" : "Live event",
     title: selectedEvent.label,
     purpose: selectedEvent.detail || "This event shows the current payload boundary in the running chat turn.",
     metrics: [
       { label: "Arrow", value: fromTo },
       { label: "Phase", value: selectedEvent.phase },
       { label: "Branch", value: selectedEvent.branch ?? "main" },
+      { label: "Evidence", value: evidence },
       { label: "Emitter", value: selectedEvent.physicalEmitter ?? "-" },
+      ...(traceStep ? [{ label: "Trace step", value: traceStep }] : []),
+      ...(mappings ? [{ label: "Mappings", value: formatCount(mappings.length) }] : []),
+      ...(candidates ? [{ label: "Candidates", value: formatCount(candidates.length) }] : []),
     ],
     flow: [
       {
-        title: "Event received",
+        title: selectedEvent.evidenceKind === "trace_derived" ? "Returned trace read" : "Event received",
         body: selectedEvent.event,
       },
       {
         title: "Displayed as sequence step",
         body: selectedEvent.label,
       },
+      ...(selectedEvent.evidenceKind === "trace_derived"
+        ? [
+            {
+              title: "Not a live A2UI progress event",
+              body: "This step is reconstructed from the A2UI result metadata after the render boundary returns.",
+            },
+          ]
+        : []),
     ],
   };
 }
@@ -920,23 +1001,41 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
   if (selectedStep === "a2ui-tool-call") {
     return {
       eyebrow: "Planner payload",
-      title: "Raw data sent to A2UI",
-      purpose: "This payload carries the raw business API result. A2UI builds the source preview and asks the AI planner inside the render boundary.",
+      title: "Invoke Python render boundary",
+      purpose: "The Main Agent invokes the local a2ui_render boundary with the raw business API result. This is still not the A2UI server-side template decision.",
       metrics: [
         { label: "Source", value: sourceToolName },
         { label: "Rows", value: formatCount(trace.aiSurfacePlanTrace.sourceRowCount) },
-        { label: "Preview used", value: `${formatCount(trace.sampleDataPreview.sampleSize)} of ${formatCount(trace.sampleDataPreview.rowCount)}` },
-        { label: "Compare target", value: trace.expectedTemplateId },
+        { label: "Boundary", value: "Python a2ui_render" },
+        { label: "Next arrow", value: "A2A message:send" },
       ],
       flow: [
-        { title: "Source preview", body: "A2UI extracts field paths, row count, sample rows, and data hash." },
-        { title: "Template contracts", body: `registered contract ${trace.expectedTemplateId} is compared with other templates.` },
-        { title: "Judgment comes later", body: "No template is selected until the AI planner returns a validated plan." },
+        { title: "Call boundary", body: "The Python wrapper receives already-fetched raw business data." },
+        { title: "Keep data raw", body: "No Python-side displayData or alias conversion should decide the final A2UI schema." },
+        { title: "Judgment comes later", body: "The A2UI Agent chooses the template after receiving the A2A render request." },
       ],
     };
   }
 
-  if (selectedStep === "profile") {
+  if (selectedStep === "a2a-send") {
+    return {
+      eyebrow: "A2A transport",
+      title: "POST /api/a2a/message:send",
+      purpose: "The Python render boundary sends the raw business result to the Next-hosted A2UI Agent as an A2A render request.",
+      metrics: [
+        { label: "Source", value: sourceToolName },
+        { label: "Payload", value: "raw business result" },
+        { label: "Endpoint", value: "/api/a2a/message:send" },
+        { label: "Decision owner", value: "A2UI Agent" },
+      ],
+      flow: [
+        { title: "Send render request", body: "The request carries raw data, query, API id, fallback text, and source metadata." },
+        { title: "A2UI receives it", body: "Template comparison and field mapping happen after this boundary." },
+      ],
+    };
+  }
+
+  if (selectedStep === "a2ui-source-preview" || selectedStep === "profile") {
     return {
       eyebrow: "AI planner input",
       title: "Source preview built",
@@ -1013,8 +1112,8 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
       title: "Field and slot mapping applied",
       purpose: "A2UI applies the validated AI plan to create renderer-facing items[] data and bindings.",
       metrics: [
-        { label: "Mapped rows", value: formatCount(trace.aiSurfacePlanTrace.displayRowCount) },
-        { label: "Field mappings", value: formatCount(trace.aiSurfacePlanTrace.rules.length) },
+        { label: "Mapped rows", value: formatCount(mappedRowCount(trace)) },
+        { label: "Field mappings", value: formatCount(fieldMappingCount(trace)) },
         { label: "Before rows", value: formatCount(trace.aiSurfacePlanTrace.beforeRows.length) },
         { label: "After rows", value: formatCount(trace.aiSurfacePlanTrace.afterRows?.length ?? 0) },
       ],
@@ -1034,6 +1133,21 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
       flow: [
         { title: "Judgment", body: decisionReason(trace) },
         { title: "Bindings selected", body: `${formatCount(selectedMappingCount(trace))} slot mappings selected.` },
+      ],
+    };
+  }
+
+  if (selectedStep === "a2a-result") {
+    return {
+      eyebrow: "A2A artifact",
+      title: "Trace + surface artifact returned",
+      purpose: "The A2UI Agent returns an A2A task containing the AI decision trace and, when matched, the SurfaceEnvelope artifact.",
+      metrics: judgmentMetrics(trace),
+      comparison: comparisonInput(trace),
+      mappings: mappingRows,
+      flow: [
+        { title: "A2UI decision complete", body: decisionReason(trace) },
+        { title: "Boundary unwraps artifact", body: "Python extracts the surface result and metadata before returning A2UIRenderToolResult to Main Agent." },
       ],
     };
   }
@@ -1360,14 +1474,17 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
             ))}
 
             <div className={styles.sequenceMessageLayer} aria-label="A2UI agent sequence diagram" role="img">
-              {visibleSteps.map((step) => (
-                <span
-                  className={messageLineClass(step, completed, active)}
-                  data-sequence-line={step.id}
-                  key={`${step.id}-line`}
-                  style={messageLineStyle(step)}
-                />
-              ))}
+              {visibleSteps.map((step) => {
+                const evidenceKind = stepEvidenceKind(step, events, active);
+                return (
+                  <span
+                    className={messageLineClass(step, completed, active, evidenceKind)}
+                    data-sequence-line={step.id}
+                    key={`${step.id}-line`}
+                    style={messageLineStyle(step)}
+                  />
+                );
+              })}
             </div>
 
             {visibleSteps.map((step) => {
@@ -1375,10 +1492,13 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
               const liveEvent = eventForStep(step, events);
               const clickable = clickableStepIds.has(step.id) && (Boolean(liveEvent) || Boolean(dataBoundaryTrace));
               const displayLabel = stepDisplayLabel(step, dataBoundaryTrace, events);
+              const evidenceKind = stepEvidenceKind(step, events, active);
+              const evidence = evidenceLabel(evidenceKind);
               return (
                 <div
-                  className={`${stepClass(step, completed, active)} ${clickable ? styles.sequenceStepClickable : ""} ${traceModalStep === step.id ? styles.sequenceStepSelected : ""}`}
+                  className={`${stepClass(step, completed, active, evidenceKind)} ${clickable ? styles.sequenceStepClickable : ""} ${traceModalStep === step.id ? styles.sequenceStepSelected : ""}`}
                   data-sequence-branch={step.branch ?? "main"}
+                  data-sequence-evidence={evidenceKind ?? "none"}
                   data-sequence-step={step.id}
                   key={`${step.id}-label`}
                   onDoubleClick={clickable ? (event) => {
@@ -1399,10 +1519,14 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
                       title={displayLabel}
                       type="button"
                     >
-                      {displayLabel}
+                      <span className={styles.sequenceStepText}>{displayLabel}</span>
+                      {evidence ? <span className={styles.sequenceStepEvidence}>{evidence}</span> : null}
                     </button>
                   ) : (
-                    <span title={displayLabel}>{displayLabel}</span>
+                    <span title={displayLabel}>
+                      <span className={styles.sequenceStepText}>{displayLabel}</span>
+                      {evidence ? <span className={styles.sequenceStepEvidence}>{evidence}</span> : null}
+                    </span>
                   )}
                 </div>
               );
