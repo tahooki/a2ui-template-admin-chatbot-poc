@@ -4,6 +4,7 @@ import type {
   A2UISurfaceEnvelope,
 } from "@/features/a2ui-template-poc/template-types";
 import type { EquipmentApiId } from "@/server/a2ui-admin/a2ui-runtime";
+import type { A2UISurfacePlanTrace } from "@/server/a2ui-admin/a2ui-ai-surface-planner";
 import type { DerivedSchema } from "@/server/a2ui-admin/schema-matcher/derived-schema-types";
 import type { SampleDataPreview } from "@/server/a2ui-admin/schema-matcher/sample-data-preview";
 
@@ -102,18 +103,20 @@ export type A2UIDecisionArtifactData = {
     templateId: string;
     candidates?: A2UICandidateTrace[];
     mapping?: A2UIMappingDecision;
+    aiSurfacePlanTrace?: A2UISurfacePlanTrace;
     sourceTool?: Record<string, unknown>;
     dataIntegrity?: Record<string, unknown>;
   };
 };
 
 export type A2ATraceArtifactData = {
-  kind: "a2ui.matcher.trace";
+  kind: "a2ui.matcher.trace" | "a2ui.ai_surface_plan.trace";
   strategy?: string;
   score?: number;
   candidateCount: number;
   candidates?: A2UICandidateTrace[];
   mapping?: A2UIMappingDecision;
+  aiSurfacePlanTrace?: A2UISurfacePlanTrace;
   sourceTool?: Record<string, unknown>;
   dataIntegrity?: Record<string, unknown>;
 };

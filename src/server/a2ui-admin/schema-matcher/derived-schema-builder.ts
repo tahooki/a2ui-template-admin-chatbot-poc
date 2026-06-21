@@ -57,7 +57,9 @@ function inferRoles(key: string, type: DerivedSchemaField["type"], format?: stri
 
 function rowsFromData(data: unknown, primaryArrayPath?: string): Record<string, unknown>[] {
   if (primaryArrayPath && data && typeof data === "object" && !Array.isArray(data)) {
-    const rows = (data as Record<string, unknown>)[primaryArrayPath];
+    const rows = primaryArrayPath
+      .split(".")
+      .reduce<unknown>((current, key) => (current && typeof current === "object" && !Array.isArray(current) ? (current as Record<string, unknown>)[key] : undefined), data);
     return Array.isArray(rows)
       ? rows.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
       : [];

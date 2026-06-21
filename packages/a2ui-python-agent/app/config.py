@@ -44,6 +44,7 @@ class Settings:
     a2a_token: str = _env("A2UI_A2A_TOKEN")
     next_api_base_url: str = _env("A2UI_NEXT_API_BASE_URL", "http://localhost:3001")
     request_timeout_seconds: float = _float_env("A2UI_AGENT_TIMEOUT_SECONDS", 6)
+    a2a_timeout_seconds: float = _float_env("A2UI_A2A_TIMEOUT_SECONDS", 45)
     openai_api_key: str = _env("OPENAI_API_KEY")
     openai_model: str = _env("OPENAI_MODEL", "gpt-4.1-mini")
     openai_base_url: str = _env("OPENAI_BASE_URL", "https://api.openai.com/v1")

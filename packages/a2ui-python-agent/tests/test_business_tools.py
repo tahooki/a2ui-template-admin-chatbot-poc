@@ -38,21 +38,21 @@ class BusinessToolsTest(unittest.IsolatedAsyncioTestCase):
                 row.update({f"metric_{index:03d}": index for index in range(120)})
                 return {"items": [row for _ in range(6)], "total": 6, "page": 1, "pageSize": 6}
             return {
-                "items": [
-                    {
-                        "id": f"eq-large-{index}",
-                        "name": f"Large CNC {index}",
-                        "isOnline": True,
-                        "isRunning": index % 2 == 0,
-                        "hasAlarm": False,
-                        "needsInspection": False,
-                        "isReserved": False,
-                    }
-                    for index in range(1000)
-                ],
-                "total": 1000,
-                "page": 1,
-                "pageSize": 1000,
+                "result": {
+                    "rows": [
+                        {
+                            "eqp_id": f"eq-large-{index}",
+                            "eqp_nm": f"Large CNC {index}",
+                            "operation_yn": "Y",
+                            "running_code": "RUN" if index % 2 == 0 else "STOP",
+                        }
+                        for index in range(1000)
+                    ],
+                    "totalCount": 1000,
+                    "pageNo": 1,
+                    "rowsPerPage": 1000,
+                },
+                "success": True,
             }
 
         with patch("app.business_tools.fetch_equipment_data", fake_fetch):
@@ -65,6 +65,7 @@ class BusinessToolsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(large.api_id, "equipment-status-large-rows")
         self.assertEqual(large.metadata["sourceToolName"], "get_equipment_status_large_rows")
         self.assertEqual(large.metadata["sourceRowCount"], 1000)
+        self.assertEqual(large.metadata["sourceDataShape"], "object{result.rows:array<object>}")
 
     def test_tool_router_is_bidirectional(self) -> None:
         self.assertEqual(business_tool_for_api("equipment-catalog"), "get_equipment_catalog")

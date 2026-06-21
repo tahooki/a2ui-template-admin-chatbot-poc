@@ -37,7 +37,7 @@ class LLMClientFallbackPromptTest(unittest.IsolatedAsyncioTestCase):
             text = await llm_client.generate_equipment_fallback_text(
                 message="데이터 많은 상태 보여줘",
                 api_id="equipment-status-large-rows",
-                data={"items": [wide_row for _ in range(1000)], "total": 1000},
+                data={"result": {"rows": [wide_row for _ in range(1000)], "totalCount": 1000}, "success": True},
                 profile=profile,
                 reason="No matching template.",
             )

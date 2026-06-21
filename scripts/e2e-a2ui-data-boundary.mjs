@@ -1,5 +1,6 @@
 const baseUrl = process.env.A2UI_E2E_BASE_URL || "http://localhost:3001";
 const commonStatusTemplateId = "equipment.commonStatusTable";
+const telemetryStatusTemplateId = "equipment.telemetryStatusTable";
 const A2A_RENDER_REQUEST = "application/vnd.a2ui.render-request+json";
 const A2A_SURFACE = "application/vnd.a2ui.surface+json";
 
@@ -21,8 +22,16 @@ async function fetchJson(path, init) {
 }
 
 function rows(data, label) {
-  expect(data && typeof data === "object" && Array.isArray(data.items), `${label} must return items[]`);
-  return data.items;
+  expect(data && typeof data === "object", `${label} must return an object`);
+  if (Array.isArray(data.items)) return data.items;
+  if (Array.isArray(data.result?.rows)) return data.result.rows;
+  fail(`${label} must return items[] or result.rows[]`);
+}
+
+function rowCount(data) {
+  if (typeof data?.total === "number") return data.total;
+  if (typeof data?.result?.totalCount === "number") return data.result.totalCount;
+  return rows(data, "row count data").length;
 }
 
 function intentKey(apiId) {
@@ -54,7 +63,7 @@ function a2aPayload({ query, apiId, data }) {
               apiId,
               data,
               fallbackText,
-              profile: { rowCount: data.total ?? data.items?.length ?? 0 },
+              profile: { rowCount: rowCount(data) },
             },
             data,
             fallbackText,
@@ -92,17 +101,24 @@ async function callA2A({ query, apiId, data }) {
   return task;
 }
 
-async function assertStatusTemplate({ label, query, apiId, data }) {
+async function assertTemplate({ label, query, apiId, data, expectedTemplateId, expectedSourceArrayPath }) {
   const task = await callA2A({ query, apiId, data });
   const surfacePart = findPart(task, (part) => part.mediaType === A2A_SURFACE && part.data?.surface);
-  const tracePart = findPart(task, (part) => part.data?.kind === "a2ui.matcher.trace");
+  const tracePart = findPart(task, (part) => part.data?.kind === "a2ui.ai_surface_plan.trace");
   const surface = surfacePart?.data?.surface;
   const decision = surfacePart?.data?.decision ?? {};
+  const aiSurfacePlanTrace = decision.aiSurfacePlanTrace ?? decision.sourceTool?.aiSurfacePlanTrace;
 
   expect(surface, `${label} should return an A2UI surface`);
-  expect(surface.templateId === commonStatusTemplateId, `${label} should select ${commonStatusTemplateId}, got ${surface.templateId}`);
-  expect(decision.strategy === "derived_schema", `${label} should use derived_schema strategy`);
-  expect(tracePart?.data?.candidateCount > 0, `${label} should include matcher trace candidates`);
+  expect(surface.templateId === expectedTemplateId, `${label} should select ${expectedTemplateId}, got ${surface.templateId}`);
+  expect(decision.strategy === "ai_surface_planner", `${label} should use ai_surface_planner strategy`);
+  expect(tracePart?.data?.candidateCount > 0, `${label} should include AI planner candidate trace`);
+  expect(aiSurfacePlanTrace?.validation?.ok === true, `${label} should include passing AI plan validation`);
+  expect(surface.payload?.data?.items?.[0]?.name, `${label} planned surface payload should include canonical name`);
+  expect(typeof surface.payload?.data?.items?.[0]?.isOnline === "boolean", `${label} planned surface payload should include boolean isOnline`);
+  if (expectedSourceArrayPath) {
+    expect(aiSurfacePlanTrace?.sourceArrayPath === expectedSourceArrayPath, `${label} should extract rows from ${expectedSourceArrayPath}`);
+  }
   console.log(`[ok] ${label}: ${surface.templateId} score=${decision.score}`);
 }
 
@@ -125,8 +141,9 @@ async function main() {
   const wideRows = rows(wide, "wide columns API");
   expect(wideRows.length === 6, "wide columns API should return 6 rows");
   expect(Object.keys(wideRows[0]).length >= 120, "wide columns API should include many columns");
-  expect(String(wideRows[0].id).startsWith("wide-status-"), "wide columns API should use distinct wide-status ids");
-  expect(String(wideRows[0].name).includes("센서") || String(wideRows[0].name).includes("계측"), "wide columns API should use distinct sensor/telemetry names");
+  expect(String(wideRows[0].assetId).startsWith("WIDE-"), "wide columns API should use non-canonical asset ids");
+  expect(String(wideRows[0].assetDisplayName).includes("센서") || String(wideRows[0].assetDisplayName).includes("계측"), "wide columns API should use distinct sensor/telemetry names");
+  expect(Object.hasOwn(wideRows[0], "operStateCd"), "wide columns API should expose non-canonical status codes");
   expect(Object.hasOwn(wideRows[0], "telemetry_000"), "wide columns API should expose telemetry_* extra columns");
   expect(wide.total === 6, "wide columns API should preserve total=6");
   console.log(`[ok] wide columns API rows=${wideRows.length} columns=${Object.keys(wideRows[0]).length}`);
@@ -134,22 +151,61 @@ async function main() {
   const large = await fetchJson("/api/equipment-status-large-rows");
   const largeRows = rows(large, "large rows API");
   expect(largeRows.length === 1000, "large rows API should return 1000 rows");
-  expect(String(largeRows[0].id).startsWith("bulk-status-"), "large rows API should use distinct bulk-status ids");
-  expect(String(largeRows[0].name).includes("대량 검증"), "large rows API should use distinct bulk validation names");
-  expect(large.total === 1000, "large rows API should preserve total=1000");
+  expect(String(largeRows[0].eqp_id).startsWith("BULK-"), "large rows API should use non-canonical bulk ids");
+  expect(String(largeRows[0].eqp_nm).includes("대량 검증"), "large rows API should use distinct bulk validation names");
+  expect(large.result?.totalCount === 1000, "large rows API should preserve result.totalCount=1000");
   console.log(`[ok] large rows API rows=${largeRows.length}`);
 
-  await assertStatusTemplate({
+  await assertTemplate({
     label: "wide columns",
     query: "컬럼이 많은 장비 상태 목록 보여줘",
     apiId: "equipment-status-wide-columns",
     data: wide,
+    expectedTemplateId: telemetryStatusTemplateId,
+    expectedSourceArrayPath: "items",
   });
-  await assertStatusTemplate({
+  await assertTemplate({
     label: "large rows",
     query: "데이터가 많은 장비 상태 목록 보여줘",
     apiId: "equipment-status-large-rows",
     data: large,
+    expectedTemplateId: commonStatusTemplateId,
+    expectedSourceArrayPath: "result.rows",
+  });
+
+  const aliasStatus = {
+    items: [
+      { eqpId: "ALIAS-001", eqpNm: "Alias CNC 1", opYn: "Y", runYn: "N", alrmCnt: 2, inspReqYn: "Y", lastDtm: "2026-06-20T09:00:00Z", site: "A동" },
+      { eqpId: "ALIAS-002", eqpNm: "Alias CNC 2", opYn: "N", runYn: "Y", alrmCnt: 0, inspReqYn: "N", lastDtm: "2026-06-20T09:01:00Z", site: "B동" },
+    ],
+    total: 2,
+    page: 1,
+    pageSize: 2,
+  };
+  await assertTemplate({
+    label: "raw alias status",
+    query: "다른 컬럼명의 장비 상태 목록 보여줘",
+    apiId: "equipment-status",
+    data: aliasStatus,
+    expectedTemplateId: commonStatusTemplateId,
+    expectedSourceArrayPath: "items",
+  });
+
+  const nestedAliasStatus = {
+    result: {
+      rows: aliasStatus.items,
+      total: aliasStatus.total,
+      page: aliasStatus.page,
+      pageSize: aliasStatus.pageSize,
+    },
+  };
+  await assertTemplate({
+    label: "nested alias status",
+    query: "result rows 안에 있는 장비 상태 목록 보여줘",
+    apiId: "equipment-status",
+    data: nestedAliasStatus,
+    expectedTemplateId: commonStatusTemplateId,
+    expectedSourceArrayPath: "result.rows",
   });
 }
 

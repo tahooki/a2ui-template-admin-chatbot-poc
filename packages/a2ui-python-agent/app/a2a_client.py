@@ -90,7 +90,7 @@ class A2UIA2AClient:
         }
 
     async def send_message(self, body: dict[str, Any]) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
+        async with httpx.AsyncClient(timeout=settings.a2a_timeout_seconds) as client:
             response = await client.post(
                 f"{self.server_url}/message:send",
                 json=body,
@@ -100,7 +100,7 @@ class A2UIA2AClient:
             return response.json()
 
     async def stream_message(self, body: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-        async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
+        async with httpx.AsyncClient(timeout=settings.a2a_timeout_seconds) as client:
             async with client.stream(
                 "POST",
                 f"{self.server_url}/message:stream",

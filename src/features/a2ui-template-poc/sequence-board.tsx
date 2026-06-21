@@ -120,6 +120,8 @@ const clickableStepIds = new Set([
   "profile",
   "registry-loaded",
   "matcher",
+  "plan-validation",
+  "mapping-applied",
   "a2ui-tool-result",
   "surface",
 ]);
@@ -207,17 +209,17 @@ const steps: SequenceStep[] = buildSequenceSteps([
   {
     id: "profile",
     phase: "profile",
-    events: ["state:profile"],
+    events: ["state:source_preview", "state:profile"],
     from: "a2ui_render_tool",
     to: "a2ui",
-    label: "Derived schema input",
+    label: "Build source preview",
     branch: "data",
     a2uiSubstep: true,
   },
   {
     id: "registry-request",
     phase: "registry_loaded",
-    events: ["state:a2a"],
+    events: ["state:template_contracts", "state:a2a"],
     from: "a2ui",
     to: "registry",
     label: "Request template contracts",
@@ -232,14 +234,16 @@ const steps: SequenceStep[] = buildSequenceSteps([
     label: "Template contract input",
     branch: "data",
   },
-  { id: "matcher", phase: "matcher", events: ["state:matcher"], from: "a2ui", to: "a2ui", label: "Compare data vs template", branch: "data", a2uiSubstep: true },
+  { id: "matcher", phase: "matcher", events: ["state:ai_surface_plan", "state:matcher"], from: "a2ui", to: "a2ui", label: "AI Surface Planner", branch: "data", a2uiSubstep: true },
+  { id: "plan-validation", phase: "matcher", events: ["state:plan_validation"], from: "a2ui", to: "a2ui", label: "Validate AI plan", branch: "data", a2uiSubstep: true },
+  { id: "mapping-applied", phase: "matcher", events: ["state:mapping_applied"], from: "a2ui", to: "a2ui", label: "Apply field/slot mapping", branch: "data", a2uiSubstep: true },
   {
     id: "a2ui-tool-result",
     phase: "matcher",
     events: ["state:a2ui_tool_result"],
     from: "a2ui",
     to: "main_agent",
-    label: "Decision: select template",
+    label: "Return validated surface plan",
     branch: "data",
     a2uiSubstep: true,
     gapBefore: "selfLoop",
@@ -623,16 +627,16 @@ function selectedMappingCount(trace: DataBoundaryScenarioTrace) {
 function comparisonInput(trace: DataBoundaryScenarioTrace): DetailViewModel["comparison"] {
   return {
     left: {
-      title: "Compared data: derived schema",
+      title: "AI input: source preview",
       items: [
         { label: "Shape", value: trace.derivedSchema.shape },
         { label: "Rows", value: formatCount(trace.derivedSchema.rowCount) },
-        { label: "Fields", value: formatCount(trace.derivedSchema.fields.length) },
+        { label: "Field paths", value: formatCount(trace.aiSurfacePlanTrace.sourceFieldPaths.length) },
         { label: "Capabilities", value: capabilitySummary(trace) },
       ],
     },
     right: {
-      title: "Compared target: template contract",
+      title: "AI input: template contract",
       items: [
         { label: "Template", value: trace.templateContract.componentId },
         { label: "View type", value: trace.templateContract.surfaceConfig.viewType },
@@ -656,13 +660,13 @@ function decisionReason(trace: DataBoundaryScenarioTrace) {
   return trace.renderPlan.mapping?.reason ?? trace.renderPlan.reason;
 }
 
-function normalizedRuleSummary(trace: DataBoundaryScenarioTrace): DetailFlowItem[] {
-  const rules = trace.normalization.rules.slice(0, 4);
+function plannerRuleSummary(trace: DataBoundaryScenarioTrace): DetailFlowItem[] {
+  const rules = trace.aiSurfacePlanTrace.rules.slice(0, 4);
   if (rules.length === 0) {
     return [
       {
-        title: "Keep field names",
-        body: "The API response already matches the display-facing shape closely enough.",
+        title: "Keep field binding",
+        body: "The AI plan can use the source field path directly for this screen slot.",
       },
     ];
   }
@@ -761,8 +765,21 @@ function recordValue(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+function rowsFromUnknown(data: unknown) {
+  const root = recordValue(data);
+  const result = recordValue(root.result);
+  const rows = Array.isArray(root.items)
+    ? root.items
+    : Array.isArray(root.rows)
+      ? root.rows
+      : Array.isArray(result.rows)
+        ? result.rows
+        : [];
+  return rows.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)));
+}
+
 function rawColumnCount(trace: DataBoundaryScenarioTrace) {
-  const firstRow = trace.sourceData.items.find((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)));
+  const firstRow = rowsFromUnknown(trace.sourceData)[0];
   return firstRow ? Object.keys(firstRow).length : 0;
 }
 
@@ -840,7 +857,7 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
       flow: [
         { title: "Read intent", body: "The request is treated as a data task." },
         { title: "Pick data source", body: `${trace.businessToolName} is selected for ${trace.apiRoute}.` },
-        { title: "Keep rendering separate", body: "A2UI template matching starts only after data comes back." },
+        { title: "Keep rendering separate", body: "A2UI field/template planning starts only after raw data comes back." },
       ],
     };
   }
@@ -865,19 +882,19 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
 
   if (selectedStep === "business-tool-result") {
     return {
-      eyebrow: "Comparison input",
+      eyebrow: "Raw API result",
       title: "Source data captured",
-      purpose: "This is the business API result that will become the left side of the matcher comparison after schema derivation.",
+      purpose: "This is the raw business API result. A2UI has not converted field names or selected a template yet.",
       metrics: [
         { label: "Source API", value: trace.businessToolName },
         { label: "Rows", value: formatCount(trace.sourceFingerprint.rowCount) },
         { label: "Columns", value: formatCount(rawColumnCount(trace)) },
-        { label: "Next compare input", value: "derived schema" },
+        { label: "Next planner input", value: "bounded source preview" },
       ],
       flow: [
         { title: "Raw API result", body: `${formatCount(trace.sourceFingerprint.rowCount)} rows from ${trace.apiRoute}.` },
-        { title: "Comparison role", body: "This data is not judged directly; A2UI first reduces it to field types, roles, and capabilities." },
-        { title: "Expected decision path", body: "source data -> derived schema -> compare with template contract -> select template." },
+        { title: "A2UI-owned planning", body: "A2UI builds field paths and sample rows from this raw payload." },
+        { title: "Expected decision path", body: "raw data -> source preview -> AI field/template plan -> validator -> surface." },
       ],
     };
   }
@@ -891,60 +908,60 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
         { label: "Input condition", value: "business data ready" },
         { label: "Selected tool", value: renderToolName },
         { label: "Source result", value: sourceToolResultId(trace) },
-        { label: "Template choice", value: "later in matcher" },
+        { label: "Template choice", value: "later in AI planner" },
       ],
       flow: [
         { title: "Choose render tool", body: "The flow crosses from chat orchestration into A2UI rendering logic." },
-        { title: "Defer UI selection", body: "The actual component is selected after schema and registry contracts are compared." },
+        { title: "Defer UI selection", body: "The actual component is selected after the AI planner compares source fields with registry contracts." },
       ],
     };
   }
 
   if (selectedStep === "a2ui-tool-call") {
     return {
-      eyebrow: "Comparison payload",
-      title: "Data prepared for matcher",
-      purpose: "This payload carries the data that the main logic will compare after it is converted into a derived schema.",
+      eyebrow: "Planner payload",
+      title: "Raw data sent to A2UI",
+      purpose: "This payload carries the raw business API result. A2UI builds the source preview and asks the AI planner inside the render boundary.",
       metrics: [
         { label: "Source", value: sourceToolName },
-        { label: "Rows", value: formatCount(trace.normalization.displayRowCount) },
+        { label: "Rows", value: formatCount(trace.aiSurfacePlanTrace.sourceRowCount) },
         { label: "Preview used", value: `${formatCount(trace.sampleDataPreview.sampleSize)} of ${formatCount(trace.sampleDataPreview.rowCount)}` },
         { label: "Compare target", value: trace.expectedTemplateId },
       ],
       flow: [
-        { title: "Left side candidate", body: "displayData will be profiled into shape, fields, and capabilities." },
-        { title: "Right side candidate", body: `registered contract ${trace.expectedTemplateId} will be loaded from the registry.` },
-        { title: "Judgment comes later", body: "No template is selected until the matcher compares those two sides." },
+        { title: "Source preview", body: "A2UI extracts field paths, row count, sample rows, and data hash." },
+        { title: "Template contracts", body: `registered contract ${trace.expectedTemplateId} is compared with other templates.` },
+        { title: "Judgment comes later", body: "No template is selected until the AI planner returns a validated plan." },
       ],
     };
   }
 
   if (selectedStep === "profile") {
     return {
-      eyebrow: "Comparison input",
-      title: "Derived schema built",
-      purpose: "This is the exact left-side data the matcher will compare against template contracts.",
+      eyebrow: "AI planner input",
+      title: "Source preview built",
+      purpose: "This is the bounded input A2UI gives the AI planner: field paths, sample rows, row count, and source shape.",
       metrics: [
-        { label: "Shape", value: trace.derivedSchema.shape },
-        { label: "Fields", value: formatCount(trace.derivedSchema.fields.length) },
+        { label: "Shape", value: trace.aiSurfacePlanTrace.sourceShape },
+        { label: "Field paths", value: formatCount(trace.aiSurfacePlanTrace.sourceFieldPaths.length) },
         { label: "Capabilities", value: capabilitySummary(trace) },
         { label: "Rows sampled", value: `${formatCount(trace.sampleDataPreview.sampleSize)} / ${formatCount(trace.sampleDataPreview.rowCount)}` },
       ],
       comparison: comparisonInput(trace),
       flow: [
-        { title: "Matcher will read", body: "field type, role candidates, row shape, and capabilities." },
+        { title: "AI will read", body: "source field paths, examples, row shape, and template contracts." },
         { title: "Template will require", body: `${requiredSlotSummary(trace)} plus ${templateCapabilitySummary(trace)}.` },
-        ...normalizedRuleSummary(trace),
+        ...plannerRuleSummary(trace),
       ],
-      outcome: "This step does not select the template yet. It prepares the data side of the comparison.",
+      outcome: "This step does not select the template yet. It prepares the AI planner input.",
     };
   }
 
   if (selectedStep === "registry-request" || selectedStep === "registry-loaded") {
     return {
-      eyebrow: "Comparison input",
+      eyebrow: "AI planner input",
       title: trace.templateContract.componentId,
-      purpose: "This is the right-side contract the matcher compares against the derived schema.",
+      purpose: "These are the registered A2UI template contracts the AI planner compares against the source preview.",
       metrics: [
         { label: "View type", value: trace.templateContract.surfaceConfig.viewType },
         { label: "Required slots", value: requiredSlotSummary(trace) },
@@ -954,16 +971,16 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
       comparison: comparisonInput(trace),
       flow: [
         { title: "Contract requirement", body: `${trace.templateContract.componentId} accepts ${trace.templateContract.surfaceConfig.viewType}.` },
-        { title: "Comparison target", body: `Matcher checks whether derived schema can fill ${requiredSlotSummary(trace)}.` },
+        { title: "Comparison target", body: `AI checks whether source fields can fill ${requiredSlotSummary(trace)}.` },
       ],
     };
   }
 
   if (selectedStep === "matcher") {
     return {
-      eyebrow: "Comparison report",
+      eyebrow: "AI judgment",
       title: `${trace.derivedSchema.sourceId} -> ${trace.renderPlan.selectedComponentId}`,
-      purpose: "The main logic compared the API-derived schema with a registered template contract. The score and slot mappings below explain why this template was selected.",
+      purpose: "The AI surface planner compared the source preview with all registered template contracts and returned field mappings, slot mappings, and candidate reasons.",
       metrics: judgmentMetrics(trace),
       comparison: comparisonInput(trace),
       mappings: mappingRows,
@@ -971,11 +988,46 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
     };
   }
 
+  if (selectedStep === "plan-validation") {
+    return {
+      eyebrow: "Validator",
+      title: "AI plan validation",
+      purpose: "A2UI code checks the AI plan before rendering: source paths must exist, transforms must be allowed, required slots must be filled, and candidate comparison must be complete.",
+      metrics: [
+        { label: "Validation", value: trace.aiSurfacePlanTrace.validation.ok ? "passed" : "failed", tone: trace.aiSurfacePlanTrace.validation.ok ? "success" : "warning" },
+        { label: "Selected template", value: trace.aiSurfacePlanTrace.selectedTemplateId ?? "-" },
+        { label: "Candidates", value: formatCount(trace.aiSurfacePlanTrace.candidateEvaluations.length) },
+        { label: "Errors", value: trace.aiSurfacePlanTrace.validation.errors.length ? trace.aiSurfacePlanTrace.validation.errors.join(", ") : "none" },
+      ],
+      flow: [
+        { title: "Check source paths", body: "Every sourcePath must be present in the extracted field paths." },
+        { title: "Check required slots", body: `${requiredSlotSummary(trace)} must be satisfied.` },
+        { title: "Check candidate comparison", body: "Every registered template must have a select/reject decision." },
+      ],
+    };
+  }
+
+  if (selectedStep === "mapping-applied") {
+    return {
+      eyebrow: "Binding",
+      title: "Field and slot mapping applied",
+      purpose: "A2UI applies the validated AI plan to create renderer-facing items[] data and bindings.",
+      metrics: [
+        { label: "Mapped rows", value: formatCount(trace.aiSurfacePlanTrace.displayRowCount) },
+        { label: "Field mappings", value: formatCount(trace.aiSurfacePlanTrace.rules.length) },
+        { label: "Before rows", value: formatCount(trace.aiSurfacePlanTrace.beforeRows.length) },
+        { label: "After rows", value: formatCount(trace.aiSurfacePlanTrace.afterRows?.length ?? 0) },
+      ],
+      mappings: mappingRows,
+      flow: plannerRuleSummary(trace),
+    };
+  }
+
   if (selectedStep === "a2ui-tool-result") {
     return {
-      eyebrow: "Decision result",
+      eyebrow: "Validated result",
       title: trace.renderPlan.selectedComponentId,
-      purpose: "This is the selected template decision returned from the comparison, including the score and field bindings that made the selection possible.",
+      purpose: "This is the validated AI surface plan returned from A2UI, including the selected template, score, and field bindings.",
       metrics: judgmentMetrics(trace),
       comparison: comparisonInput(trace),
       mappings: mappingRows,
@@ -1009,7 +1061,7 @@ function traceDetailView(selectedStep: string, trace: DataBoundaryScenarioTrace)
     return {
       eyebrow: "Selected template output",
       title: trace.surfaceEnvelope.templateId,
-      purpose: "This is the UI payload produced because the matcher selected this template from the comparison result.",
+      purpose: "This is the UI payload produced because the AI planner selected this template and the validator accepted the plan.",
       metrics: judgmentMetrics(trace),
       comparison: comparisonInput(trace),
       mappings: mappingRows,

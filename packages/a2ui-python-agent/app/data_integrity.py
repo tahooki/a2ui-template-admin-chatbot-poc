@@ -7,6 +7,31 @@ def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
 
+def _nested_dict(data: dict[str, Any], key: str) -> dict[str, Any] | None:
+    value = data.get(key)
+    return value if isinstance(value, dict) else None
+
+
+def _nested_list(data: dict[str, Any], *path: str) -> list[Any] | None:
+    current: Any = data
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current if isinstance(current, list) else None
+
+
+def _nested_total(data: dict[str, Any], container_key: str | None = None) -> int | None:
+    container = _nested_dict(data, container_key) if container_key else data
+    if not container:
+        return None
+    for key in ("total", "totalCount", "count", "rowCount"):
+        value = container.get(key)
+        if isinstance(value, int):
+            return value
+    return None
+
+
 def data_row_count(data: Any) -> int:
     if isinstance(data, list):
         return len(data)
@@ -15,6 +40,14 @@ def data_row_count(data: Any) -> int:
         if isinstance(items, list):
             total = data.get("total")
             return total if isinstance(total, int) else len(items)
+        rows = data.get("rows")
+        if isinstance(rows, list):
+            total = _nested_total(data)
+            return total if isinstance(total, int) else len(rows)
+        result_rows = _nested_list(data, "result", "rows")
+        if isinstance(result_rows, list):
+            total = _nested_total(data, "result")
+            return total if isinstance(total, int) else len(result_rows)
         return 1
     return 0
 
@@ -26,6 +59,12 @@ def data_shape(data: Any) -> str:
         items = data.get("items")
         if isinstance(items, list):
             return "object{items:array<object>}" if all(isinstance(item, dict) for item in items) else "object{items:array}"
+        rows = data.get("rows")
+        if isinstance(rows, list):
+            return "object{rows:array<object>}" if all(isinstance(item, dict) for item in rows) else "object{rows:array}"
+        result_rows = _nested_list(data, "result", "rows")
+        if isinstance(result_rows, list):
+            return "object{result.rows:array<object>}" if all(isinstance(item, dict) for item in result_rows) else "object{result.rows:array}"
         return "object"
     return type(data).__name__
 

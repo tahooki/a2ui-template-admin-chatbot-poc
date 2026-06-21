@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import type {
   A2UICandidateTrace,
   A2UIMappingDecision,
-  EquipmentApiResponse,
 } from "@/features/a2ui-template-poc/template-types";
 import {
   type A2AActionRequestData,
@@ -15,14 +14,11 @@ import {
 import { asRecord, textFromMessage } from "./a2a-types";
 import { message, newA2AId, surfaceArtifact, task, traceArtifact } from "./a2ui-artifacts";
 import { setTask } from "./a2ui-task-store";
+import { type A2UISurfacePlanResult, type A2UISurfacePlanTrace, planA2UISurfaceWithAI } from "@/server/a2ui-admin/a2ui-ai-surface-planner";
 import {
-  type A2UIRecommendation,
   type EquipmentApiId,
   chooseEquipmentApiForPrompt,
-  equipmentApiTitle,
   isEquipmentApiId,
-  recommendTemplate,
-  resolveTemplateData,
 } from "@/server/a2ui-admin/a2ui-runtime";
 
 export type A2AStreamEvent =
@@ -32,17 +28,6 @@ export type A2AStreamEvent =
 
 function readApiId(value: unknown): EquipmentApiId | undefined {
   return isEquipmentApiId(value) ? value : undefined;
-}
-
-function readEquipmentData(value: unknown): EquipmentApiResponse<unknown> | undefined {
-  const record = asRecord(value);
-  if (!record || !Array.isArray(record.items)) return undefined;
-  return {
-    items: record.items,
-    total: typeof record.total === "number" ? record.total : record.items.length,
-    page: typeof record.page === "number" ? record.page : 1,
-    pageSize: typeof record.pageSize === "number" ? record.pageSize : record.items.length,
-  };
 }
 
 function stableStringify(value: unknown): string {
@@ -62,8 +47,22 @@ function dataRowCount(value: unknown) {
   if (Array.isArray(value)) return value.length;
   const record = asRecord(value);
   if (!record) return 0;
-  const items = record.items;
-  if (Array.isArray(items)) return typeof record.total === "number" ? record.total : items.length;
+  if (Array.isArray(record.items)) return typeof record.total === "number" ? record.total : record.items.length;
+  if (Array.isArray(record.rows)) return typeof record.total === "number" ? record.total : record.rows.length;
+  for (const parentKey of ["result", "data", "payload"]) {
+    const parent = asRecord(record[parentKey]);
+    if (!parent) continue;
+    for (const childKey of ["items", "rows", "list"]) {
+      const rows = parent[childKey];
+      if (Array.isArray(rows)) {
+        return typeof parent.total === "number"
+          ? parent.total
+          : typeof parent.totalCount === "number"
+            ? parent.totalCount
+            : rows.length;
+      }
+    }
+  }
   return 1;
 }
 
@@ -71,8 +70,16 @@ function dataShape(value: unknown) {
   if (Array.isArray(value)) return value.every((item) => asRecord(item)) ? "array<object>" : "array";
   const record = asRecord(value);
   if (!record) return typeof value;
-  const items = record.items;
-  if (Array.isArray(items)) return items.every((item) => asRecord(item)) ? "object{items:array<object>}" : "object{items:array}";
+  if (Array.isArray(record.items)) return record.items.every((item) => asRecord(item)) ? "object{items:array<object>}" : "object{items:array}";
+  if (Array.isArray(record.rows)) return record.rows.every((item) => asRecord(item)) ? "object{rows:array<object>}" : "object{rows:array}";
+  for (const parentKey of ["result", "data", "payload"]) {
+    const parent = asRecord(record[parentKey]);
+    if (!parent) continue;
+    for (const childKey of ["items", "rows", "list"]) {
+      const rows = parent[childKey];
+      if (Array.isArray(rows)) return `object{${parentKey}.${childKey}:array<object>}`;
+    }
+  }
   return "object";
 }
 
@@ -109,11 +116,11 @@ function readSourceToolMetadata(
     "sourceTopLevelKeys",
     "renderToolName",
     "renderToolCallPolicy",
-    "normalizationTrace",
     "displayDataHash",
     "displayDataByteLength",
     "displayRowCount",
     "displayDataShape",
+    "aiSurfacePlanTrace",
     "intentSource",
   ];
 
@@ -156,6 +163,23 @@ function buildDataIntegrity(rawData: unknown, sourceTool?: Record<string, unknow
   };
 }
 
+function withPlanningMetadata(
+  sourceTool: Record<string, unknown> | undefined,
+  apiId: EquipmentApiId,
+  trace?: A2UISurfacePlanTrace,
+) {
+  if (!trace) return sourceTool;
+  return {
+    ...(sourceTool ?? {}),
+    sourceApiId: sourceTool?.sourceApiId ?? apiId,
+    aiSurfacePlanTrace: trace,
+    displayDataHash: trace.renderDataHash,
+    displayDataByteLength: trace.renderDataByteLength,
+    displayRowCount: trace.renderRowCount,
+    displayDataShape: "object{items:array<object>}",
+  };
+}
+
 function readRenderData(body: A2ASendMessageRequest): A2ARenderRequestData | undefined {
   const parts = body.message?.parts ?? [];
   for (const part of parts) {
@@ -181,18 +205,19 @@ function readActionData(body: A2ASendMessageRequest): A2AActionRequestData | und
 }
 
 function decisionTrace(
-  recommendation: A2UIRecommendation,
+  plan: A2UISurfacePlanResult,
   sourceTool?: Record<string, unknown>,
   dataIntegrity?: Record<string, unknown>,
 ) {
-  const candidates = recommendation.candidates;
+  const candidates = plan.candidates;
   return {
-    kind: "a2ui.matcher.trace" as const,
-    strategy: recommendation.strategy,
-    score: recommendation.score,
+    kind: "a2ui.ai_surface_plan.trace" as const,
+    strategy: plan.strategy,
+    score: plan.score,
     candidateCount: candidates?.length ?? 0,
     candidates,
-    mapping: recommendation.mapping,
+    mapping: plan.mode === "render_surface" ? plan.mapping : undefined,
+    aiSurfacePlanTrace: plan.trace,
     sourceTool,
     dataIntegrity,
   };
@@ -202,18 +227,18 @@ function textFallbackTask({
   contextId,
   fallbackText,
   reason,
-  recommendation,
+  plan,
   sourceTool,
   dataIntegrity,
 }: {
   contextId?: string;
   fallbackText?: string;
   reason: string;
-  recommendation?: A2UIRecommendation;
+  plan?: A2UISurfacePlanResult;
   sourceTool?: Record<string, unknown>;
   dataIntegrity?: Record<string, unknown>;
 }) {
-  const trace = recommendation ? traceArtifact(decisionTrace(recommendation, sourceTool, dataIntegrity)) : undefined;
+  const trace = plan ? traceArtifact(decisionTrace(plan, sourceTool, dataIntegrity)) : undefined;
   return task({
     contextId,
     state: "TASK_STATE_COMPLETED",
@@ -222,10 +247,10 @@ function textFallbackTask({
     metadata: {
       a2uiTaskKind: "text_fallback",
       reason,
-      strategy: recommendation?.strategy,
-      score: recommendation?.score,
-      candidates: recommendation?.candidates,
-      mapping: recommendation?.mapping,
+      strategy: plan?.strategy,
+      score: plan?.score,
+      candidates: plan?.candidates,
+      mapping: plan?.mode === "render_surface" ? plan.mapping : undefined,
       sourceTool,
       dataIntegrity,
     },
@@ -274,71 +299,70 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string): Promise
 
   const facts = asRecord(renderData.facts) ?? {};
   const apiId = readApiId(renderData.apiId) ?? readApiId(facts.apiId) ?? chooseEquipmentApiForPrompt(query);
-  const sourceTool = readSourceToolMetadata(renderData, facts, apiId);
-  const renderDataDisplayEquipment = readEquipmentData(renderData.displayData);
-  const factsDisplayEquipment = readEquipmentData(facts.displayData);
-  const renderDataEquipment = readEquipmentData(renderData.data);
-  const factsEquipment = readEquipmentData(facts.data);
-  const data = renderDataDisplayEquipment ?? factsDisplayEquipment ?? renderDataEquipment ?? factsEquipment;
   const rawData = renderData.data ?? facts.data ?? renderData.displayData ?? facts.displayData;
-  const dataIntegrity = buildDataIntegrity(rawData, sourceTool);
-  const sampleDataPreview = renderData.sampleDataPreview ?? (facts.sampleDataPreview as A2ARenderRequestData["sampleDataPreview"]);
-  const derivedSchema = renderData.derivedSchema ?? (facts.derivedSchema as A2ARenderRequestData["derivedSchema"]);
   const fallbackText = renderData.fallbackText || (typeof facts.fallbackText === "string" ? facts.fallbackText : undefined);
-  const options = {
-    includeTrace: renderData.a2uiOptions?.includeTrace ?? true,
-    allowIntentFallback: renderData.a2uiOptions?.allowIntentFallback ?? true,
-  };
+  let sourceTool = readSourceToolMetadata(renderData, facts, apiId);
+  let dataIntegrity = buildDataIntegrity(rawData, sourceTool);
 
   try {
-    const recommendation = await recommendTemplate({
+    const plan = await planA2UISurfaceWithAI({
       query,
       apiId,
-      data,
-      derivedSchema,
-      sampleDataPreview,
-      options,
+      rawData,
     });
+    sourceTool = withPlanningMetadata(sourceTool, apiId, plan.trace);
+    dataIntegrity = buildDataIntegrity(rawData, sourceTool);
 
-    if (recommendation.mode !== "render_surface" || !recommendation.templateId) {
+    if (plan.mode !== "render_surface") {
       const fallback = textFallbackTask({
         contextId,
         fallbackText,
-        reason: recommendation.reason,
-        recommendation,
+        reason: plan.reason,
+        plan,
         sourceTool,
         dataIntegrity,
       });
       return taskId ? { ...fallback, id: taskId } : fallback;
     }
 
-    if (!data) {
-      const fallback = textFallbackTask({
-        contextId,
-        fallbackText,
-        reason: "A2UI surface resolution requires agent-provided data in facts.data.",
-        recommendation,
-        sourceTool,
-        dataIntegrity,
-      });
-      return taskId ? { ...fallback, id: taskId } : fallback;
-    }
-
-    const surface = await resolveTemplateData({
-      templateId: recommendation.templateId,
-      query,
-      apiId,
-      data,
-      derivedSchema,
-      sampleDataPreview,
-      mapping: recommendation.mapping,
-    });
-    const trace = decisionTrace(recommendation, sourceTool, dataIntegrity);
+    const surface = {
+      templateId: plan.templateId,
+      version: "1.0.0",
+      payload: {
+        apiTitle: plan.apiTitle,
+        apiId: plan.apiId,
+        data: plan.data,
+        profile: plan.profile,
+        renderPlan: plan.renderPlan,
+      },
+      surfaceConfig: plan.template.surfaceConfig,
+      sourceIntent: plan.apiId === "equipment-catalog" ? "equipment.catalog.lookup" : "equipment.status.lookup",
+      updatedAt: new Date().toISOString(),
+      meta: {
+        registryVersion: plan.registryVersion,
+        decisionReason: plan.reason,
+        trace: [
+          "source:raw-business-api",
+          "planner:source-preview",
+          "planner:ai_surface_plan",
+          `planner:score:${plan.score}`,
+          `planner:selected:${plan.templateId}`,
+          ...(plan.candidates.filter((candidate) => candidate.rejected).map((candidate) => `candidate-rejected:${candidate.templateId}:${candidate.rejectionReason}`)),
+          "validator:ai-plan",
+          "binding:renderer-payload",
+        ],
+        strategy: plan.strategy,
+        score: plan.score,
+        candidates: plan.candidates,
+        mapping: plan.mapping,
+      },
+    };
+    const trace = decisionTrace(plan, sourceTool, dataIntegrity);
     return task({
       id: taskId,
       contextId,
       state: "TASK_STATE_COMPLETED",
-      text: `${equipmentApiTitle(apiId)}입니다. 등록된 A2UI 템플릿으로 정리했습니다.`,
+      text: `${plan.apiTitle}입니다. AI가 API 필드와 등록된 A2UI 템플릿을 비교해 정리했습니다.`,
       artifacts: [
         traceArtifact(trace),
         surfaceArtifact({
@@ -347,12 +371,13 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string): Promise
           surface,
           decision: {
             mode: "render_surface",
-            reason: recommendation.reason,
-            strategy: recommendation.strategy,
-            score: recommendation.score,
-            templateId: recommendation.templateId,
-            candidates: recommendation.candidates as A2UICandidateTrace[] | undefined,
-            mapping: recommendation.mapping as A2UIMappingDecision | undefined,
+            reason: plan.reason,
+            strategy: plan.strategy,
+            score: plan.score,
+            templateId: plan.templateId,
+            candidates: plan.candidates as A2UICandidateTrace[] | undefined,
+            mapping: plan.mapping as A2UIMappingDecision | undefined,
+            aiSurfacePlanTrace: plan.trace,
             sourceTool,
             dataIntegrity,
           },
@@ -360,11 +385,11 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string): Promise
       ],
       metadata: {
         a2uiTaskKind: "render_surface",
-        reason: recommendation.reason,
-        strategy: recommendation.strategy,
-        score: recommendation.score,
-        candidates: recommendation.candidates,
-        mapping: recommendation.mapping,
+        reason: plan.reason,
+        strategy: plan.strategy,
+        score: plan.score,
+        candidates: plan.candidates,
+        mapping: plan.mapping,
         sourceTool,
         dataIntegrity,
       },

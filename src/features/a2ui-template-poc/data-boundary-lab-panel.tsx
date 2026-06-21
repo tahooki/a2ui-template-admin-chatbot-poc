@@ -4,11 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { dataBoundaryScenarioById, dataBoundaryScenarios } from "./data-boundary-lab";
 import styles from "./styles.module.css";
 import type { DataBoundaryScenarioId, DataBoundaryScenarioTrace } from "./data-boundary-lab";
-import type { EquipmentApiResponse } from "./template-types";
 
 type ApiTableState = {
   apiRoute?: string;
-  data?: EquipmentApiResponse<unknown>;
+  data?: unknown;
   error?: string;
   isLoading: boolean;
 };
@@ -20,17 +19,28 @@ function valueText(value: unknown) {
   return String(value);
 }
 
-function isEquipmentApiResponse(value: unknown): value is EquipmentApiResponse<unknown> {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      Array.isArray((value as { items?: unknown }).items),
-  );
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
-function tableRows(data: EquipmentApiResponse<unknown>) {
-  return data.items.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)));
+function tableRows(data: unknown) {
+  const root = record(data);
+  const result = record(root?.result);
+  let rows: unknown[] = [];
+  if (Array.isArray(root?.items)) rows = root.items;
+  else if (Array.isArray(root?.rows)) rows = root.rows;
+  else if (Array.isArray(result?.rows)) rows = result.rows;
+  return rows.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)));
+}
+
+function rowTotal(data: unknown, rows: Record<string, unknown>[]) {
+  const root = record(data);
+  const result = record(root?.result);
+  if (typeof root?.total === "number") return root.total;
+  if (typeof root?.totalCount === "number") return root.totalCount;
+  if (typeof result?.total === "number") return result.total;
+  if (typeof result?.totalCount === "number") return result.totalCount;
+  return rows.length;
 }
 
 function columnsForRows(rows: Record<string, unknown>[]) {
@@ -57,7 +67,7 @@ export function DataBoundaryLabPanel({
         const response = await fetch(scenario.apiRoute, { cache: "no-store" });
         if (!response.ok) throw new Error(`${scenario.apiRoute} failed with ${response.status}`);
         const data = (await response.json()) as unknown;
-        if (!isEquipmentApiResponse(data)) throw new Error(`${scenario.apiRoute} did not return items[]`);
+        if (tableRows(data).length === 0) throw new Error(`${scenario.apiRoute} did not return table rows`);
         if (active) setApiTable({ apiRoute: scenario.apiRoute, data, isLoading: false });
       } catch (error) {
         if (!active) return;
@@ -83,7 +93,7 @@ export function DataBoundaryLabPanel({
   const columns = useMemo(() => columnsForRows(rows), [rows]);
   const visibleRowLimit = selectedScenario === "large_rows" ? 80 : 24;
   const visibleRows = rows.slice(0, visibleRowLimit);
-  const rowTotal = typeof tableData.total === "number" ? tableData.total : rows.length;
+  const totalRows = rowTotal(tableData, rows);
 
   return (
     <section className={styles.dataBoundaryLab} aria-label="A2UI data boundary table">
@@ -111,7 +121,7 @@ export function DataBoundaryLabPanel({
               <strong>{scenario.businessToolName}</strong>
             </div>
             <small>
-              {rowTotal} rows / {columns.length} columns
+              {totalRows} rows / {columns.length} columns
             </small>
           </div>
           <div className={styles.dataMetaStrip} aria-label="Business API route">

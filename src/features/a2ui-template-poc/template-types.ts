@@ -67,7 +67,7 @@ export type A2UITemplateInputSchema = {
   };
 };
 
-export type A2UIViewType = "statusBooleanList" | "simpleTextList" | "imageCardList";
+export type A2UIViewType = "statusBooleanList" | "simpleTextList" | "imageCardList" | "telemetryStatusTable";
 
 export type A2UIComponentSchemaSpec = {
   dataShape: "object" | "array<object>";
@@ -88,6 +88,7 @@ export type A2UIComponentSurfaceConfig = {
   descriptionBinding?: string;
   imageBinding?: string;
   statusBindings?: string[];
+  metricBindings?: string[];
   maxItems?: number;
 };
 
@@ -127,15 +128,25 @@ export type FieldMapping = {
   content?: string;
   image?: string;
   booleanFlags?: string[];
+  metrics?: string[];
 };
 
 export type A2UICandidateTrace = {
   templateId: string;
   score: number;
+  decision?: "select" | "reject";
   reason: string;
   rejected?: boolean;
   rejectionReason?: string;
   breakdown?: Record<string, number>;
+  ai?: {
+    schemaFit: number;
+    queryFit: number;
+    semanticFit: number;
+    renderFit: number;
+    risks: string[];
+    missingRequiredSlots: string[];
+  };
 };
 
 export type A2UIMappingDecision = {
@@ -145,7 +156,8 @@ export type A2UIMappingDecision = {
   mappings: Array<{
     slot: string;
     sourcePath: string;
-    transform?: "none" | "first" | "join" | "booleanLabel" | "statusTone";
+    targetField?: string;
+    transform?: "none" | "first" | "join" | "booleanLabel" | "statusTone" | "copy" | "boolean_code" | "number_to_boolean" | "default_false";
   }>;
   missingSlots: string[];
 };
@@ -159,9 +171,28 @@ export type A2UIRenderPlan = {
   isFallback: boolean;
   registryVersion: number;
   maxItems?: number;
-  strategy?: "derived_schema" | "template_schema_spec" | "fallback";
+  strategy?: "ai_surface_planner" | "derived_schema" | "template_schema_spec" | "fallback";
   candidates?: A2UICandidateTrace[];
   mapping?: A2UIMappingDecision;
+  aiSurfacePlanTrace?: {
+    promptVersion: string;
+    model?: string;
+    confidence?: number;
+    reason?: string;
+    primaryArrayPath?: string;
+    selectedTemplateId?: string;
+    fieldMappings?: unknown[];
+    slotMappings?: unknown[];
+    candidateEvaluations?: unknown[];
+    validation?: {
+      ok: boolean;
+      errors: string[];
+    };
+    sourceFieldPaths?: string[];
+    sourceSampleRows?: unknown[];
+    sourceRowCount?: number;
+    renderRowCount?: number;
+  };
 };
 
 export type EquipmentCatalogItem = {
@@ -209,7 +240,7 @@ export type A2UISurfaceEnvelope = {
     registryVersion: number;
     decisionReason: string;
     trace: string[];
-    strategy?: "derived_schema" | "template_schema_spec" | "fallback";
+    strategy?: "ai_surface_planner" | "derived_schema" | "template_schema_spec" | "fallback";
     score?: number;
     candidates?: A2UICandidateTrace[];
     mapping?: A2UIMappingDecision;

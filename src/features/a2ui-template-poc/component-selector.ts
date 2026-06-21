@@ -38,12 +38,19 @@ function buildMapping(template: A2UITemplateRegistration, profile: A2UIDataProfi
       : profile.fields
           .filter((field) => field.type === "boolean" || field.roleCandidates.includes("booleanFlag"))
           .map((field) => field.path);
+  const metrics =
+    template.surfaceConfig.metricBindings?.length && template.surfaceConfig.viewType === "telemetryStatusTable"
+      ? template.surfaceConfig.metricBindings
+      : profile.fields
+          .filter((field) => field.type === "number" || field.roleCandidates.includes("metric"))
+          .map((field) => field.path);
 
   return {
     title: template.surfaceConfig.titleBinding || title?.path,
     content: template.surfaceConfig.contentBinding || template.surfaceConfig.descriptionBinding || content?.path,
     image: template.surfaceConfig.imageBinding || image?.path,
     booleanFlags,
+    metrics,
   };
 }
 
@@ -87,6 +94,8 @@ export function selectA2UIComponent({
       const viewBonus =
         template.surfaceConfig.viewType === "imageCardList" && profile.hasImageField
           ? 18
+          : template.surfaceConfig.viewType === "telemetryStatusTable" && profile.fields.some((field) => field.type === "number" || field.roleCandidates.includes("metric"))
+            ? 18
           : template.surfaceConfig.viewType === "statusBooleanList" && profile.booleanFieldCount > 0
             ? 16
             : 0;

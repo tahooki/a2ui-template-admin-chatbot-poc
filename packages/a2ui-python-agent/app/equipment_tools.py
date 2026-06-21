@@ -67,9 +67,32 @@ def _role_candidates(key: str, field_type: str) -> list[str]:
     return roles
 
 
-def build_data_profile(data: dict[str, Any]) -> dict[str, Any]:
+def _rows_from_data(data: dict[str, Any]) -> tuple[list[dict[str, Any]], str, str | None, int]:
     items = data.get("items")
-    rows = [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+    if isinstance(items, list):
+        rows = [item for item in items if isinstance(item, dict)]
+        total = data.get("total")
+        return rows, "array<object>", "items", total if isinstance(total, int) else len(rows)
+
+    rows_value = data.get("rows")
+    if isinstance(rows_value, list):
+        rows = [item for item in rows_value if isinstance(item, dict)]
+        total = data.get("total") if isinstance(data.get("total"), int) else data.get("totalCount")
+        return rows, "array<object>", "rows", total if isinstance(total, int) else len(rows)
+
+    result = data.get("result")
+    if isinstance(result, dict):
+        result_rows = result.get("rows")
+        if isinstance(result_rows, list):
+            rows = [item for item in result_rows if isinstance(item, dict)]
+            total = result.get("totalCount") if isinstance(result.get("totalCount"), int) else result.get("total")
+            return rows, "array<object>", "result.rows", total if isinstance(total, int) else len(rows)
+
+    return [], "unknown", None, 0
+
+
+def build_data_profile(data: dict[str, Any]) -> dict[str, Any]:
+    rows, shape, list_path, row_count = _rows_from_data(data)
     keys = sorted({key for row in rows for key in row.keys()})
     fields: list[dict[str, Any]] = []
 
@@ -78,7 +101,7 @@ def build_data_profile(data: dict[str, Any]) -> dict[str, Any]:
         field_type = _field_type(key, examples)
         fields.append(
             {
-                "path": f"items[].{key}",
+                "path": f"{list_path}[].{key}" if list_path else key,
                 "key": key,
                 "type": field_type,
                 "roleCandidates": _role_candidates(key, field_type),
@@ -87,9 +110,9 @@ def build_data_profile(data: dict[str, Any]) -> dict[str, Any]:
         )
 
     return {
-        "shape": "array<object>" if rows else "unknown",
-        "rowCount": len(rows),
-        "listPath": "items" if isinstance(items, list) else None,
+        "shape": shape,
+        "rowCount": row_count,
+        "listPath": list_path,
         "fields": fields,
         "booleanFieldCount": len([field for field in fields if field["type"] == "boolean"]),
         "hasImageField": any("image" in field["roleCandidates"] for field in fields),

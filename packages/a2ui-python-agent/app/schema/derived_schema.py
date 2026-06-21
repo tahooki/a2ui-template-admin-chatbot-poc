@@ -5,6 +5,39 @@ from typing import Any
 SENSITIVE_KEY_RE = re.compile(r"(secret|token|password|authorization|cookie|phone|email)", re.IGNORECASE)
 
 
+def _value_at_path(data: Any, path: tuple[str, ...]) -> Any:
+    current = data
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _int_at_path(data: Any, path: tuple[str, ...]) -> int | None:
+    value = _value_at_path(data, path)
+    return value if isinstance(value, int) else None
+
+
+def _first_int_at_paths(data: Any, paths: tuple[tuple[str, ...], ...]) -> int | None:
+    for path in paths:
+        value = _int_at_path(data, path)
+        if value is not None:
+            return value
+    return None
+
+
+def _set_path(data: dict[str, Any], path: tuple[str, ...], value: Any) -> dict[str, Any]:
+    if not path:
+        return data
+    key = path[0]
+    if len(path) == 1:
+        return {**data, key: value}
+    child = data.get(key)
+    child_object = child if isinstance(child, dict) else {}
+    return {**data, key: _set_path(child_object, path[1:], value)}
+
+
 def _rows_from_data(data: Any) -> tuple[list[Any], str, str | None, int]:
     if isinstance(data, list):
         object_rows = [item for item in data if isinstance(item, dict)]
@@ -12,10 +45,28 @@ def _rows_from_data(data: Any) -> tuple[list[Any], str, str | None, int]:
         return data, shape, None, len(data)
 
     if isinstance(data, dict):
-        items = data.get("items")
-        if isinstance(items, list):
-            row_count = data.get("total") if isinstance(data.get("total"), int) else len(items)
-            return items, "array<object>", "items", row_count
+        array_candidates = [
+            (("items",), (("total",),)),
+            (("rows",), (("total",), ("totalCount",), ("count",), ("rowCount",))),
+            (("result", "rows"), (("result", "totalCount"), ("result", "total"), ("total",))),
+            (("data", "rows"), (("data", "totalCount"), ("data", "total"), ("total",))),
+            (("payload", "rows"), (("payload", "totalCount"), ("payload", "total"), ("total",))),
+            (("result", "items"), (("result", "totalCount"), ("result", "total"), ("total",))),
+            (("data", "items"), (("data", "totalCount"), ("data", "total"), ("total",))),
+            (("payload", "items"), (("payload", "totalCount"), ("payload", "total"), ("total",))),
+            (("result", "list"), (("result", "totalCount"), ("result", "total"), ("total",))),
+            (("data", "list"), (("data", "totalCount"), ("data", "total"), ("total",))),
+            (("payload", "list"), (("payload", "totalCount"), ("payload", "total"), ("total",))),
+        ]
+        for array_path, total_paths in array_candidates:
+            rows = _value_at_path(data, array_path)
+            if not isinstance(rows, list):
+                continue
+            row_count = _first_int_at_paths(data, total_paths)
+            primary_array_path = ".".join(array_path)
+            if primary_array_path == "items":
+                return rows, "array<object>", primary_array_path, row_count if row_count is not None else len(rows)
+            return rows, f"object{{{primary_array_path}:array<object>}}", primary_array_path, row_count if row_count is not None else len(rows)
         return [data], "object", None, 1
 
     return [], "unknown", None, 0
@@ -38,7 +89,7 @@ def _mask(value: Any, path: str, masked_fields: set[str]) -> Any:
 
 def _with_rows(data: Any, rows: list[Any], primary_array_path: str | None) -> Any:
     if primary_array_path and isinstance(data, dict):
-        return {**data, primary_array_path: rows}
+        return _set_path(data, tuple(primary_array_path.split(".")), rows)
     if isinstance(data, list):
         return rows
     return rows[0] if rows else None

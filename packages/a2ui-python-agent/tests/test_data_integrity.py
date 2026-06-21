@@ -18,6 +18,21 @@ class DataIntegrityTest(unittest.TestCase):
         self.assertGreater(snapshot["byteLength"], 0)
         self.assertIn("items", snapshot["topLevelKeys"])
 
+    def test_snapshot_counts_nested_result_rows(self) -> None:
+        snapshot = build_data_integrity_snapshot(
+            {
+                "result": {
+                    "rows": [{"eqp_id": "bulk-1"}, {"eqp_id": "bulk-2"}],
+                    "totalCount": 1000,
+                },
+                "success": True,
+            }
+        )
+
+        self.assertEqual(snapshot["rowCount"], 1000)
+        self.assertEqual(snapshot["shape"], "object{result.rows:array<object>}")
+        self.assertIn("result", snapshot["topLevelKeys"])
+
     def test_detects_missing_row(self) -> None:
         source = {"items": [{"id": "eq-1"}, {"id": "eq-2"}], "total": 2}
         received = {"items": [{"id": "eq-1"}], "total": 1}

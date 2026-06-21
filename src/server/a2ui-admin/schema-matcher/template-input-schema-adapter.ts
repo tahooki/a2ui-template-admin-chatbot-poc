@@ -30,6 +30,16 @@ function slotForRole(role: A2UIRole, surfaceConfig: A2UIComponentSurfaceConfig):
     };
   }
 
+  if (role === "metric") {
+    return {
+      slot: "items[].metrics",
+      acceptsTypes: ["number"],
+      acceptsRoles: ["metric"],
+      minCount: surfaceConfig.metricBindings?.length || 1,
+      required: true,
+    };
+  }
+
   if (role === "content" || role === "description") {
     return {
       slot: "cards[].description",

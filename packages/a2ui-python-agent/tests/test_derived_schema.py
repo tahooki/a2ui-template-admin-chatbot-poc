@@ -56,6 +56,32 @@ class DerivedSchemaTest(unittest.TestCase):
         self.assertTrue(preview["truncated"])
         self.assertEqual(derived["rowCount"], 1000)
 
+    def test_nested_result_rows_are_bounded_in_preview(self) -> None:
+        data = {
+            "result": {
+                "rows": [
+                    {"eqp_id": f"BULK-{index:04d}", "eqp_nm": f"대량 검증 {index}", "operation_yn": "Y"}
+                    for index in range(1000)
+                ],
+                "totalCount": 1000,
+                "pageNo": 1,
+                "rowsPerPage": 1000,
+            },
+            "success": True,
+        }
+
+        preview = build_sample_data_preview(data, source_id="large-equipment-status")
+        derived = build_derived_schema(data, source_id="large-equipment-status", sample_data_preview=preview)
+        field_paths = {field["path"] for field in derived["fields"]}
+
+        self.assertEqual(preview["primaryArrayPath"], "result.rows")
+        self.assertEqual(preview["sampleSize"], 10)
+        self.assertEqual(preview["rowCount"], 1000)
+        self.assertLess(len(preview["data"]["result"]["rows"]), 1000)
+        self.assertTrue(preview["truncated"])
+        self.assertEqual(derived["rowCount"], 1000)
+        self.assertIn("result.rows.eqp_nm", field_paths)
+
     def test_wide_columns_build_schema_without_crashing(self) -> None:
         row = {
             "id": "eq-1",

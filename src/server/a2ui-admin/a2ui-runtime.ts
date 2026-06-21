@@ -10,6 +10,7 @@ import type {
   EquipmentApiResponse,
 } from "@/features/a2ui-template-poc/template-types";
 import { getTemplate, readTemplateCatalog } from "./catalog-store";
+import { planA2UISurfaceWithAI } from "./a2ui-ai-surface-planner";
 import type { DerivedSchema } from "./schema-matcher/derived-schema-types";
 import { buildDerivedSchema, derivedSchemaFromDataProfile } from "./schema-matcher/derived-schema-builder";
 import { buildSampleDataPreview, type SampleDataPreview } from "./schema-matcher/sample-data-preview";
@@ -223,6 +224,47 @@ export async function recommendTemplate({
   const selectedApiId = apiId ?? chooseEquipmentApiForPrompt(query);
   const catalog = await readTemplateCatalog();
   const apiTitle = equipmentApiTitle(selectedApiId);
+  const rawPlannerData = data ?? sampleDataPreview?.data;
+  if (rawPlannerData) {
+    const planned = await planA2UISurfaceWithAI({
+      query,
+      apiId: selectedApiId,
+      rawData: rawPlannerData,
+    });
+
+    if (planned.mode === "render_surface") {
+      return {
+        mode: "render_surface",
+        templateId: planned.templateId,
+        apiId: selectedApiId,
+        apiTitle,
+        profile: planned.profile,
+        renderPlan: planned.renderPlan,
+        reason: planned.reason,
+        registryVersion: planned.registryVersion,
+        strategy: "ai_surface_planner",
+        score: planned.score,
+        mapping: planned.mapping,
+        candidates: planned.candidates,
+        derivedSchema: planned.derivedSchema,
+      };
+    }
+
+    return {
+      mode: "text_fallback",
+      templateId: null,
+      apiId: selectedApiId,
+      apiTitle,
+      profile: buildA2UIDataProfile(undefined),
+      renderPlan: planned.renderPlan,
+      reason: planned.reason,
+      registryVersion: planned.registryVersion,
+      strategy: "ai_surface_planner",
+      score: planned.score,
+      candidates: planned.candidates,
+    };
+  }
+
   const canonicalSchema = canonicalDerivedSchema({
     data,
     providedDerivedSchema: derivedSchema,

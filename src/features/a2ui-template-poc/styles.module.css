@@ -1930,6 +1930,7 @@
 }
 
 .surface_statusBooleanList,
+.surface_telemetryStatusTable,
 .surface_imageCardList {
   background: #fff;
 }
@@ -2065,6 +2066,61 @@
   border: 1px solid #d0d7df;
   background: #eef2f6;
   color: #64748b;
+}
+
+.telemetryTable {
+  display: grid;
+  gap: 1px;
+  margin-top: 12px;
+  border: 1px solid #c7d8dc;
+  border-radius: 8px;
+  background: #c7d8dc;
+  overflow-x: auto;
+}
+
+.telemetryHeader,
+.telemetryDataRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.5fr) repeat(3, minmax(48px, 0.55fr)) repeat(4, minmax(58px, 0.7fr));
+  min-width: 620px;
+  align-items: center;
+  gap: 1px;
+}
+
+.telemetryHeader {
+  background: #244f5c;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.telemetryHeader span,
+.telemetryDataRow > span {
+  min-height: 38px;
+  padding: 8px 5px;
+}
+
+.telemetryDataRow {
+  background: #fff;
+}
+
+.telemetryDataRow:nth-child(odd) {
+  background: #f7fbfc;
+}
+
+.metricCell {
+  display: inline-flex;
+  min-width: 42px;
+  min-height: 28px;
+  align-items: center;
+  justify-content: flex-end;
+  border-radius: 8px;
+  padding: 5px 7px;
+  background: #eef7f8;
+  color: #244f5c;
+  font-size: 11px;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
 }
 
 .fallbackNotice {

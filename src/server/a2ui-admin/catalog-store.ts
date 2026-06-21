@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { COMMON_STATUS_TEMPLATE_ID, INITIAL_TEMPLATES } from "@/features/a2ui-template-poc/initial-templates";
+import { COMMON_STATUS_TEMPLATE_ID, INITIAL_TEMPLATES, TELEMETRY_STATUS_TEMPLATE_ID } from "@/features/a2ui-template-poc/initial-templates";
 import type { A2UITemplateRegistration } from "@/features/a2ui-template-poc/template-types";
 import { normalizeTemplateInputSchema } from "./schema-matcher/template-input-schema-adapter";
 
@@ -31,12 +31,27 @@ function withoutDeprecatedTemplates(templates: A2UITemplateRegistration[]) {
   return templates.filter((template) => template.componentId !== "simpleTextList");
 }
 
-function withFixedCommonStatusTemplate(templates: A2UITemplateRegistration[]) {
+function withRequiredInitialTemplates(templates: A2UITemplateRegistration[]) {
   const normalizedTemplates = templates.map(normalizeTemplateInputSchema);
-  const templateIds = new Set(normalizedTemplates.map((template) => template.componentId));
-  if (templateIds.has(COMMON_STATUS_TEMPLATE_ID)) return normalizedTemplates;
-  const fixedTemplate = cloneInitialTemplates().find((template) => template.componentId === COMMON_STATUS_TEMPLATE_ID);
-  return fixedTemplate ? [fixedTemplate, ...normalizedTemplates] : normalizedTemplates;
+  const initialTemplates = cloneInitialTemplates();
+  const requiredIds = [COMMON_STATUS_TEMPLATE_ID, TELEMETRY_STATUS_TEMPLATE_ID];
+  const withRequired = [...normalizedTemplates];
+
+  for (const componentId of requiredIds) {
+    if (withRequired.some((template) => template.componentId === componentId)) continue;
+    const fixedTemplate = initialTemplates.find((template) => template.componentId === componentId);
+    if (fixedTemplate) withRequired.unshift(fixedTemplate);
+  }
+
+  return withRequired.map((template) =>
+    template.componentId === "equipment.statusBooleanList"
+      ? {
+          ...template,
+          status: "draft" as const,
+          description: template.description || "레거시 상태 목록 템플릿이다. 공용 상태 템플릿과 거의 같아 AI 선택 검증에서는 제외한다.",
+        }
+      : template,
+  );
 }
 
 function isTemplate(value: unknown): value is A2UITemplateRegistration {
@@ -64,7 +79,7 @@ function normalizeCatalog(value: unknown): A2UITemplateCatalog {
   return {
     version: typeof record.version === "number" ? record.version : 1,
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString(),
-    templates: templates.length ? withFixedCommonStatusTemplate(templates) : cloneInitialTemplates(),
+    templates: templates.length ? withRequiredInitialTemplates(templates) : cloneInitialTemplates(),
   };
 }
 

@@ -99,6 +99,10 @@ function sourceForSlot(mapping: A2UIMappingDecision | undefined, slotMatcher: (s
   return mapping?.mappings.find((item) => slotMatcher(item.slot))?.sourcePath;
 }
 
+function sourcesForSlot(mapping: A2UIMappingDecision | undefined, slotMatcher: (slot: string) => boolean) {
+  return mapping?.mappings.filter((item) => slotMatcher(item.slot)).map((item) => item.sourcePath) ?? [];
+}
+
 export function fieldMappingFromDecision({
   template,
   derivedSchema,
@@ -111,30 +115,45 @@ export function fieldMappingFromDecision({
   query: string;
 }): FieldMapping {
   const title =
-    template.surfaceConfig.titleBinding ||
     sourceForSlot(mapping, (slot) => /title/i.test(slot)) ||
+    template.surfaceConfig.titleBinding ||
     rendererPath(firstFieldByRoles(derivedSchema, ["title", "label"], roleHints(template, "title"), query)?.path ?? "");
   const content =
+    sourceForSlot(mapping, (slot) => /description|content/i.test(slot)) ||
     template.surfaceConfig.contentBinding ||
     template.surfaceConfig.descriptionBinding ||
-    sourceForSlot(mapping, (slot) => /description|content/i.test(slot)) ||
     rendererPath(firstFieldByRoles(derivedSchema, ["content", "description"], roleHints(template, "content"), query)?.path ?? "");
   const image =
-    template.surfaceConfig.imageBinding ||
     sourceForSlot(mapping, (slot) => /image/i.test(slot)) ||
+    template.surfaceConfig.imageBinding ||
     rendererPath(firstFieldByRoles(derivedSchema, ["image"], roleHints(template, "image"), query)?.path ?? "");
-  const booleanFlags =
-    template.surfaceConfig.viewType === "statusBooleanList" && template.surfaceConfig.statusBindings?.length
-      ? template.surfaceConfig.statusBindings
-      : derivedSchema.fields
-          .filter((field) => field.type === "boolean" || field.roles.includes("booleanFlag"))
-          .map((field) => rendererPath(field.path));
+  const mappedBooleanFlags = sourcesForSlot(mapping, (slot) => /status|boolean|flag/i.test(slot));
+  const mappedMetrics = sourcesForSlot(mapping, (slot) => /metric/i.test(slot));
+  let booleanFlags = mappedBooleanFlags;
+  if (booleanFlags.length === 0 && template.surfaceConfig.viewType === "statusBooleanList" && template.surfaceConfig.statusBindings?.length) {
+    booleanFlags = template.surfaceConfig.statusBindings;
+  }
+  if (booleanFlags.length === 0) {
+    booleanFlags = derivedSchema.fields
+      .filter((field) => field.type === "boolean" || field.roles.includes("booleanFlag"))
+      .map((field) => rendererPath(field.path));
+  }
+  let metrics = mappedMetrics;
+  if (metrics.length === 0 && template.surfaceConfig.viewType === "telemetryStatusTable" && template.surfaceConfig.metricBindings?.length) {
+    metrics = template.surfaceConfig.metricBindings;
+  }
+  if (metrics.length === 0) {
+    metrics = derivedSchema.fields
+      .filter((field) => field.type === "number" || field.roles.includes("metric"))
+      .map((field) => rendererPath(field.path));
+  }
 
   return {
     title: title || undefined,
     content: content || undefined,
     image: image || undefined,
     booleanFlags,
+    metrics,
   };
 }
 

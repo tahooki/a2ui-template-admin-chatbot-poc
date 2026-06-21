@@ -1,4 +1,5 @@
 import type {
+  A2UICandidateTrace,
   A2UIDataProfile,
   A2UIDerivedFieldType,
   A2UIRenderPlan,
@@ -8,7 +9,7 @@ import type {
   EquipmentApiResponse,
 } from "./template-types";
 import type { AgentFlowEvent } from "./agent-flow-types";
-import { COMMON_STATUS_TEMPLATE_ID } from "./initial-templates";
+import { COMMON_STATUS_TEMPLATE_ID, TELEMETRY_STATUS_TEMPLATE_ID } from "./initial-templates";
 
 export type DataBoundaryScenarioId = "status" | "catalog" | "wide_columns" | "large_rows";
 
@@ -82,9 +83,19 @@ export type LabDerivedSchema = {
   };
 };
 
-export type NormalizationTrace = {
+export type AiSurfacePlanDemoTrace = {
   applied: boolean;
   strategy: string;
+  promptVersion: string;
+  model: string;
+  selectedTemplateId: string;
+  sourceArrayPath?: string;
+  sourceFieldPaths: string[];
+  candidateEvaluations: A2UICandidateTrace[];
+  validation: {
+    ok: boolean;
+    errors: string[];
+  };
   sourceRowCount: number;
   displayRowCount: number;
   sourceShape: string;
@@ -122,13 +133,13 @@ export type DataBoundaryScenarioTrace = {
   expectedTemplateId: string;
   expectedTemplateNote?: string;
   query: string;
-  sourceData: EquipmentApiResponse<unknown>;
-  receivedData: EquipmentApiResponse<unknown>;
+  sourceData: unknown;
+  receivedData: unknown;
   displayData: EquipmentApiResponse<unknown>;
   sourceFingerprint: DataFingerprint;
   receivedFingerprint: DataFingerprint;
   integrity: DataIntegrityComparison;
-  normalization: NormalizationTrace;
+  aiSurfacePlanTrace: AiSurfacePlanDemoTrace;
   sampleDataPreview: LabPreview;
   derivedSchema: LabDerivedSchema;
   templateContract: A2UITemplateRegistration;
@@ -276,6 +287,74 @@ const catalogTemplate: A2UITemplateRegistration = {
   updatedAt: "2026-06-17T00:00:00.000Z",
 };
 
+const telemetryTemplate: A2UITemplateRegistration = {
+  componentId: TELEMETRY_STATUS_TEMPLATE_ID,
+  title: "계측 상태 테이블",
+  description: "컬럼이 많은 장비 상태/계측 API에서 상태값과 numeric telemetry 값을 함께 보여준다.",
+  selectionGuide:
+    "컬럼 수가 많고 telemetry/metric field가 여러 개 있으며, 사용자가 컬럼 많은 상태, 계측, 진단 값을 보고 싶어 할 때 사용한다.",
+  schemaSpec: {
+    dataShape: "array<object>",
+    listPath: "items",
+    requiredRoles: ["title", "booleanFlag", "metric"],
+    minBooleanFields: 2,
+    fieldHints: {
+      title: ["assetDisplayName", "name"],
+      booleanFlag: ["isOnline", "isRunning", "hasAlarm", "needsInspection"],
+      metric: ["telemetry", "alarmTotalCnt"],
+    },
+    intentKeywords: ["컬럼 많은 상태", "계측", "진단", "telemetry"],
+  },
+  inputSchema: {
+    schemaVersion: "2026-06-11",
+    accepts: {
+      shape: ["array<object>"],
+      minRows: 1,
+      capabilities: {
+        hasBooleans: true,
+        hasStatus: true,
+        hasNumericMetrics: true,
+      },
+    },
+    requiredSlots: [
+      {
+        slot: "items[].title",
+        acceptsTypes: ["string"],
+        acceptsRoles: ["title", "label"],
+        required: true,
+      },
+      {
+        slot: "items[].statusFlags",
+        acceptsTypes: ["boolean"],
+        acceptsRoles: ["booleanFlag", "status"],
+        minCount: 2,
+        required: true,
+      },
+      {
+        slot: "items[].metrics",
+        acceptsTypes: ["number"],
+        acceptsRoles: ["metric"],
+        minCount: 3,
+        required: true,
+      },
+    ],
+    selectionHints: {
+      queryKeywords: ["컬럼 많은 상태", "계측", "진단", "telemetry"],
+      bestFor: ["wide telemetry status table"],
+      priority: 8,
+    },
+  },
+  surfaceConfig: {
+    viewType: "telemetryStatusTable",
+    titleBinding: "items[].name",
+    statusBindings: ["items[].isOnline", "items[].isRunning", "items[].hasAlarm", "items[].needsInspection"],
+    metricBindings: ["items[].telemetry_000", "items[].telemetry_001", "items[].telemetry_002"],
+    maxItems: 6,
+  },
+  status: "registered",
+  updatedAt: "2026-06-17T00:00:00.000Z",
+};
+
 export const dataBoundaryScenarios: DataBoundaryScenario[] = [
   {
     id: "status",
@@ -306,7 +385,7 @@ export const dataBoundaryScenarios: DataBoundaryScenario[] = [
     apiId: "equipment-status-wide-columns",
     businessToolName: "get_equipment_status_wide_columns",
     query: "컬럼이 많은 장비 상태 목록 보여줘",
-    expectedTemplateId: COMMON_STATUS_TEMPLATE_ID,
+    expectedTemplateId: TELEMETRY_STATUS_TEMPLATE_ID,
   },
   {
     id: "large_rows",
@@ -351,15 +430,15 @@ function wideColumnStatusRows(count = 6) {
   return Array.from({ length: count }, (_, index) => {
     const serial = String(index + 1).padStart(3, "0");
     return {
-      id: `wide-status-${serial}`,
-      name: `${labels[index % labels.length]} W${serial}`,
-      isOnline: index % 2 === 0,
-      isRunning: index % 3 !== 1,
-      hasAlarm: index === 2,
-      needsInspection: index === 4,
-      isReserved: index % 3 === 0,
-      updatedAt: `2026-06-17T10:${String(index * 7).padStart(2, "0")}:00Z`,
-      location: `계측랩-${index + 1}`,
+      assetId: `WIDE-${serial}`,
+      assetDisplayName: `${labels[index % labels.length]} W${serial}`,
+      operStateCd: index % 2 === 0 ? "ONLINE" : "OFFLINE",
+      runStateYn: index % 3 !== 1 ? "Y" : "N",
+      alarmTotalCnt: index === 2 ? 2 : 0,
+      inspectDueYn: index === 4 ? "Y" : "N",
+      reserveFlag: index % 3 === 0 ? "Y" : "N",
+      lastSignalAt: `2026-06-21T10:${String(index * 7).padStart(2, "0")}:00Z`,
+      plantZone: `계측랩-${index + 1}`,
     };
   });
 }
@@ -370,15 +449,15 @@ function largeRowStatusRows(count = 1000) {
   return Array.from({ length: count }, (_, index) => {
     const serial = String(index + 1).padStart(4, "0");
     return {
-      id: `bulk-status-${serial}`,
-      name: `${labels[index % labels.length]} ${serial}`,
-      isOnline: index % 19 !== 0,
-      isRunning: index % 6 !== 0,
-      hasAlarm: index % 37 === 0,
-      needsInspection: index % 41 === 0 || index % 53 === 0,
-      isReserved: index % 8 === 0,
-      updatedAt: `2026-06-17T11:${String(index % 60).padStart(2, "0")}:00Z`,
-      location: `대량검증-${String((index % 20) + 1).padStart(2, "0")}`,
+      eqp_id: `BULK-${serial}`,
+      eqp_nm: `${labels[index % labels.length]} ${serial}`,
+      operation_yn: index % 19 !== 0 ? "Y" : "N",
+      running_code: index % 6 !== 0 ? "RUN" : "STOP",
+      alarm_count: index % 37 === 0 ? 1 : 0,
+      inspection_required: index % 41 === 0 || index % 53 === 0 ? "Y" : "N",
+      reserved_flag: index % 8 === 0,
+      last_dtm: `2026-06-21T11:${String(index % 60).padStart(2, "0")}:00Z`,
+      site_nm: `대량검증-${String((index % 20) + 1).padStart(2, "0")}`,
     };
   });
 }
@@ -410,7 +489,7 @@ function equipmentResponse(items: Record<string, unknown>[], pageSize = items.le
   return { items, total: items.length, page: 1, pageSize };
 }
 
-function scenarioSource(id: DataBoundaryScenarioId): EquipmentApiResponse<unknown> {
+function scenarioSource(id: DataBoundaryScenarioId): unknown {
   if (id === "catalog") return equipmentResponse(catalogRows());
   if (id === "wide_columns") {
     return equipmentResponse(
@@ -423,12 +502,22 @@ function scenarioSource(id: DataBoundaryScenarioId): EquipmentApiResponse<unknow
       }),
     );
   }
-  if (id === "large_rows") return equipmentResponse(largeRowStatusRows(1000), 1000);
+  if (id === "large_rows") {
+    return {
+      result: {
+        rows: largeRowStatusRows(1000),
+        totalCount: 1000,
+        pageNo: 1,
+        rowsPerPage: 1000,
+      },
+      success: true,
+    };
+  }
   return equipmentResponse(statusRows());
 }
 
-function scenarioReceived(sourceData: EquipmentApiResponse<unknown>) {
-  return JSON.parse(JSON.stringify(sourceData)) as EquipmentApiResponse<unknown>;
+function scenarioReceived(sourceData: unknown) {
+  return JSON.parse(JSON.stringify(sourceData)) as unknown;
 }
 
 function stableStringify(value: unknown): string {
@@ -446,8 +535,42 @@ function stableStringify(value: unknown): string {
 
 function dataShape(data: unknown) {
   if (data && typeof data === "object" && !Array.isArray(data) && Array.isArray((data as { items?: unknown }).items)) return "object{items:array<object>}";
+  if (data && typeof data === "object" && !Array.isArray(data) && Array.isArray((data as { rows?: unknown }).rows)) return "object{rows:array<object>}";
+  const result = data && typeof data === "object" && !Array.isArray(data) ? (data as { result?: { rows?: unknown } }).result : undefined;
+  if (result && typeof result === "object" && Array.isArray(result.rows)) return "object{result.rows:array<object>}";
   if (Array.isArray(data)) return "array";
   return data && typeof data === "object" ? "object" : typeof data;
+}
+
+function extractRows(data: unknown): { rows: Record<string, unknown>[]; rowCount: number; arrayPath?: string; page?: number; pageSize?: number } {
+  if (Array.isArray(data)) {
+    return {
+      rows: data.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))),
+      rowCount: data.length,
+    };
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) return { rows: [], rowCount: 0 };
+  const record = data as Record<string, unknown>;
+  if (Array.isArray(record.items)) {
+    return {
+      rows: record.items.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))),
+      rowCount: typeof record.total === "number" ? record.total : record.items.length,
+      arrayPath: "items",
+      page: typeof record.page === "number" ? record.page : 1,
+      pageSize: typeof record.pageSize === "number" ? record.pageSize : record.items.length,
+    };
+  }
+  const result = record.result && typeof record.result === "object" && !Array.isArray(record.result) ? (record.result as Record<string, unknown>) : undefined;
+  if (result && Array.isArray(result.rows)) {
+    return {
+      rows: result.rows.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))),
+      rowCount: typeof result.totalCount === "number" ? result.totalCount : result.rows.length,
+      arrayPath: "result.rows",
+      page: typeof result.pageNo === "number" ? result.pageNo : 1,
+      pageSize: typeof result.rowsPerPage === "number" ? result.rowsPerPage : result.rows.length,
+    };
+  }
+  return { rows: [record], rowCount: 1 };
 }
 
 function fingerprint(data: unknown): DataFingerprint {
@@ -458,10 +581,11 @@ function fingerprint(data: unknown): DataFingerprint {
     hash = Math.imul(hash, 16777619);
   }
   const record = data && typeof data === "object" && !Array.isArray(data) ? (data as EquipmentApiResponse<unknown>) : undefined;
+  const extracted = extractRows(data);
   return {
     dataHash: `fnv1a32:${(hash >>> 0).toString(16).padStart(8, "0")}`,
     byteLength: new TextEncoder().encode(canonical).length,
-    rowCount: record?.items?.length ?? 0,
+    rowCount: extracted.rowCount,
     shape: dataShape(data),
     topLevelKeys: record ? Object.keys(record).sort() : undefined,
   };
@@ -497,12 +621,13 @@ function boolFromCode(value: unknown) {
   return undefined;
 }
 
-function normalizeData(source: EquipmentApiResponse<unknown>, scenario: DataBoundaryScenario) {
+function planDisplayData(source: unknown, scenario: DataBoundaryScenario, selectedTemplateId: string, candidates: A2UICandidateTrace[]) {
   const sourceFingerprint = fingerprint(source);
-  const rules: NormalizationTrace["rules"] = [];
+  const rules: AiSurfacePlanDemoTrace["rules"] = [];
   const shouldNormalizeStatus = scenario.apiId !== "equipment-catalog";
-  const items = source.items
-    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
+  const extracted = extractRows(source);
+  const sourceFieldPaths = Array.from(new Set(extracted.rows.flatMap((row) => Object.keys(row)))).sort().map((key) => `${extracted.arrayPath ?? "items"}[].${key}`);
+  const items = extracted.rows
     .map((row, rowIndex) => {
       const next = { ...row };
       const assign = (targetField: string, sourceField: string, transform: string, value: unknown) => {
@@ -521,18 +646,34 @@ function normalizeData(source: EquipmentApiResponse<unknown>, scenario: DataBoun
 
       if (!shouldNormalizeStatus) return next;
 
-      if (row.eqpId && !row.id) assign("id", "eqpId", "alias", row.eqpId);
-      if (row.eqpNm && !row.name) assign("name", "eqpNm", "alias", row.eqpNm);
-      if (row.lastDtm && !row.updatedAt) assign("updatedAt", "lastDtm", "alias", row.lastDtm);
-      if (row.site && !row.location) assign("location", "site", "alias", row.site);
+      if (row.eqpId && !row.id) assign("id", "eqpId", "ai_field_mapping", row.eqpId);
+      if (row.eqpNm && !row.name) assign("name", "eqpNm", "ai_field_mapping", row.eqpNm);
+      if (row.eqp_id && !row.id) assign("id", "eqp_id", "ai_field_mapping", row.eqp_id);
+      if (row.eqp_nm && !row.name) assign("name", "eqp_nm", "ai_field_mapping", row.eqp_nm);
+      if (row.assetId && !row.id) assign("id", "assetId", "ai_field_mapping", row.assetId);
+      if (row.assetDisplayName && !row.name) assign("name", "assetDisplayName", "ai_field_mapping", row.assetDisplayName);
+      if (row.lastDtm && !row.updatedAt) assign("updatedAt", "lastDtm", "ai_field_mapping", row.lastDtm);
+      if (row.last_dtm && !row.updatedAt) assign("updatedAt", "last_dtm", "ai_field_mapping", row.last_dtm);
+      if (row.lastSignalAt && !row.updatedAt) assign("updatedAt", "lastSignalAt", "ai_field_mapping", row.lastSignalAt);
+      if (row.site && !row.location) assign("location", "site", "ai_field_mapping", row.site);
+      if (row.site_nm && !row.location) assign("location", "site_nm", "ai_field_mapping", row.site_nm);
+      if (row.plantZone && !row.location) assign("location", "plantZone", "ai_field_mapping", row.plantZone);
 
-      const online = boolFromCode(row.opYn ?? row.isOnline);
-      const running = boolFromCode(row.runYn ?? row.isRunning);
-      const inspection = boolFromCode(row.inspReqYn ?? row.needsInspection);
-      if (typeof online === "boolean" && typeof row.isOnline !== "boolean") assign("isOnline", "opYn", "status_code_to_boolean", online);
-      if (typeof running === "boolean" && typeof row.isRunning !== "boolean") assign("isRunning", "runYn", "status_code_to_boolean", running);
-      if (typeof inspection === "boolean" && typeof row.needsInspection !== "boolean") assign("needsInspection", "inspReqYn", "status_code_to_boolean", inspection);
-      if (typeof row.hasAlarm !== "boolean" && row.alrmCnt !== undefined) assign("hasAlarm", "alrmCnt", "count_to_boolean", Number(row.alrmCnt) > 0);
+      const onlineSource = row.opYn !== undefined ? "opYn" : row.operation_yn !== undefined ? "operation_yn" : row.operStateCd !== undefined ? "operStateCd" : "isOnline";
+      const runningSource = row.runYn !== undefined ? "runYn" : row.running_code !== undefined ? "running_code" : row.runStateYn !== undefined ? "runStateYn" : "isRunning";
+      const inspectionSource = row.inspReqYn !== undefined ? "inspReqYn" : row.inspection_required !== undefined ? "inspection_required" : row.inspectDueYn !== undefined ? "inspectDueYn" : "needsInspection";
+      const online = boolFromCode(row[onlineSource] ?? row.isOnline);
+      const running = boolFromCode(row[runningSource] ?? row.isRunning);
+      const inspection = boolFromCode(row[inspectionSource] ?? row.needsInspection);
+      if (typeof online === "boolean" && typeof row.isOnline !== "boolean") assign("isOnline", onlineSource, "ai_boolean_code", online);
+      if (typeof running === "boolean" && typeof row.isRunning !== "boolean") assign("isRunning", runningSource, "ai_boolean_code", running);
+      if (typeof inspection === "boolean" && typeof row.needsInspection !== "boolean") assign("needsInspection", inspectionSource, "ai_boolean_code", inspection);
+      if (typeof row.hasAlarm !== "boolean" && row.alrmCnt !== undefined) assign("hasAlarm", "alrmCnt", "ai_number_to_boolean", Number(row.alrmCnt) > 0);
+      if (typeof row.hasAlarm !== "boolean" && row.alarm_count !== undefined) assign("hasAlarm", "alarm_count", "ai_number_to_boolean", Number(row.alarm_count) > 0);
+      if (typeof row.hasAlarm !== "boolean" && row.alarmTotalCnt !== undefined) assign("hasAlarm", "alarmTotalCnt", "ai_number_to_boolean", Number(row.alarmTotalCnt) > 0);
+      const reservedSource = row.reserved_flag !== undefined ? "reserved_flag" : row.reserveFlag !== undefined ? "reserveFlag" : "isReserved";
+      const reserved = boolFromCode(row[reservedSource] ?? row.isReserved);
+      if (typeof reserved === "boolean" && typeof row.isReserved !== "boolean") assign("isReserved", reservedSource, "ai_boolean_code", reserved);
       if (typeof next.isReserved !== "boolean") {
         next.isReserved = false;
         rules.push({
@@ -547,34 +688,33 @@ function normalizeData(source: EquipmentApiResponse<unknown>, scenario: DataBoun
 
       return next;
     });
-  const displayData = { ...source, items };
+  const displayData = { items, total: extracted.rowCount, page: extracted.page ?? 1, pageSize: extracted.pageSize ?? items.length };
   const displayFingerprint = fingerprint(displayData);
-  const aliasApplied = rules.some((rule) => rule.transform === "alias");
-  const statusApplied = rules.some((rule) => rule.transform === "status_code_to_boolean" || rule.transform === "count_to_boolean");
-  const defaultApplied = rules.some((rule) => rule.transform === "default_false");
   return {
     displayData,
     trace: {
       applied: rules.length > 0,
-      strategy: aliasApplied && statusApplied
-        ? "equipment_alias_and_status_code_to_canonical"
-        : aliasApplied
-          ? "equipment_alias_to_canonical"
-          : statusApplied
-            ? "equipment_status_code_to_canonical"
-            : defaultApplied
-              ? "equipment_default_status_to_canonical"
-              : "identity",
-      sourceRowCount: source.items.length,
+      strategy: "ai_surface_planner",
+      promptVersion: "2026-06-21.a2ui-surface-plan.v1",
+      model: "mock-a2ui-surface-planner",
+      selectedTemplateId,
+      sourceArrayPath: extracted.arrayPath ?? "items",
+      sourceFieldPaths,
+      candidateEvaluations: candidates,
+      validation: {
+        ok: true,
+        errors: [],
+      },
+      sourceRowCount: extracted.rowCount,
       displayRowCount: displayData.items.length,
       sourceShape: dataShape(source),
       displayShape: dataShape(displayData),
       sourceDataHash: sourceFingerprint.dataHash,
       displayDataHash: displayFingerprint.dataHash,
       rules,
-      beforeRows: source.items.slice(0, 2) as Record<string, unknown>[],
+      beforeRows: extracted.rows.slice(0, 2) as Record<string, unknown>[],
       afterRows: displayData.items.slice(0, 2) as Record<string, unknown>[],
-    } satisfies NormalizationTrace,
+    } satisfies AiSurfacePlanDemoTrace,
   };
 }
 
@@ -702,11 +842,11 @@ function firstField(schema: LabDerivedSchema, roles: A2UIRole[]) {
   return schema.fields.find((field) => roles.some((role) => field.roles.includes(role)));
 }
 
-function mappingSource(field: LabDerivedField, normalization: NormalizationTrace) {
-  return normalization.rules.find((rule) => rule.targetField === field.key)?.sourceField ?? "direct";
+function mappingSource(field: LabDerivedField, planTrace: AiSurfacePlanDemoTrace) {
+  return planTrace.rules.find((rule) => rule.targetField === field.key)?.sourceField ?? "direct";
 }
 
-function mappingComparison(schema: LabDerivedSchema, normalization: NormalizationTrace, template: A2UITemplateRegistration): FieldMappingComparison[] {
+function mappingComparison(schema: LabDerivedSchema, planTrace: AiSurfacePlanDemoTrace, template: A2UITemplateRegistration): FieldMappingComparison[] {
   const rows: FieldMappingComparison[] = [];
   const title = firstField(schema, ["title", "label"]);
 
@@ -716,7 +856,7 @@ function mappingComparison(schema: LabDerivedSchema, normalization: Normalizatio
       templateSlot: template.surfaceConfig.viewType === "imageCardList" ? "cards[].title" : "items[].title",
       type: title.type,
       role: title.roles.join(", "),
-      aliasOrNormalization: mappingSource(title, normalization),
+      aliasOrNormalization: mappingSource(title, planTrace),
       decision: "selected",
     });
   }
@@ -730,7 +870,7 @@ function mappingComparison(schema: LabDerivedSchema, normalization: Normalizatio
         templateSlot: "cards[].imageUrl",
         type: image.type,
         role: image.roles.join(", "),
-        aliasOrNormalization: mappingSource(image, normalization),
+        aliasOrNormalization: mappingSource(image, planTrace),
         decision: "selected",
       });
     }
@@ -740,7 +880,7 @@ function mappingComparison(schema: LabDerivedSchema, normalization: Normalizatio
         templateSlot: "cards[].description",
         type: content.type,
         role: content.roles.join(", "),
-        aliasOrNormalization: mappingSource(content, normalization),
+        aliasOrNormalization: mappingSource(content, planTrace),
         decision: "selected",
       });
     }
@@ -750,20 +890,36 @@ function mappingComparison(schema: LabDerivedSchema, normalization: Normalizatio
   rows.push(
     ...schema.fields
       .filter((field) => field.type === "boolean")
-      .slice(0, 5)
+      .slice(0, template.surfaceConfig.viewType === "telemetryStatusTable" ? 3 : 5)
       .map((field) => ({
         derivedField: field.path,
         templateSlot: "items[].statusFlags",
         type: field.type,
         role: field.roles.join(", "),
-        aliasOrNormalization: normalization.rules.find((rule) => rule.targetField === field.key)?.transform ?? "direct",
+        aliasOrNormalization: planTrace.rules.find((rule) => rule.targetField === field.key)?.transform ?? "direct",
         decision: "selected",
       })),
   );
+  if (template.surfaceConfig.viewType === "telemetryStatusTable") {
+    rows.push(
+      ...schema.fields
+        .filter((field) => field.type === "number" && field.roles.includes("metric"))
+        .slice(0, 3)
+        .map((field) => ({
+          derivedField: field.path,
+          templateSlot: "items[].metrics",
+          type: field.type,
+          role: field.roles.join(", "),
+          aliasOrNormalization: "ai_surface_planner",
+          decision: "selected",
+        })),
+    );
+  }
   return rows;
 }
 
 function templateForScenario(scenario: DataBoundaryScenario) {
+  if (scenario.apiId === "equipment-status-wide-columns") return telemetryTemplate;
   return scenario.apiId === "equipment-catalog" ? catalogTemplate : statusTemplate;
 }
 
@@ -779,6 +935,7 @@ function fieldMappingForTemplate(template: A2UITemplateRegistration) {
   return {
     title: "items[].name",
     booleanFlags: ["items[].isOnline", "items[].isRunning", "items[].hasAlarm", "items[].needsInspection", "items[].isReserved"],
+    metrics: template.surfaceConfig.viewType === "telemetryStatusTable" ? ["items[].telemetry_000", "items[].telemetry_001", "items[].telemetry_002"] : undefined,
   };
 }
 
@@ -788,20 +945,40 @@ function scoreForScenario(template: A2UITemplateRegistration, schema: LabDerived
   }
 
   const booleanCount = schema.fields.filter((field) => field.type === "boolean").length;
+  const metricCount = schema.fields.filter((field) => field.type === "number" && field.roles.includes("metric")).length;
+  if (template.surfaceConfig.viewType === "telemetryStatusTable") {
+    if (integrity.matched && booleanCount >= 2 && metricCount >= 3) return 0.91;
+    return 0.52;
+  }
   if (integrity.matched && booleanCount >= 3) return 0.96;
   if (booleanCount >= 3) return 0.88;
   return 0.42;
 }
 
-function candidateTrace(template: A2UITemplateRegistration, score: number) {
-  return [
-    {
-      templateId: template.componentId,
-      score,
-      reason: "Template inputSchema matched derived schema",
-      rejected: false,
-    },
-  ];
+const demoRegisteredTemplates = [statusTemplate, catalogTemplate, telemetryTemplate];
+
+function candidateTrace(template: A2UITemplateRegistration, score: number): A2UICandidateTrace[] {
+  return demoRegisteredTemplates.map((candidate) => {
+    const selected = candidate.componentId === template.componentId;
+    return {
+      templateId: candidate.componentId,
+      score: selected ? score : candidate.surfaceConfig.viewType === "telemetryStatusTable" ? 0.52 : 0.48,
+      decision: selected ? "select" : "reject",
+      reason: selected
+        ? "AI planner selected this registered template because required slots can be filled from the source preview."
+        : "AI planner rejected this registered template because another candidate fits the source fields and query better.",
+      rejected: !selected,
+      rejectionReason: selected ? undefined : "A different registered template preserves the requested data better.",
+      ai: {
+        schemaFit: selected ? 0.92 : 0.52,
+        queryFit: selected ? 0.9 : 0.48,
+        semanticFit: selected ? 0.91 : 0.5,
+        renderFit: selected ? 0.9 : 0.46,
+        risks: selected ? [] : ["lower fit"],
+        missingRequiredSlots: [],
+      },
+    };
+  });
 }
 
 export function buildDataBoundaryScenarioTrace(id: DataBoundaryScenarioId): DataBoundaryScenarioTrace {
@@ -812,29 +989,31 @@ export function buildDataBoundaryScenarioTrace(id: DataBoundaryScenarioId): Data
   const sourceFingerprint = fingerprint(sourceData);
   const receivedFingerprint = fingerprint(receivedData);
   const integrity = compareIntegrity(sourceFingerprint, receivedFingerprint);
-  const normalized = normalizeData(receivedData, scenario);
-  const preview = samplePreview(normalized.displayData);
+  const planned = planDisplayData(receivedData, scenario, template.componentId, []);
+  const preview = samplePreview(planned.displayData);
   const schema = derivedSchema(preview, scenario.apiId);
   const profile = buildProfile(schema);
-  const mappingRows = mappingComparison(schema, normalized.trace, template);
+  const mappingRows = mappingComparison(schema, planned.trace, template);
   const score = scoreForScenario(template, schema, integrity);
+  const candidates = candidateTrace(template, score);
+  planned.trace.candidateEvaluations = candidates;
   const renderPlan: A2UIRenderPlan = {
     selectedComponentId: template.componentId,
     viewType: template.surfaceConfig.viewType,
     score,
     reason: integrity.matched
-      ? "Template inputSchema matched received derived schema"
+      ? "AI planner selected a template whose required slots can be filled from the source preview"
       : "Template matched display data, but raw source/received integrity check failed",
     fieldMapping: fieldMappingForTemplate(template),
     isFallback: false,
     registryVersion: 2,
     maxItems: template.surfaceConfig.maxItems,
-    strategy: "derived_schema",
-    candidates: candidateTrace(template, score),
+    strategy: "ai_surface_planner",
+    candidates,
     mapping: {
       templateId: template.componentId,
       confidence: score,
-      reason: "deterministic role/type mapping completed",
+      reason: "AI field/template planning completed",
       mappings: mappingRows.map((row) => ({
         slot: row.templateSlot,
         sourcePath: row.derivedField.replace("items.", "items[]."),
@@ -849,7 +1028,7 @@ export function buildDataBoundaryScenarioTrace(id: DataBoundaryScenarioId): Data
     payload: {
       apiTitle: scenario.label,
       apiId: scenario.apiId,
-      data: normalized.displayData,
+      data: planned.displayData,
       profile,
       renderPlan,
     },
@@ -859,8 +1038,8 @@ export function buildDataBoundaryScenarioTrace(id: DataBoundaryScenarioId): Data
     meta: {
       registryVersion: 2,
       decisionReason: renderPlan.reason,
-      trace: ["source:fingerprint", "normalization:display-data", "matcher:derived_schema", `matcher:score:${score}`, "binding:renderer-payload"],
-      strategy: "derived_schema",
+      trace: ["source:fingerprint", "planner:source-preview", "planner:ai_surface_plan", `planner:score:${score}`, "binding:renderer-payload"],
+      strategy: "ai_surface_planner",
       score,
       candidates: renderPlan.candidates,
       mapping: renderPlan.mapping,
@@ -879,11 +1058,11 @@ export function buildDataBoundaryScenarioTrace(id: DataBoundaryScenarioId): Data
     query: scenario.query,
     sourceData,
     receivedData,
-    displayData: normalized.displayData,
+    displayData: planned.displayData,
     sourceFingerprint,
     receivedFingerprint,
     integrity,
-    normalization: normalized.trace,
+    aiSurfacePlanTrace: planned.trace,
     sampleDataPreview: preview,
     derivedSchema: schema,
     templateContract: template,
@@ -895,23 +1074,20 @@ export function buildDataBoundaryScenarioTrace(id: DataBoundaryScenarioId): Data
       query: scenario.query,
       facts: {
         data: sourceData,
-        displayData: normalized.displayData,
         sourceDataHash: sourceFingerprint.dataHash,
         sourceDataByteLength: sourceFingerprint.byteLength,
         sourceRowCount: sourceFingerprint.rowCount,
         sourceDataShape: sourceFingerprint.shape,
         sourceTopLevelKeys: sourceFingerprint.topLevelKeys,
       },
-      sampleDataPreview: preview,
-      derivedSchema: schema,
       toolMetadata: {
         sourceToolName: scenario.businessToolName,
         sourceToolResultId: `demo-tool-result-${scenario.id}`,
         sourceApiId: scenario.apiId,
         sourceApiRoute: scenario.apiRoute,
         renderToolName: "a2ui_render",
-        renderToolCallPolicy: "deterministic_after_business_tool_result",
-        normalizationTrace: normalized.trace,
+        renderToolCallPolicy: "ai_surface_planner_after_business_tool_result",
+        aiSurfacePlanTrace: planned.trace,
       },
     },
   };
@@ -931,17 +1107,18 @@ function eventData(trace: DataBoundaryScenarioTrace, step: string): Record<strin
       rawToolResult: trace.sourceData,
     };
   }
-  if (step === "profile") {
+  if (step === "source_preview") {
     return {
       rowCount: trace.derivedSchema.rowCount,
       previewRowCount: trace.sampleDataPreview.rowCount,
       previewSampleSize: trace.sampleDataPreview.sampleSize,
       booleanFieldCount: trace.derivedSchema.fields.filter((field) => field.type === "boolean").length,
-      normalizationTrace: trace.normalization,
-      derivedSchema: trace.derivedSchema,
+      aiSurfacePlanTrace: trace.aiSurfacePlanTrace,
+      sourceFieldPaths: trace.aiSurfacePlanTrace.sourceFieldPaths,
+      sourceArrayPath: trace.aiSurfacePlanTrace.sourceArrayPath,
     };
   }
-  if (step === "matcher") {
+  if (step === "ai_surface_plan") {
     return {
       mode: "render_surface",
       templateId: trace.templateContract.componentId,
@@ -953,6 +1130,21 @@ function eventData(trace: DataBoundaryScenarioTrace, step: string): Record<strin
       candidateCount: trace.renderPlan.candidates?.length,
       mapping: trace.renderPlan.mapping,
       fieldMappingComparison: trace.mappingComparison,
+      aiSurfacePlanTrace: trace.aiSurfacePlanTrace,
+    };
+  }
+  if (step === "plan_validation") {
+    return {
+      validation: trace.aiSurfacePlanTrace.validation,
+      selectedTemplateId: trace.aiSurfacePlanTrace.selectedTemplateId,
+      requiredSlots: trace.templateContract.inputSchema?.requiredSlots,
+    };
+  }
+  if (step === "mapping_applied") {
+    return {
+      fieldMappings: trace.aiSurfacePlanTrace.rules,
+      beforeRows: trace.aiSurfacePlanTrace.beforeRows,
+      afterRows: trace.aiSurfacePlanTrace.afterRows,
     };
   }
   if (step === "a2ui_tool_result") {
@@ -984,12 +1176,14 @@ export function dataBoundaryFlowEvents(trace: DataBoundaryScenarioTrace): AgentF
     { ...base, id: `${turnId}-tool-selected`, event: "state:business_tool_selected", phase: "intent", from: "main_agent", to: "main_agent", label: "Choose business API tool", detail: trace.businessToolName, branch: "data" },
     { ...base, id: `${turnId}-tool-call`, event: "state:business_tool_call", phase: "data_loaded", from: "main_agent", to: "business_db", label: "Call business API tool", detail: `${trace.businessToolName} -> ${trace.apiRoute}`, branch: "data" },
     { ...base, id: `${turnId}-tool-result`, event: "state:business_tool_result", phase: "data_loaded", from: "business_db", to: "main_agent", label: "Business tool result", detail: `rows=${trace.sourceFingerprint.rowCount} | hash=${trace.sourceFingerprint.dataHash}`, branch: "data", data: eventData(trace, "business_tool_result") },
-    { ...base, id: `${turnId}-a2ui-selected`, event: "state:a2ui_tool_selected", phase: "registry_loaded", from: "main_agent", to: "main_agent", label: "Choose a2ui_render tool", detail: "policy=deterministic_after_business_tool_result", branch: "data" },
-    { ...base, id: `${turnId}-a2ui-call`, event: "state:a2ui_tool_call", phase: "registry_loaded", from: "main_agent", to: "a2ui_render_tool", label: "Run a2ui_render tool", detail: "raw data + displayData payload", branch: "data", data: { a2uiRenderPayload: trace.a2uiRenderPayload } },
-    { ...base, id: `${turnId}-profile`, event: "state:profile", phase: "profile", from: "a2ui_render_tool", to: "a2ui", label: "Build profile and derived schema", detail: `preview=${trace.sampleDataPreview.sampleSize}/${trace.sampleDataPreview.rowCount}`, branch: "data", data: eventData(trace, "profile") },
-    { ...base, id: `${turnId}-registry`, event: "state:a2a", phase: "registry_loaded", from: "a2ui", to: "registry", label: "Load template contracts", detail: trace.expectedTemplateId, branch: "data" },
-    { ...base, id: `${turnId}-registry-loaded`, event: "state:registry_loaded", phase: "registry_loaded", from: "registry", to: "a2ui", label: "Template contracts loaded", detail: "templates=2", branch: "data" },
-    { ...base, id: `${turnId}-matcher`, event: "state:matcher", phase: "matcher", from: "a2ui", to: "a2ui", label: "Match template and fields", detail: `template=${trace.templateContract.componentId} | score=${trace.renderPlan.score}`, branch: "data", data: eventData(trace, "matcher") },
+    { ...base, id: `${turnId}-a2ui-selected`, event: "state:a2ui_tool_selected", phase: "registry_loaded", from: "main_agent", to: "main_agent", label: "Choose a2ui_render tool", detail: "policy=ai_surface_planner_after_business_tool_result", branch: "data" },
+    { ...base, id: `${turnId}-a2ui-call`, event: "state:a2ui_tool_call", phase: "registry_loaded", from: "main_agent", to: "a2ui_render_tool", label: "Run a2ui_render tool", detail: "raw data payload", branch: "data", data: { a2uiRenderPayload: trace.a2uiRenderPayload } },
+    { ...base, id: `${turnId}-profile`, event: "state:source_preview", phase: "profile", from: "a2ui_render_tool", to: "a2ui", label: "Build source preview", detail: `preview=${trace.sampleDataPreview.sampleSize}/${trace.sampleDataPreview.rowCount}`, branch: "data", data: eventData(trace, "source_preview") },
+    { ...base, id: `${turnId}-registry`, event: "state:template_contracts", phase: "registry_loaded", from: "a2ui", to: "registry", label: "Load template contracts", detail: trace.expectedTemplateId, branch: "data" },
+    { ...base, id: `${turnId}-registry-loaded`, event: "state:registry_loaded", phase: "registry_loaded", from: "registry", to: "a2ui", label: "Template contracts loaded", detail: `templates=${trace.renderPlan.candidates?.length ?? 0}`, branch: "data" },
+    { ...base, id: `${turnId}-planner`, event: "state:ai_surface_plan", phase: "matcher", from: "a2ui", to: "a2ui", label: "AI Surface Planner", detail: `template=${trace.templateContract.componentId} | score=${trace.renderPlan.score}`, branch: "data", data: eventData(trace, "ai_surface_plan") },
+    { ...base, id: `${turnId}-validation`, event: "state:plan_validation", phase: "matcher", from: "a2ui", to: "a2ui", label: "Validate AI plan", detail: `ok=${trace.aiSurfacePlanTrace.validation.ok}`, branch: "data", data: eventData(trace, "plan_validation") },
+    { ...base, id: `${turnId}-mapping`, event: "state:mapping_applied", phase: "matcher", from: "a2ui", to: "a2ui", label: "Apply field/slot mapping", detail: `mappings=${trace.renderPlan.mapping?.mappings.length ?? 0}`, branch: "data", data: eventData(trace, "mapping_applied") },
     { ...base, id: `${turnId}-result`, event: "state:a2ui_tool_result", phase: "matcher", from: "a2ui", to: "main_agent", label: "a2ui_render result", detail: `integrity=${trace.integrity.matched}`, branch: "data", data: eventData(trace, "a2ui_tool_result") },
     { ...base, id: `${turnId}-text`, event: "text", phase: "surface", from: "main_agent", to: "chat", label: "Return text summary", detail: "등록된 A2UI 템플릿으로 정리했습니다.", branch: "matched" },
     { ...base, id: `${turnId}-surface`, event: "surface", phase: "surface", from: "main_agent", to: "chat", label: "Return SurfaceEnvelope", detail: trace.templateContract.componentId, branch: "matched", data: { surface: trace.surfaceEnvelope } },

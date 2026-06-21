@@ -72,12 +72,14 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["render"]["tool_metadata"]["sourceDataHash"], "abc")
         self.assertEqual(captured["render"]["tool_metadata"]["renderToolName"], "a2ui_render")
         self.assertEqual(captured["render"]["tool_metadata"]["renderToolCallPolicy"], "deterministic_after_business_tool_result")
-        self.assertIn("normalizationTrace", captured["render"]["tool_metadata"])
+        self.assertNotIn("normalizationTrace", captured["render"]["tool_metadata"])
         self.assertIs(captured["render"]["data"], business_result.data)
-        self.assertIsNotNone(captured["render"]["display_data"])
+        self.assertIsNone(captured["render"]["display_data"])
+        self.assertIsNone(captured["render"]["derived_schema"])
+        self.assertIsNone(captured["render"]["sample_data_preview"])
         self.assertEqual(result.metadata["dataIntegrity"]["matched"], True)
 
-    async def test_large_rows_keep_total_count_but_send_bounded_preview(self) -> None:
+    async def test_large_rows_keep_internal_preview_but_send_raw_only_to_a2ui(self) -> None:
         rows = [
             {
                 "id": f"eq-large-{index}",
@@ -93,7 +95,15 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
         business_result = BusinessToolResult(
             tool_name="get_equipment_status_large_rows",
             api_id="equipment-status-large-rows",
-            data={"items": rows, "total": 1000, "page": 1, "pageSize": 1000},
+            data={
+                "result": {
+                    "rows": rows,
+                    "totalCount": 1000,
+                    "pageNo": 1,
+                    "rowsPerPage": 1000,
+                },
+                "success": True,
+            },
             metadata={
                 "sourceToolName": "get_equipment_status_large_rows",
                 "sourceToolResultId": "tool-result-large",
@@ -121,8 +131,10 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
             tool_metadata=None,
         ):
             captured["api_id"] = api_id
+            captured["display_data"] = display_data
             captured["sample_data_preview"] = sample_data_preview
             captured["derived_schema"] = derived_schema
+            captured["profile"] = profile
             captured["tool_metadata"] = tool_metadata
             return A2UIResponse(
                 type="surface",
@@ -139,10 +151,11 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(captured["api_id"], "equipment-status-large-rows")
         self.assertFalse(fallback_called)
-        self.assertEqual(captured["sample_data_preview"]["rowCount"], 1000)
-        self.assertLess(captured["sample_data_preview"]["sampleSize"], 1000)
-        self.assertTrue(captured["sample_data_preview"]["truncated"])
-        self.assertEqual(captured["derived_schema"]["rowCount"], 1000)
+        self.assertIsNone(captured["display_data"])
+        self.assertIsNone(captured["sample_data_preview"])
+        self.assertIsNone(captured["derived_schema"])
+        self.assertEqual(captured["profile"]["rowCount"], 1000)
+        self.assertEqual(captured["profile"]["listPath"], "result.rows")
         self.assertEqual(captured["tool_metadata"]["sourceToolName"], "get_equipment_status_large_rows")
         self.assertEqual(captured["tool_metadata"]["sourceRowCount"], 1000)
         self.assertEqual(result.metadata["previewRowCount"], 1000)
@@ -163,7 +176,15 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
         business_result = BusinessToolResult(
             tool_name="get_equipment_status_large_rows",
             api_id="equipment-status-large-rows",
-            data={"items": rows, "total": 1000, "page": 1, "pageSize": 1000},
+            data={
+                "result": {
+                    "rows": rows,
+                    "totalCount": 1000,
+                    "pageNo": 1,
+                    "rowsPerPage": 1000,
+                },
+                "success": True,
+            },
             metadata={
                 "sourceToolName": "get_equipment_status_large_rows",
                 "sourceToolResultId": "tool-result-large",
@@ -204,8 +225,8 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
             result = await render_business_tool_result("데이터가 많은 장비 상태 목록 보여줘", business_result)
 
         fallback_data = captured["fallback_kwargs"]["data"]
-        self.assertEqual(fallback_data["total"], 1000)
-        self.assertLess(len(fallback_data["items"]), 1000)
+        self.assertEqual(fallback_data["result"]["totalCount"], 1000)
+        self.assertLess(len(fallback_data["result"]["rows"]), 1000)
         self.assertEqual(result.fallback_text, "LLM fallback text")
         self.assertEqual(result.a2ui.text, "LLM fallback text")
         self.assertIn("bounded preview", captured["render_fallback_text"])

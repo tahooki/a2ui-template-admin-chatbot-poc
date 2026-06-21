@@ -33,6 +33,13 @@ function booleanLabel(path: string) {
   return booleanLabels[key] ?? key;
 }
 
+function metricLabel(path: string) {
+  const key = keyFromPath(path);
+  if (/^telemetry_\d+$/i.test(key)) return key.replace("telemetry_", "T");
+  if (key === "alarmTotalCnt" || key === "alarm_count") return "알람수";
+  return key;
+}
+
 function textValue(row: Record<string, unknown>, path?: string) {
   const fieldValue = value(row, path);
   return typeof fieldValue === "string" && fieldValue.trim() ? fieldValue : "";
@@ -40,6 +47,7 @@ function textValue(row: Record<string, unknown>, path?: string) {
 
 function surfaceTitle(viewType: string, componentId: string) {
   if (componentId === COMMON_STATUS_TEMPLATE_ID) return "공용 장비 상태 템플릿";
+  if (viewType === "telemetryStatusTable") return "계측 상태 테이블";
   if (viewType === "statusBooleanList") return "장비 상태";
   if (viewType === "imageCardList") return "장비 목록";
   return "장비 목록";
@@ -58,6 +66,7 @@ export function A2UIDemoRenderer({
   const maxItems = renderPlan.maxItems ?? 6;
   const visibleRows = rows.slice(0, maxItems);
   const booleanFlags = renderPlan.fieldMapping.booleanFlags?.slice(0, 5) ?? [];
+  const metricFields = renderPlan.fieldMapping.metrics?.slice(0, 4) ?? [];
   const isCommonStatusTemplate = renderPlan.selectedComponentId === COMMON_STATUS_TEMPLATE_ID;
 
   return (
@@ -100,6 +109,44 @@ export function A2UIDemoRenderer({
                 return (
                   <span className={`${styles.flagCell} ${active ? styles.flagOn : styles.flagOff}`} key={flagPath}>
                     {active ? "ON" : "OFF"}
+                  </span>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {renderPlan.viewType === "telemetryStatusTable" ? (
+        <div className={styles.telemetryTable} role="table" aria-label="Equipment telemetry status table">
+          <div className={styles.telemetryHeader} role="row">
+            <span>장비</span>
+            {booleanFlags.slice(0, 3).map((flagPath) => (
+              <span key={flagPath}>{booleanLabel(flagPath)}</span>
+            ))}
+            {metricFields.map((metricPath) => (
+              <span key={metricPath}>{metricLabel(metricPath)}</span>
+            ))}
+          </div>
+          {visibleRows.map((row, rowIndex) => (
+            <div className={styles.telemetryDataRow} key={String(row.id ?? rowIndex)} role="row">
+              <div className={styles.statusEquipment}>
+                <strong>{String(value(row, renderPlan.fieldMapping.title))}</strong>
+                <span>{String(row.id ?? row.assetId ?? row.eqp_id ?? "")}</span>
+              </div>
+              {booleanFlags.slice(0, 3).map((flagPath) => {
+                const active = Boolean(value(row, flagPath));
+                return (
+                  <span className={`${styles.flagCell} ${active ? styles.flagOn : styles.flagOff}`} key={flagPath}>
+                    {active ? "ON" : "OFF"}
+                  </span>
+                );
+              })}
+              {metricFields.map((metricPath) => {
+                const metricValue = value(row, metricPath);
+                return (
+                  <span className={styles.metricCell} key={metricPath}>
+                    {typeof metricValue === "number" ? metricValue.toLocaleString() : String(metricValue)}
                   </span>
                 );
               })}

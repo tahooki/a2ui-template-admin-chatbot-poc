@@ -5,8 +5,6 @@ from .a2ui_agent import A2UIResponse, render_or_fallback
 from .ai.llm_client import LLMClientError, generate_equipment_fallback_text
 from .equipment_tools import build_data_profile
 from .business_tools import BusinessToolResult
-from .data_integrity import build_data_integrity_snapshot
-from .data_normalization import build_display_data_trace
 from .schema import build_derived_schema, build_sample_data_preview
 
 
@@ -99,13 +97,9 @@ async def render_business_tool_result(
 ) -> RenderBoundaryResult:
     api_id = business_tool_result.api_id
     data = business_tool_result.data
-    display = build_display_data_trace(data)
-    display_data = display["data"]
-    normalization_trace = display["trace"]
-    display_integrity = build_data_integrity_snapshot(display_data)
-    profile = build_data_profile(display_data)
-    sample_data_preview = build_sample_data_preview(display_data, source_id=api_id)
-    derived_schema = build_derived_schema(display_data, source_id=api_id, sample_data_preview=sample_data_preview)
+    profile = build_data_profile(data)
+    sample_data_preview = build_sample_data_preview(data, source_id=api_id)
+    derived_schema = build_derived_schema(data, source_id=api_id, sample_data_preview=sample_data_preview)
     fallback_text = deterministic_fallback_text(api_id, profile, sample_data_preview)
     tool_metadata = {
         **(extra_metadata or {}),
@@ -114,11 +108,6 @@ async def render_business_tool_result(
         "sourceApiId": api_id,
         "renderToolName": "a2ui_render",
         "renderToolCallPolicy": "deterministic_after_business_tool_result",
-        "normalizationTrace": normalization_trace,
-        "displayDataHash": display_integrity["dataHash"],
-        "displayDataByteLength": display_integrity["byteLength"],
-        "displayRowCount": display_integrity["rowCount"],
-        "displayDataShape": display_integrity["shape"],
     }
 
     a2ui = await render_or_fallback(
@@ -127,9 +116,9 @@ async def render_business_tool_result(
         data,
         profile,
         fallback_text,
-        display_data,
-        derived_schema,
-        sample_data_preview,
+        display_data=None,
+        derived_schema=None,
+        sample_data_preview=None,
         tool_metadata=tool_metadata,
     )
     if a2ui.type != "surface":

@@ -55,15 +55,15 @@ function wideColumnStatusRow(index: number): EquipmentRow {
   const serial = String(index + 1).padStart(3, "0");
   const label = wideColumnLabels[index % wideColumnLabels.length];
   return {
-    id: `wide-status-${serial}`,
-    name: `${label} W${serial}`,
-    isOnline: index % 2 === 0,
-    isRunning: index % 3 !== 1,
-    hasAlarm: index === 2,
-    needsInspection: index === 4,
-    isReserved: index % 3 === 0,
-    updatedAt: `2026-06-17T10:${String(index * 7).padStart(2, "0")}:00Z`,
-    location: `계측랩-${index + 1}`,
+    assetId: `WIDE-${serial}`,
+    assetDisplayName: `${label} W${serial}`,
+    operStateCd: index % 2 === 0 ? "ONLINE" : "OFFLINE",
+    runStateYn: index % 3 !== 1 ? "Y" : "N",
+    alarmTotalCnt: index === 2 ? 2 : 0,
+    inspectDueYn: index === 4 ? "Y" : "N",
+    reserveFlag: index % 3 === 0 ? "Y" : "N",
+    lastSignalAt: `2026-06-21T10:${String(index * 7).padStart(2, "0")}:00Z`,
+    plantZone: `계측랩-${index + 1}`,
   };
 }
 
@@ -71,15 +71,15 @@ function largeRowStatusRow(index: number): EquipmentRow {
   const serial = String(index + 1).padStart(4, "0");
   const label = largeRowLabels[index % largeRowLabels.length];
   return {
-    id: `bulk-status-${serial}`,
-    name: `${label} ${serial}`,
-    isOnline: index % 19 !== 0,
-    isRunning: index % 6 !== 0,
-    hasAlarm: index % 37 === 0,
-    needsInspection: index % 41 === 0 || index % 53 === 0,
-    isReserved: index % 8 === 0,
-    updatedAt: `2026-06-17T11:${String(index % 60).padStart(2, "0")}:00Z`,
-    location: `대량검증-${String((index % 20) + 1).padStart(2, "0")}`,
+    eqp_id: `BULK-${serial}`,
+    eqp_nm: `${label} ${serial}`,
+    operation_yn: index % 19 !== 0 ? "Y" : "N",
+    running_code: index % 6 !== 0 ? "RUN" : "STOP",
+    alarm_count: index % 37 === 0 ? 1 : 0,
+    inspection_required: index % 41 === 0 || index % 53 === 0 ? "Y" : "N",
+    reserved_flag: index % 8 === 0,
+    last_dtm: `2026-06-21T11:${String(index % 60).padStart(2, "0")}:00Z`,
+    site_nm: `대량검증-${String((index % 20) + 1).padStart(2, "0")}`,
   };
 }
 
@@ -123,6 +123,14 @@ export function buildWideColumnEquipmentStatus(): EquipmentApiResponse<unknown> 
   return response(items);
 }
 
-export function buildLargeRowsEquipmentStatus(rowCount = 1000): EquipmentApiResponse<unknown> {
-  return response(Array.from({ length: rowCount }, (_, index) => largeRowStatusRow(index)), rowCount);
+export function buildLargeRowsEquipmentStatus(rowCount = 1000) {
+  return {
+    result: {
+      rows: Array.from({ length: rowCount }, (_, index) => largeRowStatusRow(index)),
+      totalCount: rowCount,
+      pageNo: 1,
+      rowsPerPage: rowCount,
+    },
+    success: true,
+  };
 }

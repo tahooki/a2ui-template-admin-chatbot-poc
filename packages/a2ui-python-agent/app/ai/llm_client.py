@@ -352,6 +352,42 @@ async def generate_general_response_with_llm(
     )
 
 
+def _value_at_path(data: Any, path: tuple[str, ...]) -> Any:
+    current = data
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _first_int_at_paths(data: Any, paths: tuple[tuple[str, ...], ...]) -> int | None:
+    for path in paths:
+        value = _value_at_path(data, path)
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def _fallback_rows_and_total(data: dict[str, Any]) -> tuple[list[Any], int]:
+    candidates = [
+        (("items",), (("total",),)),
+        (("rows",), (("total",), ("totalCount",), ("count",), ("rowCount",))),
+        (("result", "rows"), (("result", "totalCount"), ("result", "total"), ("total",))),
+        (("data", "rows"), (("data", "totalCount"), ("data", "total"), ("total",))),
+        (("payload", "rows"), (("payload", "totalCount"), ("payload", "total"), ("total",))),
+        (("result", "items"), (("result", "totalCount"), ("result", "total"), ("total",))),
+        (("data", "items"), (("data", "totalCount"), ("data", "total"), ("total",))),
+        (("payload", "items"), (("payload", "totalCount"), ("payload", "total"), ("total",))),
+    ]
+    for rows_path, total_paths in candidates:
+        rows = _value_at_path(data, rows_path)
+        if isinstance(rows, list):
+            total = _first_int_at_paths(data, total_paths)
+            return rows, total if total is not None else len(rows)
+    return [], 0
+
+
 async def generate_equipment_fallback_text(
     *,
     message: str,
@@ -360,8 +396,7 @@ async def generate_equipment_fallback_text(
     profile: dict[str, Any],
     reason: str | None = None,
 ) -> str:
-    rows = data.get("items") if isinstance(data.get("items"), list) else []
-    total_rows = data.get("total") if isinstance(data.get("total"), int) else len(rows)
+    rows, total_rows = _fallback_rows_and_total(data)
     compact_profile = _compact_fallback_profile(profile)
     sample_rows = _compact_fallback_rows(rows)
     content = await _chat_completion(
