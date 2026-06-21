@@ -252,15 +252,20 @@ export function ChatbotPanel({
             const text = typeof data.text === "string" ? data.text : typeof data.delta === "string" ? data.delta : "";
             if (!text) return;
             const shouldAppend = hasText;
-            setMessages((current) =>
-              current.map((message) =>
-                message.id === assistantId
-                  ? {
-                      ...message,
-                      content: shouldAppend ? `${message.content}${text}` : text,
-                    }
-                  : message,
-              ),
+            scheduleSurfaceDisplay(
+              () => {
+                setMessages((current) =>
+                  current.map((message) =>
+                    message.id === assistantId
+                      ? {
+                          ...message,
+                          content: shouldAppend ? `${message.content}${text}` : text,
+                        }
+                      : message,
+                  ),
+                );
+              },
+              flowTiming?.textDelayMs,
             );
             hasText = true;
             return;
@@ -349,14 +354,17 @@ export function ChatbotPanel({
       if (!target) return;
       const listTop = listElement.getBoundingClientRect().top;
       const targetTop = target.getBoundingClientRect().top;
-      listElement.scrollTop += targetTop - listTop - 12;
+      const nextTop = listElement.scrollTop + targetTop - listTop - 12;
+      listElement.scrollTo({ top: Math.max(0, nextTop), behavior: "auto" });
     }
 
     const animationFrame = window.requestAnimationFrame(scrollToLatest);
     const timeout = window.setTimeout(scrollToLatest, 120);
+    const settleTimeout = window.setTimeout(scrollToLatest, 700);
     return () => {
       window.cancelAnimationFrame(animationFrame);
       window.clearTimeout(timeout);
+      window.clearTimeout(settleTimeout);
     };
   }, [messages]);
 

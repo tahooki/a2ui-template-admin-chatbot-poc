@@ -530,6 +530,8 @@ function buildPrompt({
         },
       ],
       templateSelectionRules: [
+        "For apiId=equipment-catalog, render only with equipment.imageCardList. If equipment.imageCardList is not registered, no status or telemetry template is compatible with the catalog list.",
+        "For apiId=equipment-catalog and registered equipment.imageCardList, select equipment.imageCardList when image/title fields can fill card slots.",
         "equipment.telemetryStatusTable is for wide telemetry/status APIs with at least 3 concrete telemetry_* or metric_* numeric source fields.",
         "Many rows alone does not mean telemetry. If the source has many rows but does not have at least 3 telemetry_* or metric_* source fields, prefer equipment.commonStatusTable for status-list requests.",
         "Alarm/count fields such as alarmTotalCnt, alarm_count, alrmCnt, count, or cnt are status evidence for hasAlarm unless there are separate telemetry_* or metric_* fields. Do not use alarm count alone to justify telemetryStatusTable.",
@@ -1197,16 +1199,99 @@ export async function planA2UISurfaceWithAI({
 
   const catalog = await readTemplateCatalog();
   const templates = catalog.templates.map(normalizeTemplateInputSchema);
+  const registeredTemplates = templates.filter((template) => template.status === "registered");
+  const registeredImageCardTemplate = registeredTemplates.some((template) => template.componentId === "equipment.imageCardList");
 
   await emitProgress(onProgress, {
     status: "registry_loaded",
     label: "A2UI Registry",
-    detail: `templates=${templates.filter((template) => template.status === "registered").length}`,
+    detail: `templates=${registeredTemplates.length}`,
     data: {
       registryVersion: catalog.version,
-      templateCount: templates.filter((template) => template.status === "registered").length,
+      templateCount: registeredTemplates.length,
     },
   });
+
+  if (apiId === "equipment-catalog" && !registeredImageCardTemplate) {
+    const reason = "장비 목록은 장비 이미지 카드 템플릿이 등록되어 있어야 A2UI로 렌더링할 수 있습니다.";
+    const candidateEvaluations: PlannerCandidateEvaluation[] = registeredTemplates.map((template) => {
+      const isTelemetry = template.componentId === "equipment.telemetryStatusTable";
+      return {
+        templateId: template.componentId,
+        decision: "reject",
+        score: isTelemetry ? 0.15 : 0.22,
+        schemaFit: isTelemetry ? 0.15 : 0.25,
+        queryFit: 0.2,
+        semanticFit: 0.18,
+        renderFit: 0.1,
+        reason: "장비 목록 API는 장비 이미지 카드 템플릿이 등록된 경우에만 렌더링할 수 있으므로 이 템플릿은 선택하지 않습니다.",
+        missingRequiredSlots: isTelemetry ? ["items[].statusFlags", "items[].metrics"] : ["items[].statusFlags"],
+        risks: ["equipment.imageCardList template is not registered"],
+      };
+    });
+    const candidates = candidateEvaluations.map(candidateTrace);
+    const validation: ValidationResult = {
+      ok: false,
+      errors: ["Missing registered template equipment.imageCardList"],
+    };
+    const plan: AIPlannerPlan = {
+      confidence: 0,
+      reason,
+      primaryArrayPath: extracted.arrayPath,
+      fieldMappings: [],
+      slotMappings: [],
+      candidateEvaluations,
+    };
+    const trace = buildTrace({ rawData, extracted, model: "registry-gate", plan, validation });
+
+    await emitProgress(onProgress, {
+      status: "matcher",
+      label: "AI Surface Planner",
+      detail: "no compatible image-card template",
+      data: {
+        mode: "no_template",
+        templateId: null,
+        reason,
+        strategy: "ai_surface_planner",
+        score: 0,
+        candidateCount: candidates.length,
+        candidates,
+      },
+    });
+    await emitProgress(onProgress, {
+      status: "plan_validation",
+      label: "Validate AI plan",
+      detail: "validator rejected plan: image-card template is not registered",
+      data: {
+        mode: "invalid",
+        templateId: null,
+        reason,
+        strategy: "ai_surface_planner",
+        score: 0,
+        candidateCount: candidates.length,
+        validation,
+        candidates,
+        mapping: null,
+      },
+    });
+
+    return {
+      mode: "text_fallback",
+      apiId,
+      apiTitle: title,
+      registryVersion: catalog.version,
+      renderPlan: {
+        ...fallbackRenderPlan({ registryVersion: catalog.version, reason, candidates }),
+        aiSurfacePlanTrace: trace,
+      },
+      reason,
+      score: 0,
+      strategy: "ai_surface_planner",
+      candidates,
+      trace,
+      error: reason,
+    };
+  }
 
   const prompt = buildPrompt({ query, apiId, rawData, extracted, templates });
   await emitProgress(onProgress, {

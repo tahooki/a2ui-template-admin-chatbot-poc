@@ -62,6 +62,7 @@ export type ChatFlowSourceEvent = {
 
 export type ChatFlowDisplayTiming = {
   surfaceDelayMs?: number;
+  textDelayMs?: number;
 };
 
 export type AgentFlowAdapterState = {

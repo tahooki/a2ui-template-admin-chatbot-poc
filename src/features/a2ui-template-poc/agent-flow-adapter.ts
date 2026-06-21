@@ -421,16 +421,18 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
 
   if (status === "a2ui_tool_result") {
     const detail = [matcherDetail(source), renderToolDetail(source)].filter(Boolean).join(" | ");
+    const mode = textValue(source.data.mode);
+    const isNoTemplate = mode === "no_template";
     return [
       newFlowEvent(source, 0, {
         event: "transport:a2a_result",
         phase: "matcher",
         from: "a2ui",
         to: "a2ui_render_tool",
-        label: "Return trace + surface artifact",
+        label: isNoTemplate ? "Return trace + no-template result" : "Return trace + surface artifact",
         detail,
         branch: "data",
-        severity: "success",
+        severity: isNoTemplate ? "warning" : "success",
         physicalEmitter: "main-agent",
         evidenceKind: "inferred_transport",
         data: source.data,
@@ -443,7 +445,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         label: "Return A2UIRenderToolResult",
         detail,
         branch: "data",
-        severity: "success",
+        severity: isNoTemplate ? "warning" : "success",
         physicalEmitter: "main-agent",
         evidenceKind: "observed",
         data: source.data,
@@ -736,25 +738,8 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
 
   if (source.event === "done") {
     const branch = branchFromDone(source, state);
-    const events: AgentFlowEvent[] = [];
-    if (branch === "no_template" && !phaseSeen(existingEvents, "no_template")) {
-      events.push(
-        newFlowEvent(source, events.length, {
-          event: "matcher:no_template",
-          phase: "no_template",
-          from: "a2ui",
-          to: "a2ui",
-          label: "No compatible template",
-          detail: doneDetail(source),
-          branch,
-          severity: "warning",
-          physicalEmitter: "main-agent",
-          data: source.data,
-        }),
-      );
-    }
-    events.push(
-      newFlowEvent(source, events.length, {
+    return [
+      newFlowEvent(source, 0, {
         event: "done",
         phase: "done",
         from: branch === "error" ? "main_agent" : undefined,
@@ -766,8 +751,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
         physicalEmitter: "main-agent",
         data: source.data,
       }),
-    );
-    return events;
+    ];
   }
 
   return [

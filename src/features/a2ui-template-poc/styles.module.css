@@ -843,7 +843,8 @@
 }
 
 .sequenceModal {
-  width: min(760px, calc(100% - 24px));
+  width: min(1040px, calc(100% - 24px));
+  height: min(760px, calc(100% - 24px));
   max-height: calc(100% - 24px);
   min-height: 280px;
   display: grid;
@@ -1046,6 +1047,47 @@
   font-weight: 900;
   line-height: 1.25;
   overflow-wrap: anywhere;
+}
+
+.sequenceJsonGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sequenceJsonPanel {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.sequenceJsonPanel > strong {
+  color: var(--a2ui-primary);
+  font-size: 12px;
+  font-weight: 950;
+  line-height: 1.2;
+}
+
+.sequenceJsonPanel pre {
+  max-height: 560px;
+  margin: 0;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 6px;
+  background: #0f172a;
+  color: #e2e8f0;
+  overflow: auto;
+  padding: 10px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .sequenceDetailFlow {
@@ -1443,8 +1485,7 @@
   pointer-events: none;
 }
 
-.sequenceStep > span,
-.sequenceStep > button {
+.sequenceStep > span {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1470,84 +1511,51 @@
   box-shadow: 0 0 0 4px rgba(248, 250, 252, 0.86), 0 8px 16px rgba(20, 35, 52, 0.06);
 }
 
-.sequenceStep button {
-  cursor: pointer;
-  font: inherit;
-}
-
-.sequenceStepClickable {
-  pointer-events: auto;
-}
-
-.sequenceStepClickable button:hover,
-.sequenceStepClickable button:focus-visible {
-  border-color: #2563eb;
-  background: #dbeafe;
-  color: #1d4ed8;
-  outline: none;
-}
-
-.sequenceStepSelected button {
-  border-color: #2563eb;
-  background: #dbeafe;
-  color: #1d4ed8;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
-}
-
-.sequenceStepComplete > span,
-.sequenceStepComplete > button {
+.sequenceStepComplete > span {
   border-color: #9fb2c5;
   color: var(--a2ui-primary);
   opacity: 0.95;
 }
 
-.sequenceStepPreview > span,
-.sequenceStepPreview > button {
+.sequenceStepPreview > span {
   opacity: 0.68;
 }
 
-.sequenceStepActive > span,
-.sequenceStepActive > button {
+.sequenceStepActive > span {
   border-color: #79b8aa;
   background: #f0faf8;
   color: var(--a2ui-teal);
   box-shadow: 0 0 0 3px rgba(31, 122, 109, 0.1);
 }
 
-.sequenceStepMuted > span,
-.sequenceStepMuted > button {
+.sequenceStepMuted > span {
   opacity: 0.28;
 }
 
-.sequenceStep_general > span,
-.sequenceStep_general > button {
+.sequenceStep_general > span {
   border-color: #9dcfc4;
 }
 
-.sequenceStep_data > span,
-.sequenceStep_data > button {
+.sequenceStep_data > span {
   border-color: #bfdbfe;
   background: #eff6ff;
   color: #1d4ed8;
 }
 
-.sequenceStep_matched > span,
-.sequenceStep_matched > button {
+.sequenceStep_matched > span {
   border-color: #86efac;
   background: #f0fdf4;
   color: #166534;
 }
 
-.sequenceStep_no_template > span,
-.sequenceStep_no_template > button {
+.sequenceStep_no_template > span {
   border-color: #f59e0b;
   border-style: dashed;
   background: #fffbeb;
   color: #92400e;
 }
 
-.sequenceStep_error > span,
-.sequenceStep_error > button {
+.sequenceStep_error > span {
   border-color: #f87171;
   background: #fef2f2;
   color: #b91c1c;
@@ -1571,16 +1579,100 @@
   text-transform: uppercase;
 }
 
-.sequenceStepEvidence_inferred_transport > span,
-.sequenceStepEvidence_inferred_transport > button {
+.sequenceStepEvidence_inferred_transport > span {
   border-style: dashed;
 }
 
-.sequenceStepEvidence_trace_derived > span,
-.sequenceStepEvidence_trace_derived > button {
+.sequenceStepEvidence_trace_derived > span {
   border-style: dashed;
   background: #f8fafc;
   color: #475569;
+}
+
+.sequenceEvidenceDock {
+  position: absolute;
+  top: 66px;
+  right: 14px;
+  z-index: 24;
+  width: min(216px, calc(100% - 28px));
+  display: grid;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.sequenceEvidenceLabel {
+  width: 100%;
+  pointer-events: auto;
+}
+
+.sequenceEvidenceLabel button {
+  width: 100%;
+  min-height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid rgba(37, 99, 235, 0.44);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.97);
+  color: #1d4ed8;
+  cursor: pointer;
+  padding: 8px 10px;
+  text-align: left;
+  box-shadow: 0 0 0 4px rgba(248, 250, 252, 0.72), 0 12px 22px rgba(20, 35, 52, 0.1);
+}
+
+.sequenceEvidenceLabel button:hover,
+.sequenceEvidenceLabel button:focus-visible {
+  border-color: #1d4ed8;
+  background: #eff6ff;
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(191, 219, 254, 0.72), 0 14px 26px rgba(20, 35, 52, 0.12);
+}
+
+.sequenceEvidenceLabel span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.sequenceEvidenceLabel strong {
+  color: #1e3a8a;
+  font-size: 12px;
+  font-weight: 950;
+  line-height: 1.18;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sequenceEvidenceLabel small {
+  color: #475569;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sequenceEvidenceLabel em {
+  flex: 0 0 auto;
+  border: 1px solid rgba(37, 99, 235, 0.48);
+  border-radius: 999px;
+  color: #2563eb;
+  font-style: normal;
+  font-size: 8px;
+  font-weight: 950;
+  line-height: 1;
+  padding: 3px 5px;
+  text-transform: uppercase;
+}
+
+.sequenceEvidenceLabelSelected button {
+  border-color: #1d4ed8;
+  background: #dbeafe;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.16), 0 14px 26px rgba(20, 35, 52, 0.12);
 }
 
 .sequencePacketRail {
@@ -1602,7 +1694,7 @@
   border-radius: 999px;
   background: var(--a2ui-teal);
   box-shadow: 0 0 0 0 rgba(31, 122, 109, 0.38);
-  animation: packetTravel 1.25s ease-in-out infinite, packetPulse 1.25s ease-in-out infinite;
+  animation: packetTravel 1s ease-in-out both, packetPulse 1s ease-in-out both;
 }
 
 .sequencePacketRailReverse::after {
@@ -1613,7 +1705,7 @@
   left: 0;
   top: 0;
   transform: translate(-50%, -50%);
-  animation: packetTravelSelf 1.25s ease-in-out infinite, packetPulse 1.25s ease-in-out infinite;
+  animation: packetTravelSelf 1s ease-in-out both, packetPulse 1s ease-in-out both;
 }
 
 .sequencePacketRailSelf {

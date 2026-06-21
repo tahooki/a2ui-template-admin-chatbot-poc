@@ -80,6 +80,7 @@ def business_tool_event_payload(tool_result: BusinessToolResult) -> dict[str, An
         "sourceDataHash": tool_result.metadata.get("sourceDataHash"),
         "sourceRowCount": tool_result.metadata.get("sourceRowCount"),
         "sourceDataShape": tool_result.metadata.get("sourceDataShape"),
+        "rawToolResult": tool_result.data,
     }
 
 

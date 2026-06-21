@@ -81,7 +81,7 @@ export function A2UITemplatePocPage() {
   function shouldCatchUpFlowPlayback(turnId?: string) {
     return displayQueueRef.current.some((event) => {
       if (turnId && event.turnId !== turnId) return false;
-      return event.event === "surface" || event.phase === "done";
+      return event.event === "surface" || event.phase === "text_fallback" || event.phase === "done";
     });
   }
 
@@ -170,11 +170,20 @@ export function A2UITemplatePocPage() {
     const surfaceEvent = uniqueNextEvents.find((event) => event.event === "surface" && event.turnId === source.turnId);
     const surfaceAlreadyDisplayed = Boolean(surfaceEvent && displayedFlowEventsRef.current.some((event) => event.id === surfaceEvent.id));
     const surfaceFrameIndex = surfaceEvent && !surfaceAlreadyDisplayed ? queuedFrameIndexForEvent(surfaceEvent.id) : undefined;
-    const timing = typeof surfaceFrameIndex === "number"
-      ? { surfaceDelayMs: (surfaceFrameIndex + (wasDisplayIdle ? 0 : 1)) * flowEventDisplayIntervalMs }
-      : surfaceAlreadyDisplayed
-        ? { surfaceDelayMs: 0 }
-      : undefined;
+    const fallbackTextEvent = uniqueNextEvents.find((event) => event.phase === "text_fallback" && event.turnId === source.turnId);
+    const fallbackTextAlreadyDisplayed = Boolean(fallbackTextEvent && displayedFlowEventsRef.current.some((event) => event.id === fallbackTextEvent.id));
+    const fallbackTextFrameIndex = fallbackTextEvent && !fallbackTextAlreadyDisplayed ? queuedFrameIndexForEvent(fallbackTextEvent.id) : undefined;
+    const timing: ChatFlowDisplayTiming = {};
+    if (typeof surfaceFrameIndex === "number") {
+      timing.surfaceDelayMs = (surfaceFrameIndex + (wasDisplayIdle ? 0 : 1)) * flowEventDisplayIntervalMs;
+    } else if (surfaceAlreadyDisplayed) {
+      timing.surfaceDelayMs = 0;
+    }
+    if (typeof fallbackTextFrameIndex === "number") {
+      timing.textDelayMs = (fallbackTextFrameIndex + (wasDisplayIdle ? 0 : 1)) * flowEventDisplayIntervalMs;
+    } else if (fallbackTextAlreadyDisplayed) {
+      timing.textDelayMs = 0;
+    }
 
     if (wasDisplayIdle && showNextQueuedFlowEventFrame().length) {
       scheduleNextFlowEvent();
@@ -183,7 +192,7 @@ export function A2UITemplatePocPage() {
       scheduleNextFlowEvent(shouldCatchUpFlowPlayback(source.turnId) ? flowEventCatchUpIntervalMs : flowEventDisplayIntervalMs);
     }
 
-    return timing;
+    return Object.keys(timing).length ? timing : undefined;
   }
 
   function startResize(event: ReactPointerEvent<HTMLDivElement>) {
