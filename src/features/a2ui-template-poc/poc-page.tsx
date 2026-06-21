@@ -13,6 +13,7 @@ import type { AgentFlowEvent, ChatFlowSourceEvent } from "./agent-flow-types";
 import type { DataBoundaryScenarioId } from "./data-boundary-lab";
 
 const flowEventDisplayIntervalMs = 1000;
+const flowEventCatchUpIntervalMs = 1000;
 const maxFlowEvents = 180;
 const minChatWidth = 292;
 const maxChatWidth = 640;
@@ -48,6 +49,13 @@ export function A2UITemplatePocPage() {
     return firstEvent.turnId === nextEvent.turnId && isMatchedSurfaceOutput(firstEvent) && isMatchedSurfaceOutput(nextEvent);
   }
 
+  function shouldCatchUpFlowPlayback(turnId?: string) {
+    return displayQueueRef.current.some((event) => {
+      if (turnId && event.turnId !== turnId) return false;
+      return event.event === "surface" || event.phase === "done";
+    });
+  }
+
   function showNextQueuedFlowEventFrame() {
     const firstEvent = displayQueueRef.current.shift();
     if (!firstEvent) return [];
@@ -64,22 +72,13 @@ export function A2UITemplatePocPage() {
     return frame;
   }
 
-  function flushQueuedFlowEventsUntil(predicate: (event: AgentFlowEvent) => boolean) {
-    let flushed = false;
-    while (displayQueueRef.current.length > 0) {
-      const frame = showNextQueuedFlowEventFrame();
-      if (!frame.length) break;
-      flushed = true;
-      if (frame.some(predicate)) break;
-    }
-    return flushed;
-  }
-
   function scheduleNextFlowEvent(delayMs = flowEventDisplayIntervalMs) {
     if (displayTimerRef.current) return;
     displayTimerRef.current = window.setTimeout(() => {
       displayTimerRef.current = null;
-      if (showNextQueuedFlowEventFrame().length) scheduleNextFlowEvent();
+      if (showNextQueuedFlowEventFrame().length) {
+        scheduleNextFlowEvent(shouldCatchUpFlowPlayback() ? flowEventCatchUpIntervalMs : flowEventDisplayIntervalMs);
+      }
     }, delayMs);
   }
 
@@ -112,19 +111,15 @@ export function A2UITemplatePocPage() {
       return id === event.id ? event : { ...event, id };
     });
 
-    const shouldFlushToSurface = uniqueNextEvents.some((event) => event.event === "surface" && isMatchedSurfaceOutput(event));
     const isDisplayIdle = displayQueueRef.current.length === 0 && !displayTimerRef.current;
     logicalFlowEventsRef.current = [...current, ...uniqueNextEvents].slice(-maxFlowEvents);
     displayQueueRef.current.push(...uniqueNextEvents);
 
-    if (shouldFlushToSurface) {
-      clearFlowDisplayTimer();
-      const flushed = flushQueuedFlowEventsUntil((event) => event.event === "surface" && event.turnId === source.turnId);
-      if (flushed && displayQueueRef.current.length > 0) scheduleNextFlowEvent();
-    } else if (isDisplayIdle && showNextQueuedFlowEventFrame().length) {
+    if (isDisplayIdle && showNextQueuedFlowEventFrame().length) {
       scheduleNextFlowEvent();
     } else {
-      scheduleNextFlowEvent();
+      if (shouldCatchUpFlowPlayback(source.turnId)) clearFlowDisplayTimer();
+      scheduleNextFlowEvent(shouldCatchUpFlowPlayback(source.turnId) ? flowEventCatchUpIntervalMs : flowEventDisplayIntervalMs);
     }
   }
 

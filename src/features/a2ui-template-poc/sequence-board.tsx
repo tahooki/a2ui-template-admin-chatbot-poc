@@ -487,58 +487,41 @@ function clampZoom(value: number) {
   return Math.min(maxZoom, Math.max(minZoom, Number(value.toFixed(2))));
 }
 
-function paddedRegion(block: BranchBlock, padding = 34): FocusRegion {
-  return {
-    left: Math.max(0, block.left - padding),
-    top: Math.max(0, block.top - padding),
-    width: block.width + padding * 2,
-    height: block.height + padding * 2,
-    zoom: focusZoom,
-    target: block.id,
-  };
+function stepCameraZoom(step: SequenceStep) {
+  if (step.id === "fallback") return 0.78;
+  if (step.branch === "matched" || step.branch === "error") return overviewZoom;
+  return focusZoom;
 }
 
-function branchRegion(branch: AgentFlowBranch) {
-  const block = branchBlocks.find((candidate) => candidate.id === branch);
-  return block ? paddedRegion(block) : undefined;
-}
+function stepRegion(step: SequenceStep): FocusRegion {
+  const position = labelPosition(step);
+  const line = messageLineStyle(step);
+  const lineWidth = typeof line.width === "number" ? line.width : 0;
+  const lineHeight = "height" in line && typeof line.height === "number" ? line.height : sequenceLayout.lineStrokeWidth;
+  const labelHalfWidth = 104;
+  const labelTop = position.top;
+  const labelBottom = labelTop + sequenceLayout.labelHeight;
+  const lineTop = typeof line.top === "number" ? line.top : step.y;
+  const lineBottom = lineTop + Math.max(lineHeight, sequenceLayout.lineStrokeWidth);
+  const rawLeft = Math.min(position.left - labelHalfWidth, line.left);
+  const rawRight = Math.max(position.left + labelHalfWidth, line.left + lineWidth);
+  const rawTop = Math.min(labelTop, lineTop);
+  const rawBottom = Math.max(labelBottom, lineBottom);
+  const paddingX = 52;
+  const paddingY = 72;
 
-function actorEdgeRegion(from: AgentFlowActor, to: AgentFlowActor, y: number, target: string, zoom = focusZoom): FocusRegion {
-  const x1 = laneX(from);
-  const x2 = laneX(to);
-  const left = Math.min(x1, x2) - actorNodeWidth / 2 - 52;
-  const width = Math.abs(x2 - x1) + actorNodeWidth + 104;
   return {
-    left: Math.max(0, left),
-    top: Math.max(0, y - 122),
-    width,
-    height: 226,
-    zoom,
-    target,
-  };
-}
-
-function selfRegion(actor: AgentFlowActor, y: number, target: string): FocusRegion {
-  const x = laneX(actor);
-  return {
-    left: Math.max(0, x - actorNodeWidth / 2 - 52),
-    top: Math.max(0, y - 122),
-    width: actorNodeWidth + 240,
-    height: 226,
-    zoom: focusZoom,
-    target,
+    left: Math.max(0, rawLeft - paddingX),
+    top: Math.max(0, rawTop - paddingY),
+    width: rawRight - rawLeft + paddingX * 2,
+    height: rawBottom - rawTop + paddingY * 2,
+    zoom: stepCameraZoom(step),
+    target: step.id,
   };
 }
 
 function focusRegionForStep(step: SequenceStep): FocusRegion {
-  if (step.branch === "matched") return actorEdgeRegion(step.from, step.to, step.y, "matched", 0.86);
-  if (step.id === "fallback") return actorEdgeRegion(step.from, step.to, step.y, "no_template", 0.78);
-  if (step.branch === "no_template") return selfRegion("a2ui", step.y, "no_template");
-  if (step.branch === "error") return actorEdgeRegion(step.from, step.to, step.y, "error", 0.86);
-  if (step.branch === "general") return branchRegion("general") ?? actorEdgeRegion(step.from, step.to, step.y, step.phase);
-  if (step.from === step.to) return selfRegion(step.from, step.y, step.phase);
-  if (step.branch === "data") return branchRegion("data") ?? actorEdgeRegion(step.from, step.to, step.y, step.phase);
-  return actorEdgeRegion(step.from, step.to, step.y, step.phase);
+  return stepRegion(step);
 }
 
 function scrollTargetForRegion(region: FocusRegion, viewport: HTMLDivElement, zoom: number) {
@@ -546,6 +529,29 @@ function scrollTargetForRegion(region: FocusRegion, viewport: HTMLDivElement, zo
   const centerY = (region.top + region.height / 2) * zoom;
   const maxLeft = Math.max(0, canvasWidth * zoom - viewport.clientWidth);
   const maxTop = Math.max(0, canvasHeight * zoom - viewport.clientHeight);
+  return {
+    left: Math.min(maxLeft, Math.max(0, centerX - viewport.clientWidth / 2)),
+    top: Math.min(maxTop, Math.max(0, centerY - viewport.clientHeight / 2)),
+  };
+}
+
+function scrollTargetForStepElement(stepId: string, viewport: HTMLDivElement) {
+  const elements = Array.from(viewport.querySelectorAll<HTMLElement>(`[data-sequence-step="${stepId}"], [data-sequence-line="${stepId}"]`));
+  const rects = elements
+    .map((element) => element.getBoundingClientRect())
+    .filter((rect) => rect.width > 0 && rect.height > 0);
+  if (rects.length === 0) return undefined;
+
+  const viewportRect = viewport.getBoundingClientRect();
+  const left = Math.min(...rects.map((rect) => rect.left));
+  const right = Math.max(...rects.map((rect) => rect.right));
+  const top = Math.min(...rects.map((rect) => rect.top));
+  const bottom = Math.max(...rects.map((rect) => rect.bottom));
+  const centerX = viewport.scrollLeft + (left + right) / 2 - viewportRect.left;
+  const centerY = viewport.scrollTop + (top + bottom) / 2 - viewportRect.top;
+  const maxLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+  const maxTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+
   return {
     left: Math.min(maxLeft, Math.max(0, centerX - viewport.clientWidth / 2)),
     top: Math.min(maxTop, Math.max(0, centerY - viewport.clientHeight / 2)),
@@ -1268,13 +1274,13 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
     }, manualAutoFollowPauseMs);
   }
 
-  function focusCamera(region: FocusRegion, nextZoom: number, behavior: ScrollBehavior = "smooth") {
+  function focusCamera(region: FocusRegion, nextZoom: number, behavior: ScrollBehavior = "auto", stepId?: string) {
     const viewport = viewportRef.current;
     if (!viewport) return;
-    const target = scrollTargetForRegion(region, viewport, nextZoom);
+    const target = stepId ? (scrollTargetForStepElement(stepId, viewport) ?? scrollTargetForRegion(region, viewport, nextZoom)) : scrollTargetForRegion(region, viewport, nextZoom);
     viewport.scrollTo({ ...target, behavior });
     setViewportScroll({ left: target.left, top: target.top });
-    setCamera(cameraStateForScroll(region.target, target.left, target.top, nextZoom, "auto"));
+    setCamera(cameraStateForScroll(stepId ?? region.target, target.left, target.top, nextZoom, "auto"));
   }
 
   function applyManualZoom(nextZoomValue: number, target: string) {
@@ -1347,12 +1353,12 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
     if (Math.abs(nextZoom - zoom) > 0.01) {
       const zoomFrame = window.requestAnimationFrame(() => {
         setZoom(nextZoom);
-        window.requestAnimationFrame(() => focusCamera(region, nextZoom));
+        window.requestAnimationFrame(() => focusCamera(region, nextZoom, "auto", focusStep.id));
       });
       return () => window.cancelAnimationFrame(zoomFrame);
     }
     const focusFrame = window.requestAnimationFrame(() => {
-      focusCamera(region, zoom);
+      focusCamera(region, zoom, "auto", focusStep.id);
     });
     return () => {
       window.cancelAnimationFrame(focusFrame);
