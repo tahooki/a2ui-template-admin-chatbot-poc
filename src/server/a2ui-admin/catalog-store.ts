@@ -48,8 +48,8 @@ function withRequiredInitialTemplates(templates: A2UITemplateRegistration[]) {
     template.componentId === "equipment.statusBooleanList"
       ? {
           ...template,
-          status: "draft" as const,
-          description: template.description || "레거시 상태 목록 템플릿이다. AI 선택 검증에서는 기본 등록하지 않는다.",
+          status: "registered" as const,
+          description: template.description || "장비 상태 API를 상태값 테이블로 보여준다.",
         }
       : template,
   );

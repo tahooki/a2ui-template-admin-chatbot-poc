@@ -121,23 +121,6 @@ async function assertTemplate({ label, query, apiId, data, expectedTemplateId, e
   console.log(`[ok] ${label}: ${surface.templateId} score=${decision.score}`);
 }
 
-async function assertNoTemplate({ label, query, apiId, data, expectedSourceArrayPath }) {
-  const task = await callA2A({ query, apiId, data });
-  const surfacePart = findPart(task, (part) => part.mediaType === A2A_SURFACE && part.data?.surface);
-  const tracePart = findPart(task, (part) => part.data?.kind === "a2ui.ai_surface_plan.trace");
-  const aiSurfacePlanTrace = tracePart?.data?.aiSurfacePlanTrace;
-
-  expect(!surfacePart, `${label} should not return an A2UI surface after common status template removal`);
-  expect(task.metadata?.a2uiTaskKind === "text_fallback", `${label} should return text_fallback task`);
-  expect(task.metadata?.reason === "맞는 A2UI 템플릿이 없습니다.", `${label} should explain no compatible template`);
-  expect(tracePart?.data?.candidateCount > 0, `${label} should include rejected candidate trace`);
-  expect(aiSurfacePlanTrace?.validation?.ok === false, `${label} should include failed AI plan validation`);
-  if (expectedSourceArrayPath) {
-    expect(aiSurfacePlanTrace?.sourceArrayPath === expectedSourceArrayPath, `${label} should extract rows from ${expectedSourceArrayPath}`);
-  }
-  console.log(`[ok] ${label}: no compatible template`);
-}
-
 async function main() {
   console.log(`[info] A2UI data boundary E2E base=${baseUrl}`);
 
@@ -174,6 +157,14 @@ async function main() {
   console.log(`[ok] large rows API rows=${largeRows.length}`);
 
   await assertTemplate({
+    label: "status list",
+    query: "장비 상태 목록 보여줘",
+    apiId: "equipment-status",
+    data: status,
+    expectedTemplateId: "equipment.statusBooleanList",
+    expectedSourceArrayPath: "items",
+  });
+  await assertTemplate({
     label: "wide columns",
     query: "컬럼이 많은 장비 상태 목록 보여줘",
     apiId: "equipment-status-wide-columns",
@@ -199,11 +190,12 @@ async function main() {
     page: 1,
     pageSize: 2,
   };
-  await assertNoTemplate({
+  await assertTemplate({
     label: "raw alias status",
     query: "다른 컬럼명의 장비 상태 목록 보여줘",
     apiId: "equipment-status",
     data: aliasStatus,
+    expectedTemplateId: "equipment.statusBooleanList",
     expectedSourceArrayPath: "items",
   });
 
@@ -215,11 +207,12 @@ async function main() {
       pageSize: aliasStatus.pageSize,
     },
   };
-  await assertNoTemplate({
+  await assertTemplate({
     label: "nested alias status",
     query: "result rows 안에 있는 장비 상태 목록 보여줘",
     apiId: "equipment-status",
     data: nestedAliasStatus,
+    expectedTemplateId: "equipment.statusBooleanList",
     expectedSourceArrayPath: "result.rows",
   });
 }

@@ -90,7 +90,7 @@ export const INITIAL_TEMPLATES: A2UITemplateRegistration[] = [
   {
     componentId: "equipment.statusBooleanList",
     title: "장비 상태 목록",
-    description: "레거시 상태 목록 템플릿이다. AI 선택 검증에서는 기본 등록하지 않는다.",
+    description: "장비 상태 API를 상태값 테이블로 보여준다.",
     selectionGuide:
       "사용자가 장비 상태, 가동 여부, 알람, 점검 필요 여부를 보고 싶다고 말하고 데이터에 name과 여러 boolean field가 있을 때 사용한다.",
     schemaSpec: {
@@ -147,7 +147,7 @@ export const INITIAL_TEMPLATES: A2UITemplateRegistration[] = [
       ],
       maxItems: 6,
     },
-    status: "draft",
+    status: "registered",
     updatedAt: now,
   },
 ];

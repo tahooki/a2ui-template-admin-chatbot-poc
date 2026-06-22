@@ -155,7 +155,7 @@ export type DataBoundaryScenarioTrace = {
 const statusTemplate: A2UITemplateRegistration = {
   componentId: STATUS_BOOLEAN_LIST_TEMPLATE_ID,
   title: "장비 상태 목록",
-  description: "장비 상태 목록 계열 API를 boolean status table로 보여주는 레거시 template.",
+  description: "장비 상태 목록 계열 API를 boolean status table로 보여주는 template.",
   selectionGuide:
     "장비 상태, 가동, 알람, 점검 여부를 보고 싶고 name과 여러 boolean status field가 있을 때 사용한다.",
   schemaSpec: {
