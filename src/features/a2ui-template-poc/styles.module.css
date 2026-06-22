@@ -1368,7 +1368,7 @@
   color: #64748b;
   opacity: 0.58;
   pointer-events: none;
-  transition: color 160ms ease, opacity 160ms ease, border-width 160ms ease, filter 160ms ease;
+  transition: color 160ms ease, opacity 160ms ease, filter 160ms ease;
 }
 
 .sequenceMessageLine::after {
@@ -1418,7 +1418,6 @@
 }
 
 .sequenceMessageLineActive {
-  border-top-width: 3.5px;
   color: var(--a2ui-teal);
   opacity: 1;
   filter: drop-shadow(0 0 8px rgba(31, 122, 109, 0.38));
@@ -1429,17 +1428,8 @@
   --sequence-self-arrow-bottom: -3.8px;
 }
 
-.sequenceMessageLineSelf.sequenceMessageLineActive {
-  --sequence-self-line-width: 3.2px;
-  --sequence-self-arrow-bottom: -3.4px;
-}
-
 .sequenceMessageLineComplete:not(.sequenceMessageLineSelf)::after {
   top: -6.2px;
-}
-
-.sequenceMessageLineActive:not(.sequenceMessageLineSelf)::after {
-  top: -6.75px;
 }
 
 .sequenceMessageLinePreview {
