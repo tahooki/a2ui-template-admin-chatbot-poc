@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { COMMON_STATUS_TEMPLATE_ID, INITIAL_TEMPLATES, TELEMETRY_STATUS_TEMPLATE_ID } from "@/features/a2ui-template-poc/initial-templates";
+import { INITIAL_TEMPLATES, TELEMETRY_STATUS_TEMPLATE_ID } from "@/features/a2ui-template-poc/initial-templates";
 import type { A2UITemplateRegistration } from "@/features/a2ui-template-poc/template-types";
 import { normalizeTemplateInputSchema } from "./schema-matcher/template-input-schema-adapter";
 
@@ -11,6 +11,7 @@ export type A2UITemplateCatalog = {
 };
 
 const catalogPath = path.join(process.cwd(), "data", "a2ui-template-catalog.json");
+const deprecatedTemplateIds = new Set(["simpleTextList", "equipment.commonStatusTable"]);
 
 function cloneInitialTemplates() {
   return INITIAL_TEMPLATES.map((template) => ({
@@ -28,13 +29,13 @@ function initialCatalog(): A2UITemplateCatalog {
 }
 
 function withoutDeprecatedTemplates(templates: A2UITemplateRegistration[]) {
-  return templates.filter((template) => template.componentId !== "simpleTextList");
+  return templates.filter((template) => !deprecatedTemplateIds.has(template.componentId));
 }
 
 function withRequiredInitialTemplates(templates: A2UITemplateRegistration[]) {
   const normalizedTemplates = templates.map(normalizeTemplateInputSchema);
   const initialTemplates = cloneInitialTemplates();
-  const requiredIds = [COMMON_STATUS_TEMPLATE_ID, TELEMETRY_STATUS_TEMPLATE_ID];
+  const requiredIds = [TELEMETRY_STATUS_TEMPLATE_ID];
   const withRequired = [...normalizedTemplates];
 
   for (const componentId of requiredIds) {
@@ -48,7 +49,7 @@ function withRequiredInitialTemplates(templates: A2UITemplateRegistration[]) {
       ? {
           ...template,
           status: "draft" as const,
-          description: template.description || "레거시 상태 목록 템플릿이다. 공용 상태 템플릿과 거의 같아 AI 선택 검증에서는 제외한다.",
+          description: template.description || "레거시 상태 목록 템플릿이다. AI 선택 검증에서는 기본 등록하지 않는다.",
         }
       : template,
   );

@@ -1,5 +1,4 @@
 const baseUrl = process.env.A2UI_E2E_BASE_URL || "http://localhost:3001";
-const commonStatusTemplateId = "equipment.commonStatusTable";
 const telemetryStatusTemplateId = "equipment.telemetryStatusTable";
 const A2A_RENDER_REQUEST = "application/vnd.a2ui.render-request+json";
 const A2A_SURFACE = "application/vnd.a2ui.surface+json";
@@ -122,6 +121,23 @@ async function assertTemplate({ label, query, apiId, data, expectedTemplateId, e
   console.log(`[ok] ${label}: ${surface.templateId} score=${decision.score}`);
 }
 
+async function assertNoTemplate({ label, query, apiId, data, expectedSourceArrayPath }) {
+  const task = await callA2A({ query, apiId, data });
+  const surfacePart = findPart(task, (part) => part.mediaType === A2A_SURFACE && part.data?.surface);
+  const tracePart = findPart(task, (part) => part.data?.kind === "a2ui.ai_surface_plan.trace");
+  const aiSurfacePlanTrace = tracePart?.data?.aiSurfacePlanTrace;
+
+  expect(!surfacePart, `${label} should not return an A2UI surface after common status template removal`);
+  expect(task.metadata?.a2uiTaskKind === "text_fallback", `${label} should return text_fallback task`);
+  expect(task.metadata?.reason === "맞는 A2UI 템플릿이 없습니다.", `${label} should explain no compatible template`);
+  expect(tracePart?.data?.candidateCount > 0, `${label} should include rejected candidate trace`);
+  expect(aiSurfacePlanTrace?.validation?.ok === false, `${label} should include failed AI plan validation`);
+  if (expectedSourceArrayPath) {
+    expect(aiSurfacePlanTrace?.sourceArrayPath === expectedSourceArrayPath, `${label} should extract rows from ${expectedSourceArrayPath}`);
+  }
+  console.log(`[ok] ${label}: no compatible template`);
+}
+
 async function main() {
   console.log(`[info] A2UI data boundary E2E base=${baseUrl}`);
 
@@ -153,6 +169,7 @@ async function main() {
   expect(largeRows.length === 1000, "large rows API should return 1000 rows");
   expect(String(largeRows[0].eqp_id).startsWith("BULK-"), "large rows API should use non-canonical bulk ids");
   expect(String(largeRows[0].eqp_nm).includes("대량 검증"), "large rows API should use distinct bulk validation names");
+  expect(Object.hasOwn(largeRows[0], "telemetry_000"), "large rows API should expose telemetry_* fields for telemetry template matching");
   expect(large.result?.totalCount === 1000, "large rows API should preserve result.totalCount=1000");
   console.log(`[ok] large rows API rows=${largeRows.length}`);
 
@@ -169,7 +186,7 @@ async function main() {
     query: "데이터가 많은 장비 상태 목록 보여줘",
     apiId: "equipment-status-large-rows",
     data: large,
-    expectedTemplateId: commonStatusTemplateId,
+    expectedTemplateId: telemetryStatusTemplateId,
     expectedSourceArrayPath: "result.rows",
   });
 
@@ -182,12 +199,11 @@ async function main() {
     page: 1,
     pageSize: 2,
   };
-  await assertTemplate({
+  await assertNoTemplate({
     label: "raw alias status",
     query: "다른 컬럼명의 장비 상태 목록 보여줘",
     apiId: "equipment-status",
     data: aliasStatus,
-    expectedTemplateId: commonStatusTemplateId,
     expectedSourceArrayPath: "items",
   });
 
@@ -199,12 +215,11 @@ async function main() {
       pageSize: aliasStatus.pageSize,
     },
   };
-  await assertTemplate({
+  await assertNoTemplate({
     label: "nested alias status",
     query: "result rows 안에 있는 장비 상태 목록 보여줘",
     apiId: "equipment-status",
     data: nestedAliasStatus,
-    expectedTemplateId: commonStatusTemplateId,
     expectedSourceArrayPath: "result.rows",
   });
 }

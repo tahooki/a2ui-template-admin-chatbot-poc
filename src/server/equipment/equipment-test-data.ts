@@ -80,6 +80,9 @@ function largeRowStatusRow(index: number): EquipmentRow {
     reserved_flag: index % 8 === 0,
     last_dtm: `2026-06-21T11:${String(index % 60).padStart(2, "0")}:00Z`,
     site_nm: `대량검증-${String((index % 20) + 1).padStart(2, "0")}`,
+    telemetry_000: 720 + (index % 80),
+    telemetry_001: 42 + (index % 17),
+    telemetry_002: Number((0.82 + (index % 11) / 100).toFixed(2)),
   };
 }
 

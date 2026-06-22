@@ -9,7 +9,9 @@ import type {
   EquipmentApiResponse,
 } from "./template-types";
 import type { AgentFlowEvent } from "./agent-flow-types";
-import { COMMON_STATUS_TEMPLATE_ID, TELEMETRY_STATUS_TEMPLATE_ID } from "./initial-templates";
+import { TELEMETRY_STATUS_TEMPLATE_ID } from "./initial-templates";
+
+const STATUS_BOOLEAN_LIST_TEMPLATE_ID = "equipment.statusBooleanList";
 
 export type DataBoundaryScenarioId = "status" | "catalog" | "wide_columns" | "large_rows";
 
@@ -151,9 +153,9 @@ export type DataBoundaryScenarioTrace = {
 };
 
 const statusTemplate: A2UITemplateRegistration = {
-  componentId: COMMON_STATUS_TEMPLATE_ID,
-  title: "공용 장비 상태 템플릿",
-  description: "장비 상태 목록 계열 API를 공통으로 렌더링하는 고정 boolean status table template.",
+  componentId: STATUS_BOOLEAN_LIST_TEMPLATE_ID,
+  title: "장비 상태 목록",
+  description: "장비 상태 목록 계열 API를 boolean status table로 보여주는 레거시 template.",
   selectionGuide:
     "장비 상태, 가동, 알람, 점검 여부를 보고 싶고 name과 여러 boolean status field가 있을 때 사용한다.",
   schemaSpec: {
@@ -365,7 +367,7 @@ export const dataBoundaryScenarios: DataBoundaryScenario[] = [
     apiId: "equipment-status",
     businessToolName: "get_equipment_status",
     query: "장비 상태 목록 보여줘",
-    expectedTemplateId: COMMON_STATUS_TEMPLATE_ID,
+    expectedTemplateId: STATUS_BOOLEAN_LIST_TEMPLATE_ID,
   },
   {
     id: "catalog",
@@ -396,7 +398,7 @@ export const dataBoundaryScenarios: DataBoundaryScenario[] = [
     apiId: "equipment-status-large-rows",
     businessToolName: "get_equipment_status_large_rows",
     query: "데이터가 많은 장비 상태 목록 보여줘",
-    expectedTemplateId: COMMON_STATUS_TEMPLATE_ID,
+    expectedTemplateId: TELEMETRY_STATUS_TEMPLATE_ID,
   },
 ];
 
@@ -459,6 +461,9 @@ function largeRowStatusRows(count = 1000) {
       reserved_flag: index % 8 === 0,
       last_dtm: `2026-06-21T11:${String(index % 60).padStart(2, "0")}:00Z`,
       site_nm: `대량검증-${String((index % 20) + 1).padStart(2, "0")}`,
+      telemetry_000: 720 + (index % 80),
+      telemetry_001: 42 + (index % 17),
+      telemetry_002: Number((0.82 + (index % 11) / 100).toFixed(2)),
     };
   });
 }

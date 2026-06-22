@@ -2069,15 +2069,6 @@
   background: #fff;
 }
 
-.surface_commonStatusTemplate {
-  border-color: #5bb6a4;
-  background: linear-gradient(180deg, #f1fbf8 0%, #ffffff 42%);
-}
-
-.surface_commonStatusTemplate .statusHeader {
-  background: #0f5f70;
-}
-
 .surfaceHeader {
   display: flex;
   align-items: flex-start;
@@ -2095,24 +2086,6 @@
 .surfaceHeader h4 {
   margin-top: 2px;
   font-size: 15px;
-}
-
-.commonTemplateSummary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
-}
-
-.commonTemplateSummary span {
-  min-height: 24px;
-  border: 1px solid #b8ddd6;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #0f5f70;
-  padding: 5px 8px;
-  font-size: 11px;
-  font-weight: 850;
 }
 
 .statusTable {

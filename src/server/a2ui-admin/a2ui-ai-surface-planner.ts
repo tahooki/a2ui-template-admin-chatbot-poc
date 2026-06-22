@@ -546,9 +546,9 @@ function buildPrompt({
         "For apiId=equipment-catalog, render only with equipment.imageCardList. If equipment.imageCardList is not registered, no status or telemetry template is compatible with the catalog list.",
         "For apiId=equipment-catalog and registered equipment.imageCardList, select equipment.imageCardList when image/title fields can fill card slots.",
         "equipment.telemetryStatusTable is for wide telemetry/status APIs with at least 3 concrete telemetry_* or metric_* numeric source fields.",
-        "Many rows alone does not mean telemetry. If the source has many rows but does not have at least 3 telemetry_* or metric_* source fields, prefer equipment.commonStatusTable for status-list requests.",
+        "Many rows alone does not mean telemetry. Do not select equipment.telemetryStatusTable unless the source has at least 3 telemetry_* or metric_* source fields.",
         "Alarm/count fields such as alarmTotalCnt, alarm_count, alrmCnt, count, or cnt are status evidence for hasAlarm unless there are separate telemetry_* or metric_* fields. Do not use alarm count alone to justify telemetryStatusTable.",
-        "For apiId=equipment-status-large-rows, prefer equipment.commonStatusTable unless the source also has at least 3 concrete telemetry_* or metric_* fields.",
+        "For apiId=equipment-status-large-rows, select equipment.telemetryStatusTable when the large-row source includes at least 3 concrete telemetry_* or metric_* fields. If it does not, select a registered statusBooleanList template only if one is registered.",
         "For apiId=equipment-status-wide-columns, prefer equipment.telemetryStatusTable when the telemetry_* columns can fill metric slots.",
       ],
       metricRule:
@@ -759,12 +759,13 @@ function mockPlan({
   const telemetryMetricPaths = metricPaths.filter((path) => /^(telemetry_|metric_)/i.test(sourceKey(path) ?? ""));
   const querySaysWide = /계측|텔레메트리|telemetry|metric|진단|wide|컬럼\s*(많|다|큰)/i.test(query);
   const canRenderTelemetry = telemetryMetricPaths.length >= 3 && registeredTemplateIds.has("equipment.telemetryStatusTable");
+  const statusTemplateId = templates.find((template) => template.status === "registered" && template.surfaceConfig.viewType === "statusBooleanList")?.componentId;
   const selectedTemplateId =
     apiId === "equipment-catalog"
       ? "equipment.imageCardList"
       : canRenderTelemetry && (querySaysWide || telemetryMetricPaths.length >= 3)
         ? "equipment.telemetryStatusTable"
-        : "equipment.commonStatusTable";
+        : statusTemplateId ?? "equipment.statusBooleanList";
 
   const titlePath = pathForKey(paths, ["name", "equipmentName", "eqpNm", "eqp_nm", "assetDisplayName", "assetName", "title"]);
   const idPath = pathForKey(paths, ["id", "eqpId", "eqp_id", "assetId"]);
@@ -841,7 +842,7 @@ function mockPlan({
       return {
         templateId: template.componentId,
         decision: isSelected ? "select" as const : "reject" as const,
-        score: isSelected ? 0.91 : template.componentId === "equipment.commonStatusTable" ? 0.76 : 0.42,
+        score: isSelected ? 0.91 : template.surfaceConfig.viewType === "statusBooleanList" ? 0.76 : 0.42,
         schemaFit: isSelected ? 0.92 : 0.72,
         queryFit: isSelected ? 0.9 : 0.64,
         semanticFit: isSelected ? 0.91 : 0.66,
@@ -872,7 +873,7 @@ function mockPlan({
         ? "상태 필드와 numeric telemetry 필드가 모두 있어 컬럼 많은 계측 상태 테이블이 가장 적합합니다."
         : selectedTemplateId === "equipment.imageCardList"
           ? "이미지와 설명 필드가 있어 장비 이미지 카드가 가장 적합합니다."
-          : "장비명과 여러 상태 필드가 있어 공용 장비 상태 템플릿이 가장 적합합니다.",
+          : "장비명과 여러 상태 필드가 있어 상태 목록 템플릿이 가장 적합합니다.",
     primaryArrayPath: extracted.arrayPath ?? "items",
     fieldMappings,
     slotMappings,
@@ -1269,6 +1270,8 @@ export async function planA2UISurfaceWithAI({
     };
   }
 
+  const extractedFieldPaths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
+
   await emitProgress(onProgress, {
     status: "profile",
     label: "Build A2UI source preview",
@@ -1279,8 +1282,8 @@ export async function planA2UISurfaceWithAI({
       previewSampleSize: extracted.rows.slice(0, maxPromptSampleRows).length,
       sourceShape: dataShape(rawData),
       sourceArrayPath: extracted.arrayPath,
-      sourceFieldCount: fieldPaths(extracted.rows, extracted.arrayPath ?? "items").length,
-      sourceFieldPaths: fieldPaths(extracted.rows, extracted.arrayPath ?? "items").slice(0, maxPromptFieldPaths),
+      sourceFieldCount: extractedFieldPaths.length,
+      sourceFieldPaths: extractedFieldPaths.slice(0, maxPromptFieldPaths),
       sourceSampleRows: extracted.rows.slice(0, maxPromptSampleRows),
     },
   });
@@ -1295,6 +1298,10 @@ export async function planA2UISurfaceWithAI({
   const templates = catalog.templates.map(normalizeTemplateInputSchema);
   const registeredTemplates = templates.filter((template) => template.status === "registered");
   const registeredImageCardTemplate = registeredTemplates.some((template) => template.componentId === "equipment.imageCardList");
+  const registeredStatusTemplate = registeredTemplates.find((template) => template.surfaceConfig.viewType === "statusBooleanList");
+  const registeredTelemetryTemplate = registeredTemplates.find((template) => template.componentId === "equipment.telemetryStatusTable");
+  const telemetryMetricPathCount = extractedFieldPaths.filter(isConcreteTelemetryMetricPath).length;
+  const canUseTelemetryTemplate = Boolean(registeredTelemetryTemplate && telemetryMetricPathCount >= 3);
 
   await emitProgress(onProgress, {
     status: "registry_loaded",
@@ -1359,6 +1366,87 @@ export async function planA2UISurfaceWithAI({
       status: "plan_validation",
       label: "Validate AI plan",
       detail: "validator rejected plan: image-card template is not registered",
+      data: {
+        mode: "invalid",
+        templateId: null,
+        reason,
+        strategy: "ai_surface_planner",
+        score: 0,
+        candidateCount: candidates.length,
+        validation,
+        candidates,
+        mapping: null,
+      },
+    });
+
+    return {
+      mode: "text_fallback",
+      apiId,
+      apiTitle: title,
+      registryVersion: catalog.version,
+      renderPlan: {
+        ...fallbackRenderPlan({ registryVersion: catalog.version, reason, candidates }),
+        aiSurfacePlanTrace: trace,
+      },
+      reason,
+      score: 0,
+      strategy: "ai_surface_planner",
+      candidates,
+      trace,
+      error: reason,
+    };
+  }
+
+  if (apiId !== "equipment-catalog" && !registeredStatusTemplate && !canUseTelemetryTemplate) {
+    const reason = "맞는 A2UI 템플릿이 없습니다.";
+    const candidateEvaluations: PlannerCandidateEvaluation[] = registeredTemplates.map((template) => {
+      const isTelemetry = template.componentId === "equipment.telemetryStatusTable";
+      const isImageCard = template.surfaceConfig.viewType === "imageCardList";
+      return {
+        templateId: template.componentId,
+        decision: "reject",
+        score: 0.16,
+        schemaFit: isTelemetry ? 0.24 : 0.14,
+        queryFit: isImageCard ? 0.08 : 0.18,
+        semanticFit: isTelemetry ? 0.2 : 0.12,
+        renderFit: 0.1,
+        reason: isTelemetry
+          ? "상태 목록 데이터에는 계측 수치 템플릿을 채울 telemetry/metric 필드가 부족합니다."
+          : "장비 상태 데이터는 이 템플릿 조건과 맞지 않습니다.",
+        missingRequiredSlots: isTelemetry ? ["items[].metrics"] : ["items[].statusFlags"],
+        risks: ["statusBooleanList template is not registered"],
+      };
+    });
+    const candidates = candidateEvaluations.map(candidateTrace);
+    const validation: ValidationResult = { ok: false, errors: [reason] };
+    const plan: AIPlannerPlan = {
+      confidence: 0,
+      reason,
+      primaryArrayPath: extracted.arrayPath,
+      fieldMappings: [],
+      slotMappings: [],
+      candidateEvaluations,
+    };
+    const trace = buildTrace({ rawData, extracted, model: "registry-gate", plan, validation });
+
+    await emitProgress(onProgress, {
+      status: "matcher",
+      label: "AI Surface Planner",
+      detail: "no compatible status template",
+      data: {
+        mode: "no_template",
+        templateId: null,
+        reason,
+        strategy: "ai_surface_planner",
+        score: 0,
+        candidateCount: candidates.length,
+        candidates,
+      },
+    });
+    await emitProgress(onProgress, {
+      status: "plan_validation",
+      label: "Validate AI plan",
+      detail: "validator rejected plan: status template is not registered",
       data: {
         mode: "invalid",
         templateId: null,
