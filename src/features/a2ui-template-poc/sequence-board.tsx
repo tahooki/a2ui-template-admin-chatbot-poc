@@ -817,12 +817,14 @@ function comparisonDataEvidenceView(trace: DataBoundaryScenarioTrace | undefined
 
 function templateComparisonEvidenceView(trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]): DetailViewModel {
   const profileEvent = latestEvent(events, ["state:source_preview", "state:profile"]);
-  const matcherEvent = latestEvent(events, ["state:ai_surface_plan", "state:matcher"]);
+  const templateRequestEvent = latestEvent(events, ["state:matcher_request"]);
+  const templateResultEvent = latestEvent(events, ["state:ai_surface_plan", "state:matcher"]);
   const validationEvent = latestEvent(events, ["state:plan_validation"]);
   const mappingEvent = latestEvent(events, ["state:mapping_applied"]);
   const toolResultEvent = latestEvent(events, ["state:a2ui_tool_result", "transport:a2a_result", "done"]);
   const surfaceEvent = latestEvent(events, ["surface"]);
-  const matcherData = recordValue(matcherEvent?.data);
+  const requestData = recordValue(templateRequestEvent?.data);
+  const resultData = recordValue(templateResultEvent?.data);
   const validationData = recordValue(validationEvent?.data);
   const mappingData = recordValue(mappingEvent?.data);
   const toolResultData = recordValue(toolResultEvent?.data);
@@ -830,25 +832,26 @@ function templateComparisonEvidenceView(trace: DataBoundaryScenarioTrace | undef
   const surface = recordValue(surfaceData.surface);
   const surfacePayload = recordValue(surface.payload);
   const surfaceRenderPlan = recordValue(surfacePayload.renderPlan);
-  const eventTrace = aiSurfaceTraceFromEvents(matcherEvent, validationEvent, mappingEvent, toolResultEvent, profileEvent);
+  const eventTrace = aiSurfaceTraceFromEvents(templateResultEvent, validationEvent, mappingEvent, toolResultEvent, templateRequestEvent, profileEvent);
   const rawSelectedTemplate = trace?.renderPlan.selectedComponentId
-    ?? matcherData.templateId
+    ?? resultData.templateId
     ?? validationData.templateId
     ?? mappingData.templateId
     ?? toolResultData.templateId
     ?? surfaceRenderPlan.selectedComponentId;
-  const resultMode = stringValue(matcherData.mode ?? validationData.mode ?? mappingData.mode ?? toolResultData.mode, "");
+  const resultMode = stringValue(resultData.mode ?? validationData.mode ?? mappingData.mode ?? toolResultData.mode, "");
+  const hasTemplateResult = Boolean(trace || templateResultEvent || validationEvent || mappingEvent || toolResultEvent || surfaceEvent);
   const validation = recordValue(validationData.validation);
-  const noTemplateResult = resultMode === "no_template" || (validation.ok === false && !surfaceEvent);
-  const selectedTemplate = noTemplateResult ? null : stringValue(rawSelectedTemplate, "-");
+  const noTemplateResult = hasTemplateResult && (resultMode === "no_template" || (validation.ok === false && !surfaceEvent));
+  const selectedTemplate = !hasTemplateResult ? null : noTemplateResult ? null : stringValue(rawSelectedTemplate, "-");
   const score = trace?.renderPlan.score
-    ?? numberValue(matcherData.score)
+    ?? numberValue(resultData.score)
     ?? numberValue(validationData.score)
     ?? numberValue(mappingData.score)
     ?? numberValue(toolResultData.score)
     ?? numberValue(surfaceRenderPlan.score);
-  const candidates = trace?.renderPlan.candidates ?? firstRecordArray(matcherData.candidates, validationData.candidates, toolResultData.candidates, eventTrace?.candidateEvaluations);
-  const reason = stringValue(matcherData.reason ?? validationData.reason ?? mappingData.reason ?? toolResultData.reason ?? surfaceRenderPlan.reason, "");
+  const candidates = trace?.renderPlan.candidates ?? firstRecordArray(resultData.candidates, validationData.candidates, toolResultData.candidates, eventTrace?.candidateEvaluations);
+  const reason = stringValue(resultData.reason ?? validationData.reason ?? mappingData.reason ?? toolResultData.reason ?? surfaceRenderPlan.reason, "");
   const sourceTool = sourceToolFromEvent(toolResultEvent);
   const inputJson = trace
     ? cleanJsonValue({
@@ -870,10 +873,11 @@ function templateComparisonEvidenceView(trace: DataBoundaryScenarioTrace | undef
       })
     : cleanJsonValue({
         sourcePreviewEvent: eventPayload(profileEvent),
+        templateSelectionRequestEvent: eventPayload(templateRequestEvent),
         sourceTool,
-        comparisonData: eventTrace?.comparisonData,
+        comparisonData: requestData.comparisonData ?? eventTrace?.comparisonData,
+        candidateCount: requestData.candidateCount,
         templateSelectionTrace: recordValue(eventTrace?.templateSelection),
-        templateSelectionEvent: eventPayload(matcherEvent),
       });
   const outputJson = trace
     ? cleanJsonValue({
@@ -885,17 +889,18 @@ function templateComparisonEvidenceView(trace: DataBoundaryScenarioTrace | undef
         candidates,
       })
     : cleanJsonValue({
-        result: noTemplateResult ? "no_template" : "selected",
+        status: hasTemplateResult ? undefined : "판단 결과 대기 중",
+        result: hasTemplateResult ? (noTemplateResult ? "no_template" : "selected") : "pending",
         selectedTemplateId: selectedTemplate,
         score,
         reason: reason || undefined,
         candidates,
-        templateSelection: matcherData.templateSelection ?? eventTrace?.templateSelection,
-        templateSelectionEvent: eventPayload(matcherEvent),
+        templateSelection: resultData.templateSelection ?? eventTrace?.templateSelection,
+        templateSelectionResultEvent: eventPayload(templateResultEvent),
       });
 
   return {
-    eyebrow: `Evidence: ${eventEvidenceText(matcherEvent ?? validationEvent ?? mappingEvent, trace ? "sample" : "pending")}`,
+    eyebrow: `Evidence: ${eventEvidenceText(templateRequestEvent ?? templateResultEvent ?? validationEvent ?? mappingEvent, trace ? "sample" : "pending")}`,
     title: "템플릿 판단",
     purpose: "1차 LLM이 raw API profile과 등록 템플릿을 보고 어떤 화면 템플릿을 선택했는지 보여줍니다.",
     jsonPanels: [
@@ -1011,7 +1016,9 @@ function slotGenerationEvidenceSubtitle(trace: DataBoundaryScenarioTrace | undef
 
 function evidenceLabels(trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]) {
   const comparisonDataEvent = latestEvent(events, ["state:comparison_data", "state:comparison_data_request"]);
-  const comparisonEvent = latestEvent(events, ["state:ai_surface_plan", "state:matcher"]);
+  const templateRequestEvent = latestEvent(events, ["state:matcher_request"]);
+  const templateResultEvent = latestEvent(events, ["state:ai_surface_plan", "state:matcher"]);
+  const templateEvent = templateResultEvent ?? templateRequestEvent;
   const slotEvent = latestEvent(events, ["state:mapping_applied", "state:plan_validation", "state:slot_mapping_plan", "state:slot_mapping_request"]);
   const labels: Array<{
     id: EvidenceLabelId;
@@ -1027,11 +1034,11 @@ function evidenceLabels(trace: DataBoundaryScenarioTrace | undefined, events: Ag
     });
   }
 
-  if (trace || comparisonEvent) {
+  if (trace || templateRequestEvent || templateResultEvent) {
     labels.push({
       id: "template-comparison",
       title: "템플릿 판단",
-      subtitle: templateComparisonEvidenceSubtitle(trace, comparisonEvent),
+      subtitle: templateComparisonEvidenceSubtitle(trace, templateEvent),
     });
   }
 

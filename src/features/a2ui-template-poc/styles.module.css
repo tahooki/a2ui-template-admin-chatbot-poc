@@ -53,7 +53,7 @@
   flex-wrap: wrap;
 }
 
-.topMeta span,
+.topMeta > span,
 .countText,
 .liveStatus {
   border: 1px solid var(--a2ui-line);
@@ -64,6 +64,68 @@
   font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.flowDelayToggle {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--a2ui-line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--a2ui-ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+  padding: 5px 10px 5px 6px;
+  transition: border-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
+  white-space: nowrap;
+}
+
+.flowDelayToggle:hover,
+.flowDelayToggle:focus-visible {
+  border-color: var(--a2ui-primary);
+  box-shadow: 0 0 0 3px var(--a2ui-primary-soft);
+  outline: none;
+}
+
+.flowDelayToggleTrack {
+  width: 34px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #d1d5db;
+  padding: 2px;
+  transition: background 160ms ease;
+}
+
+.flowDelayToggleTrack span {
+  width: 16px;
+  height: 16px;
+  display: block;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.24);
+  transform: translateX(0);
+  transition: transform 160ms ease;
+}
+
+.flowDelayToggleOn {
+  color: var(--a2ui-primary);
+}
+
+.flowDelayToggleOn .flowDelayToggleTrack {
+  background: var(--a2ui-primary);
+}
+
+.flowDelayToggleOn .flowDelayToggleTrack span {
+  transform: translateX(14px);
+}
+
+.flowDelayToggleOff {
+  color: #374151;
 }
 
 .workspace {

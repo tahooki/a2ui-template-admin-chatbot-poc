@@ -24,6 +24,7 @@ export function A2UITemplatePocPage() {
   const { templates, version, saveTemplate, resetRegistry, isLoading, error } = useTemplateRegistry();
   const [chatWidth, setChatWidth] = useState(304);
   const [chatResetKey, setChatResetKey] = useState(0);
+  const [isFlowPlaybackDelayed, setIsFlowPlaybackDelayed] = useState(true);
   const [flowEvents, setFlowEvents] = useState<AgentFlowEvent[]>([]);
   const [selectedBoundaryScenario, setSelectedBoundaryScenario] = useState<DataBoundaryScenarioId>("status");
   const draggingRef = useRef(false);
@@ -124,6 +125,12 @@ export function A2UITemplatePocPage() {
     return frame;
   }
 
+  function flushQueuedFlowEvents() {
+    const queuedEvents = displayQueueRef.current.splice(0);
+    appendDisplayedFlowEvents(queuedEvents);
+    return queuedEvents;
+  }
+
   function scheduleNextFlowEvent(delayMs = flowEventDisplayIntervalMs) {
     if (displayTimerRef.current) return;
     displayTimerRef.current = window.setTimeout(() => {
@@ -147,6 +154,21 @@ export function A2UITemplatePocPage() {
     setSelectedBoundaryScenario("status");
   }
 
+  function toggleFlowPlaybackDelay() {
+    const nextIsDelayed = !isFlowPlaybackDelayed;
+    setIsFlowPlaybackDelayed(nextIsDelayed);
+
+    if (!nextIsDelayed) {
+      clearFlowDisplayTimer();
+      flushQueuedFlowEvents();
+      return;
+    }
+
+    if (displayQueueRef.current.length > 0 && !displayTimerRef.current) {
+      scheduleNextFlowEvent();
+    }
+  }
+
   function handleFlowEvent(source: ChatFlowSourceEvent): ChatFlowDisplayTiming | undefined {
     const current = logicalFlowEventsRef.current;
     const currentTurnEvents = current.filter((event) => event.turnId === source.turnId);
@@ -166,6 +188,12 @@ export function A2UITemplatePocPage() {
     logicalFlowEventsRef.current = [...current, ...uniqueNextEvents].slice(-maxFlowEvents);
     const wasDisplayIdle = displayQueueRef.current.length === 0 && !displayTimerRef.current;
     pushDisplayableFlowEvents(uniqueNextEvents);
+
+    if (!isFlowPlaybackDelayed) {
+      clearFlowDisplayTimer();
+      flushQueuedFlowEvents();
+      return undefined;
+    }
 
     const surfaceEvent = uniqueNextEvents.find((event) => event.event === "surface" && event.turnId === source.turnId);
     const surfaceAlreadyDisplayed = Boolean(surfaceEvent && displayedFlowEventsRef.current.some((event) => event.id === surfaceEvent.id));
@@ -226,6 +254,19 @@ export function A2UITemplatePocPage() {
           <h1>A2UI Studio</h1>
         </div>
         <div className={styles.topMeta}>
+          <button
+            aria-checked={isFlowPlaybackDelayed}
+            className={`${styles.flowDelayToggle} ${isFlowPlaybackDelayed ? styles.flowDelayToggleOn : styles.flowDelayToggleOff}`}
+            onClick={toggleFlowPlaybackDelay}
+            role="switch"
+            title={isFlowPlaybackDelayed ? "시퀀스 이벤트를 1초 간격으로 보여줍니다." : "시퀀스 이벤트를 기다리지 않고 즉시 보여줍니다."}
+            type="button"
+          >
+            <span className={styles.flowDelayToggleTrack} aria-hidden="true">
+              <span />
+            </span>
+            <span>{isFlowPlaybackDelayed ? "1초 대기" : "즉시 처리"}</span>
+          </button>
           <span>v{version}</span>
           <button className={styles.secondaryButton} type="button" onClick={() => void resetDemo()}>
             Reset demo
