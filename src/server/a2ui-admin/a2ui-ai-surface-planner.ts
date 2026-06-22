@@ -185,6 +185,18 @@ const defaultPlannerAttempts: PlannerAttemptConfig[] = [
 ];
 const aiPlannerIncompleteReason = "AI가 화면 조건 비교 결과를 끝까지 완성하지 못해 선택을 확정하지 못했습니다.";
 const plannerAttemptPreviewLength = 1600;
+const titleSourceKeys = ["name", "equipmentName", "equipment_name", "eqpNm", "eqp_nm", "assetDisplayName", "assetName", "asset_nm", "asset_name", "title"];
+const idSourceKeys = ["id", "eqpId", "eqp_id", "equipmentId", "equipment_id", "assetId", "asset_id"];
+const onlineSourceKeys = ["isOnline", "opYn", "op_yn", "operationYn", "operation_yn", "operStateCd", "oper_state_cd", "onlineYn", "online_yn"];
+const runningSourceKeys = ["isRunning", "runYn", "run_yn", "runningYn", "running_yn", "running_code", "runStateYn", "run_state_yn", "runStateCd", "run_state_cd"];
+const alarmSourceKeys = ["hasAlarm", "alrmCnt", "alrm_count", "alarmCnt", "alarm_count", "alarmTotalCnt", "alarm_total_cnt", "alarmYn", "alarm_yn"];
+const inspectionSourceKeys = ["needsInspection", "inspReqYn", "insp_req_yn", "inspectionRequired", "inspection_required", "inspectionYn", "inspection_yn", "inspectDueYn", "inspect_due_yn"];
+const reservedSourceKeys = ["isReserved", "reservedFlag", "reserved_flag", "reserveFlag", "reserve_flag", "reservedYn", "reserved_yn", "reserveYn", "reserve_yn"];
+const updatedAtSourceKeys = ["updatedAt", "updated_at", "lastDtm", "last_dtm", "lastSignalAt", "last_signal_at", "timestamp", "time"];
+const locationSourceKeys = ["location", "site", "site_nm", "plantZone", "plant_zone", "zone"];
+const statusTargetFields = ["isOnline", "isRunning", "hasAlarm", "needsInspection", "isReserved"];
+const metricLikePattern = /^(telemetry_|metric_)|sensor|measure|measurement|reading|temperature|temp|pressure|rpm|speed|vibration|current|voltage|power|load|rate|score|value/i;
+const nonMetricLikePattern = /alarm|alrm|count|cnt|total|status|state|flag|yn$|code$|id$|name|title/i;
 const canonicalTargetFields = new Set([
   "id",
   "name",
@@ -430,6 +442,15 @@ function sourceKey(sourcePath?: string) {
   return sourcePath.replace(/\[\]/g, "").split(".").pop();
 }
 
+function keyMatchesAny(key: string, candidates: string[]) {
+  return candidates.some((candidate) => key.toLowerCase() === candidate.toLowerCase());
+}
+
+function isMetricLikeKey(key: string) {
+  if (/^(telemetry_|metric_)/i.test(key)) return true;
+  return metricLikePattern.test(key) && !nonMetricLikePattern.test(key);
+}
+
 function fieldType(value: unknown): A2UIDerivedFieldType {
   if (typeof value === "boolean") return "boolean";
   if (typeof value === "number") return "number";
@@ -445,8 +466,8 @@ function fieldType(value: unknown): A2UIDerivedFieldType {
 
 function rolesForKey(key: string, type: A2UIDerivedFieldType): A2UIRole[] {
   const roles: A2UIRole[] = [];
-  if (/^id$|Id$|_id$|assetId|eqp_id/i.test(key)) roles.push("id");
-  if (/name|title|equipmentName|eqpNm|eqp_nm|assetDisplayName|assetName/i.test(key)) roles.push("title", "label");
+  if (keyMatchesAny(key, idSourceKeys) || /^id$|Id$|_id$|assetId|eqp_id/i.test(key)) roles.push("id");
+  if (keyMatchesAny(key, titleSourceKeys) || /name|title|equipmentName|eqpNm|eqp_nm|assetDisplayName|assetName/i.test(key)) roles.push("title", "label");
   if (/description|content|summary/i.test(key)) roles.push("content", "description");
   if (/image|photo|thumbnail/i.test(key)) roles.push("image", "uri");
   if (type === "boolean") roles.push("booleanFlag", "status");
@@ -454,7 +475,7 @@ function rolesForKey(key: string, type: A2UIDerivedFieldType): A2UIRole[] {
   if (/category|type/i.test(key)) roles.push("category");
   if (/location|zone|site|plant/i.test(key)) roles.push("location");
   if (/updatedAt|last|dtm|date|time|signal/i.test(key) || type === "date" || type === "datetime") roles.push("updatedAt", "time");
-  if (type === "number" && /count|cnt|total|rate|score|metric|telemetry|amount|size|alarm/i.test(key)) roles.push("metric");
+  if (type === "number" && (isMetricLikeKey(key) || /amount|size/i.test(key))) roles.push("metric");
   return Array.from(new Set(roles));
 }
 
@@ -936,8 +957,12 @@ function pathForKey(paths: string[], keys: string[]) {
   });
 }
 
-function pathsMatching(paths: string[], pattern: RegExp) {
-  return paths.filter((path) => pattern.test(sourceKey(path) ?? ""));
+function metricSourcePaths(paths: string[], rows: DataRecord[]) {
+  const firstRow = rows[0] ?? {};
+  return paths.filter((path) => {
+    const key = sourceKey(path);
+    return Boolean(key && fieldType(firstRow[key]) === "number" && isMetricLikeKey(key));
+  });
 }
 
 function mapping(targetField: string, sourcePath: string | undefined, transform: PlannerTransform, reason: string): PlannerFieldMapping | undefined {
@@ -965,8 +990,7 @@ function mockPlan({
 }): AIPlannerPlan {
   const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
   const registeredTemplateIds = new Set(templates.filter((template) => template.status === "registered").map((template) => template.componentId));
-  const metricPaths = pathsMatching(paths, /^(telemetry_|metric_|.*count$|.*cnt$|alarmTotalCnt$|alarm_count$)/i);
-  const telemetryMetricPaths = metricPaths.filter((path) => /^(telemetry_|metric_)/i.test(sourceKey(path) ?? ""));
+  const telemetryMetricPaths = metricSourcePaths(paths, extracted.rows);
   const querySaysWide = /계측|텔레메트리|telemetry|metric|진단|wide|컬럼\s*(많|다|큰)/i.test(query);
   const canRenderTelemetry = telemetryMetricPaths.length >= 3 && registeredTemplateIds.has("equipment.telemetryStatusTable");
   const statusTemplateId = templates.find((template) => template.status === "registered" && template.surfaceConfig.viewType === "statusBooleanList")?.componentId;
@@ -977,15 +1001,15 @@ function mockPlan({
         ? "equipment.telemetryStatusTable"
         : statusTemplateId ?? "equipment.statusBooleanList";
 
-  const titlePath = pathForKey(paths, ["name", "equipmentName", "eqpNm", "eqp_nm", "assetDisplayName", "assetName", "title"]);
-  const idPath = pathForKey(paths, ["id", "eqpId", "eqp_id", "assetId"]);
-  const locationPath = pathForKey(paths, ["location", "site", "site_nm", "plantZone"]);
-  const updatedAtPath = pathForKey(paths, ["updatedAt", "lastDtm", "last_dtm", "lastSignalAt"]);
-  const onlinePath = pathForKey(paths, ["isOnline", "opYn", "operation_yn", "operStateCd"]);
-  const runningPath = pathForKey(paths, ["isRunning", "runYn", "running_code", "runStateYn"]);
-  const alarmPath = pathForKey(paths, ["hasAlarm", "alrmCnt", "alarm_count", "alarmTotalCnt"]);
-  const inspectionPath = pathForKey(paths, ["needsInspection", "inspReqYn", "inspection_required", "inspectDueYn"]);
-  const reservedPath = pathForKey(paths, ["isReserved", "reserved_flag", "reserveFlag"]);
+  const titlePath = pathForKey(paths, titleSourceKeys);
+  const idPath = pathForKey(paths, idSourceKeys);
+  const locationPath = pathForKey(paths, locationSourceKeys);
+  const updatedAtPath = pathForKey(paths, updatedAtSourceKeys);
+  const onlinePath = pathForKey(paths, onlineSourceKeys);
+  const runningPath = pathForKey(paths, runningSourceKeys);
+  const alarmPath = pathForKey(paths, alarmSourceKeys);
+  const inspectionPath = pathForKey(paths, inspectionSourceKeys);
+  const reservedPath = pathForKey(paths, reservedSourceKeys);
   const imagePath = pathForKey(paths, ["imageUrl", "thumbnailUrl", "photoUrl"]);
   const descriptionPath = pathForKey(paths, ["description", "summary", "content"]);
   const categoryPath = pathForKey(paths, ["category", "type"]);
@@ -1009,7 +1033,7 @@ function mockPlan({
   ].filter((item): item is PlannerFieldMapping => Boolean(item));
 
   const statusSlotMappings = fieldMappings
-    .filter((item) => ["isOnline", "isRunning", "hasAlarm", "needsInspection", "isReserved"].includes(item.targetField) && item.sourcePath)
+    .filter((item) => statusTargetFields.includes(item.targetField) && item.sourcePath)
     .map((item) => ({
       templateId: selectedTemplateId,
       slot: "items[].statusFlags",
@@ -1019,7 +1043,7 @@ function mockPlan({
       reason: item.reason,
     }));
   const metricSlotMappings = fieldMappings
-    .filter((item) => /^telemetry_/i.test(item.targetField) && item.sourcePath)
+    .filter((item) => isMetricLikeKey(item.targetField) && item.sourcePath)
     .slice(0, 4)
     .map((item) => ({
       templateId: selectedTemplateId,
@@ -1110,7 +1134,7 @@ function isAllowedTargetField(mappingItem: PlannerFieldMapping, sourceValue: unk
 
 function isConcreteTelemetryMetricPath(path?: string) {
   const key = sourceKey(path);
-  return Boolean(key && /^(telemetry_|metric_)/i.test(key));
+  return Boolean(key && isMetricLikeKey(key));
 }
 
 function isValidSourcePath(sourcePath: string | undefined, validSourcePaths: Set<string>) {
@@ -1128,15 +1152,15 @@ function sourcePathForTarget(targetField: string | undefined, paths: string[], s
   const normalized = normalizeTargetFieldValue(targetField, undefined, slot);
   if (!normalized) return undefined;
   if (/^(telemetry_|metric_)/i.test(normalized)) return findSourcePathByKeys(paths, [normalized]);
-  if (normalized === "id") return findSourcePathByKeys(paths, ["id", "eqpId", "eqp_id", "assetId"]);
-  if (normalized === "name") return findSourcePathByKeys(paths, ["name", "equipmentName", "eqpNm", "eqp_nm", "assetDisplayName", "assetName", "title"]);
-  if (normalized === "isOnline") return findSourcePathByKeys(paths, ["isOnline", "opYn", "operation_yn", "operStateCd"]);
-  if (normalized === "isRunning") return findSourcePathByKeys(paths, ["isRunning", "runYn", "running_code", "runStateYn"]);
-  if (normalized === "hasAlarm") return findSourcePathByKeys(paths, ["hasAlarm", "alrmCnt", "alarm_count", "alarmTotalCnt"]);
-  if (normalized === "needsInspection") return findSourcePathByKeys(paths, ["needsInspection", "inspReqYn", "inspection_required", "inspectDueYn"]);
-  if (normalized === "isReserved") return findSourcePathByKeys(paths, ["isReserved", "reserved_flag", "reserveFlag"]);
-  if (normalized === "updatedAt") return findSourcePathByKeys(paths, ["updatedAt", "lastDtm", "last_dtm", "lastSignalAt"]);
-  if (normalized === "location") return findSourcePathByKeys(paths, ["location", "site", "site_nm", "plantZone"]);
+  if (normalized === "id") return findSourcePathByKeys(paths, idSourceKeys);
+  if (normalized === "name") return findSourcePathByKeys(paths, titleSourceKeys);
+  if (normalized === "isOnline") return findSourcePathByKeys(paths, onlineSourceKeys);
+  if (normalized === "isRunning") return findSourcePathByKeys(paths, runningSourceKeys);
+  if (normalized === "hasAlarm") return findSourcePathByKeys(paths, alarmSourceKeys);
+  if (normalized === "needsInspection") return findSourcePathByKeys(paths, inspectionSourceKeys);
+  if (normalized === "isReserved") return findSourcePathByKeys(paths, reservedSourceKeys);
+  if (normalized === "updatedAt") return findSourcePathByKeys(paths, updatedAtSourceKeys);
+  if (normalized === "location") return findSourcePathByKeys(paths, locationSourceKeys);
   if (normalized === "imageUrl") return findSourcePathByKeys(paths, ["imageUrl", "thumbnailUrl", "photoUrl"]);
   if (normalized === "description") return findSourcePathByKeys(paths, ["description", "summary", "content"]);
   if (normalized === "category") return findSourcePathByKeys(paths, ["category", "type"]);
@@ -1159,12 +1183,12 @@ function normalizeTargetFieldValue(targetField: string | undefined, sourcePath?:
   const key = sourceKey(targetField.trim()) ?? targetField.trim();
   const sourcePathKey = sourceKey(sourcePath);
 
-  if (sourcePathKey && /^(telemetry_|metric_)/i.test(sourcePathKey)) return sourcePathKey;
+  if (sourcePathKey && isMetricLikeKey(sourcePathKey)) return sourcePathKey;
   if (canonicalTargetFields.has(key)) return key;
-  if (/^(telemetry_|metric_)/i.test(key)) return key;
+  if (isMetricLikeKey(key)) return key;
 
   const fieldHint = `${slot ?? ""} ${key} ${sourcePathKey ?? ""}`;
-  if (/title|label|name|equipmentName|eqpNm|eqp_nm|assetDisplayName|assetName/i.test(fieldHint)) return "name";
+  if (/title|label|name|equipmentName|equipment_name|eqpNm|eqp_nm|assetDisplayName|assetName|asset_nm|asset_name/i.test(fieldHint)) return "name";
   if (/^id$|Id$|_id$|assetId|eqp_id/i.test(fieldHint)) return "id";
   if (/image|photo|thumbnail/i.test(fieldHint)) return "imageUrl";
   if (/description|content|summary/i.test(fieldHint)) return "description";
@@ -1264,6 +1288,123 @@ function keepSelectedTemplateSlotMappings(plan: AIPlannerPlan) {
     },
     removedCount: removed.length,
     removedTemplateIds: Array.from(new Set(removed.map((item) => item.templateId).filter((templateId): templateId is string => Boolean(templateId)))),
+  };
+}
+
+function normalizeSlotNameForTemplate(slotName: string, template: A2UITemplateRegistration, targetField?: string, sourcePath?: string) {
+  const normalized = normalizeTemplateInputSchema(template);
+  const inputSchema = normalized.inputSchema;
+  if (!inputSchema) return slotName;
+  const slots = new Set([
+    ...inputSchema.requiredSlots.map((slot) => slot.slot),
+    ...(inputSchema.optionalSlots ?? []).map((slot) => slot.slot),
+  ]);
+  if (slots.has(slotName)) return slotName;
+
+  const hint = `${slotName} ${targetField ?? ""} ${sourceKey(sourcePath) ?? ""}`;
+  const matchingSlot = (pattern: RegExp) => Array.from(slots).find((slot) => pattern.test(slot));
+  if (/title|label|name|equipmentName|eqpNm|eqp_nm|assetDisplayName|assetName/i.test(hint)) return matchingSlot(/title/i) ?? slotName;
+  if (/status|flag|online|running|alarm|inspection|reserve|opYn|runYn|oper|state/i.test(hint)) return matchingSlot(/statusFlags/i) ?? slotName;
+  if (/metric|telemetry/i.test(hint)) return matchingSlot(/metrics/i) ?? slotName;
+  return slotName;
+}
+
+function normalizeSelectedTemplateSlotMappings(plan: AIPlannerPlan, templates: A2UITemplateRegistration[], extracted: RowExtraction): AIPlannerPlan {
+  const selectedTemplate = templates.find((template) => template.status === "registered" && template.componentId === plan.selectedTemplateId);
+  if (!selectedTemplate) return plan;
+
+  const normalizedTemplate = normalizeTemplateInputSchema(selectedTemplate);
+  const inputSchema = normalizedTemplate.inputSchema;
+  if (!inputSchema) return plan;
+  const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
+  const firstRow = extracted.rows[0] ?? {};
+  const fieldMappings = [...(plan.fieldMappings ?? [])];
+  const slotMappings = (plan.slotMappings ?? []).map((item) => ({
+    ...item,
+    slot: normalizeSlotNameForTemplate(item.slot, selectedTemplate, item.targetField, item.sourcePath),
+  }));
+
+  const sourceValue = (sourcePath?: string) => {
+    const key = sourceKey(sourcePath);
+    return key ? firstRow[key] : undefined;
+  };
+  const countSlot = (slotName: string) => slotMappings.filter((item) => item.slot === slotName && item.sourcePath && paths.includes(item.sourcePath)).length;
+  const hasSlotSource = (slotName: string, sourcePath?: string) => slotMappings.some((item) => item.slot === slotName && item.sourcePath === sourcePath);
+  const fieldMappingFor = (targetField: string, sourcePath?: string) =>
+    fieldMappings.find((item) => (sourcePath && item.sourcePath === sourcePath) || item.targetField === targetField);
+  const ensureFieldMapping = (targetField: string, sourcePath: string, reason: string) => {
+    let mappingItem = fieldMappingFor(targetField, sourcePath);
+    if (mappingItem) return mappingItem;
+    const base: PlannerFieldMapping = {
+      targetField,
+      sourcePath,
+      transform: "copy",
+      reason,
+    };
+    mappingItem = {
+      ...base,
+      transform: normalizeTransformForTarget(base, sourceValue(sourcePath)),
+    };
+    fieldMappings.push(mappingItem);
+    return mappingItem;
+  };
+  const addSlotMapping = (slotName: string, mappingItem: PlannerFieldMapping, reason: string) => {
+    if (!mappingItem.sourcePath || hasSlotSource(slotName, mappingItem.sourcePath)) return;
+    slotMappings.push({
+      templateId: selectedTemplate.componentId,
+      slot: slotName,
+      sourcePath: mappingItem.sourcePath,
+      targetField: mappingItem.targetField,
+      transform: mappingItem.transform,
+      reason,
+    });
+  };
+
+  for (const slot of inputSchema.requiredSlots) {
+    const minCount = slot.minCount ?? 1;
+
+    if (/title/i.test(slot.slot) && countSlot(slot.slot) < minCount) {
+      const sourcePath = sourcePathForTarget("name", paths, slot.slot);
+      if (!sourcePath) continue;
+      const mappingItem = ensureFieldMapping("name", sourcePath, "A2UI filled required title slot from recognized equipment name field.");
+      addSlotMapping(slot.slot, mappingItem, "A2UI filled required title slot from recognized equipment name field.");
+    }
+
+    if (/statusFlags/i.test(slot.slot) && countSlot(slot.slot) < minCount) {
+      const statusMappings = statusTargetFields
+        .map((targetField) => {
+          const sourcePath = sourcePathForTarget(targetField, paths, slot.slot);
+          return sourcePath
+            ? ensureFieldMapping(targetField, sourcePath, "A2UI filled required status slot from recognized status field.")
+            : fieldMappings.find((item) => item.targetField === targetField && item.sourcePath);
+        })
+        .filter((item): item is PlannerFieldMapping => Boolean(item?.sourcePath));
+      for (const mappingItem of statusMappings) {
+        if (countSlot(slot.slot) >= minCount) break;
+        addSlotMapping(slot.slot, mappingItem, "A2UI filled required status slot from recognized status field.");
+      }
+    }
+
+    if (/metrics/i.test(slot.slot) && countSlot(slot.slot) < minCount) {
+      const metricMappings = metricSourcePaths(paths, extracted.rows)
+        .map((sourcePath) => {
+          const targetField = sourceKey(sourcePath);
+          return targetField
+            ? ensureFieldMapping(targetField, sourcePath, "A2UI filled required metric slot from recognized telemetry metric field.")
+            : undefined;
+        })
+        .filter((item): item is PlannerFieldMapping => Boolean(item?.sourcePath));
+      for (const mappingItem of metricMappings) {
+        if (countSlot(slot.slot) >= minCount) break;
+        addSlotMapping(slot.slot, mappingItem, "A2UI filled required metric slot from recognized telemetry metric field.");
+      }
+    }
+  }
+
+  return {
+    ...plan,
+    fieldMappings,
+    slotMappings,
   };
 }
 
@@ -1687,7 +1828,7 @@ export async function planA2UISurfaceWithAI({
   const registeredImageCardTemplate = registeredTemplates.some((template) => template.componentId === "equipment.imageCardList");
   const registeredStatusTemplate = registeredTemplates.find((template) => template.surfaceConfig.viewType === "statusBooleanList");
   const registeredTelemetryTemplate = registeredTemplates.find((template) => template.componentId === "equipment.telemetryStatusTable");
-  const telemetryMetricPathCount = extractedFieldPaths.filter(isConcreteTelemetryMetricPath).length;
+  const telemetryMetricPathCount = metricSourcePaths(extractedFieldPaths, extracted.rows).length;
   const canUseTelemetryTemplate = Boolean(registeredTelemetryTemplate && telemetryMetricPathCount >= 3);
 
   await emitProgress(onProgress, {
@@ -1982,7 +2123,7 @@ export async function planA2UISurfaceWithAI({
   });
 
   let slotMappingCleanup = keepSelectedTemplateSlotMappings(plan);
-  plan = slotMappingCleanup.plan;
+  plan = normalizeSelectedTemplateSlotMappings(slotMappingCleanup.plan, templates, extracted);
   let validation = validatePlan({ plan, templates, extracted });
   if (!validation.ok && process.env.A2UI_AI_SURFACE_PLANNER_MOCK !== "1") {
     const initialAttempts = ai.attempts ?? [];
@@ -1991,7 +2132,7 @@ export async function planA2UISurfaceWithAI({
     if (retry.plan) {
       ai = { ...retry, attempts: combinedAttempts };
       slotMappingCleanup = keepSelectedTemplateSlotMappings(normalizeAIPlan(retry.plan, extracted));
-      plan = slotMappingCleanup.plan;
+      plan = normalizeSelectedTemplateSlotMappings(slotMappingCleanup.plan, templates, extracted);
       validation = validatePlan({ plan, templates, extracted });
     } else if (retry.attempts?.length) {
       ai = { ...ai, attempts: combinedAttempts, internalError: retry.internalError ?? ai.internalError };
