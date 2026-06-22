@@ -469,7 +469,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "profile",
         from: "a2ui",
         to: "a2ui",
-          label: "A2UI 원천 미리보기 생성",
+          label: "API 데이터 관찰",
           detail: profileDetail(source),
           branch: "data",
           severity: "success",
@@ -519,6 +519,43 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
 
   if (status === "matcher") {
     const mode = textValue(source.data.mode);
+    if (mode === "comparison_data") {
+      if (eventSeen(existingEvents, "state:comparison_data_request")) return [];
+      return [
+        newFlowEvent(source, 0, {
+          event: "state:comparison_data_request",
+          phase: "matcher",
+          from: "a2ui",
+          to: "llm",
+          label: "비교용 데이터 생성 요청",
+          detail: matcherDetail(source),
+          branch: "data",
+          severity: "info",
+          physicalEmitter: a2uiEmitter(source),
+          evidenceKind: a2uiEvidenceKind(source),
+          data: a2uiStepData(source, { traceStep: "comparison_data_request" }),
+        }),
+      ];
+    }
+
+    if (mode === "comparison_data_ready" || mode === "comparison_data_failed") {
+      return [
+        newFlowEvent(source, 0, {
+          event: "state:comparison_data",
+          phase: "matcher",
+          from: "llm",
+          to: "a2ui",
+          label: "비교용 데이터 생성 결과 반환",
+          detail: matcherDetail(source),
+          branch: "data",
+          severity: mode === "comparison_data_ready" ? "success" : "warning",
+          physicalEmitter: a2uiEmitter(source),
+          evidenceKind: a2uiEvidenceKind(source),
+          data: a2uiStepData(source, { traceStep: "comparison_data" }),
+        }),
+      ];
+    }
+
     if (mode === "planning" || mode === "template_selection") {
       if (eventSeen(existingEvents, "state:matcher_request")) return [];
       return [

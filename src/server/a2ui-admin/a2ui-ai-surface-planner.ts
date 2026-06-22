@@ -67,6 +67,43 @@ type TemplateCandidateNote = {
   risks?: unknown;
 };
 
+type ComparisonFieldRole =
+  | "identifier"
+  | "title"
+  | "status"
+  | "metric"
+  | "timestamp"
+  | "location"
+  | "image"
+  | "description"
+  | "category"
+  | "unknown";
+
+type ComparisonFieldProfile = {
+  sourcePath?: string;
+  sourceKey?: string;
+  label?: string;
+  type?: A2UIDerivedFieldType | string;
+  role?: ComparisonFieldRole | string;
+  targetHint?: string;
+  confidence?: unknown;
+  reason?: string;
+  exampleValues?: unknown[];
+};
+
+type ComparisonDataResult = {
+  primaryArrayPath?: string;
+  entityName?: string;
+  rowMeaning?: string;
+  reason?: string;
+  fieldProfiles?: ComparisonFieldProfile[];
+  titleCandidates?: string[];
+  statusCandidates?: string[];
+  metricCandidates?: string[];
+  timestampCandidates?: string[];
+  warnings?: string[];
+};
+
 type TemplateSelectionResult = {
   selectedTemplateId?: string;
   reason?: string;
@@ -104,7 +141,7 @@ type ValidationResult = {
 };
 
 type PlannerResponseFormat = "json_schema" | "json_object" | "none";
-type PlannerStage = "template_selection" | "slot_mapping";
+type PlannerStage = "comparison_data" | "template_selection" | "slot_mapping";
 
 type PlannerAttemptConfig = {
   maxTokens: number;
@@ -143,6 +180,7 @@ export type A2UISurfacePlanTrace = {
   reason?: string;
   primaryArrayPath?: string;
   selectedTemplateId?: string;
+  comparisonData?: ComparisonDataResult;
   templateSelection?: TemplateSelectionResult;
   slotMapping?: SlotMappingResult;
   fieldMappings: PlannerFieldMapping[];
@@ -205,7 +243,7 @@ export type A2UISurfacePlanProgress = {
 
 export type A2UISurfacePlanProgressHandler = (progress: A2UISurfacePlanProgress) => void | Promise<void>;
 
-const promptVersion = "2026-06-22.a2ui-two-stage-surface-plan.v1" as const;
+const promptVersion = "2026-06-22.a2ui-comparison-data-surface-plan.v2" as const;
 const allowedTransforms: PlannerTransform[] = ["copy", "boolean_code", "number_to_boolean", "default_false"];
 const maxPromptFieldPaths = 40;
 const maxPromptSampleRows = 3;
@@ -215,6 +253,7 @@ const defaultPlannerAttempts: PlannerAttemptConfig[] = [
   { maxTokens: 6000, responseFormat: "json_schema" },
   { maxTokens: 6000, responseFormat: "json_schema" },
 ];
+const aiComparisonDataIncompleteReason = "AI가 비교용 데이터 생성 결과를 끝까지 완성하지 못했습니다.";
 const aiTemplateSelectionIncompleteReason = "AI가 템플릿 판단 결과를 끝까지 완성하지 못해 선택을 확정하지 못했습니다.";
 const aiSlotMappingIncompleteReason = "AI가 선택된 템플릿의 슬롯 생성 결과를 끝까지 완성하지 못했습니다.";
 const plannerAttemptPreviewLength = 1600;
@@ -275,6 +314,54 @@ function plannerAttemptsForRequest(): PlannerAttemptConfig[] {
 
 function previewText(value: string, limit = plannerAttemptPreviewLength) {
   return value.length > limit ? `${value.slice(0, limit)}...<truncated>` : value;
+}
+
+function comparisonDataResponseFormatFor({ sourcePaths }: { sourcePaths: string[] }) {
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "a2ui_comparison_data",
+      strict: false,
+      schema: {
+        type: "object",
+        additionalProperties: true,
+        required: ["rowMeaning", "reason", "fieldProfiles"],
+        properties: {
+          primaryArrayPath: { type: "string" },
+          entityName: { type: "string" },
+          rowMeaning: { type: "string" },
+          reason: { type: "string" },
+          fieldProfiles: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: true,
+              required: ["sourcePath", "role", "targetHint", "reason"],
+              properties: {
+                sourcePath: { type: "string", enum: sourcePaths },
+                sourceKey: { type: "string" },
+                label: { type: "string" },
+                type: { type: "string", enum: ["string", "number", "boolean", "array", "object", "null", "unknown"] },
+                role: {
+                  type: "string",
+                  enum: ["identifier", "title", "status", "metric", "timestamp", "location", "image", "description", "category", "unknown"],
+                },
+                targetHint: { type: "string" },
+                confidence: { type: "number", minimum: 0, maximum: 1 },
+                reason: { type: "string" },
+                exampleValues: { type: "array" },
+              },
+            },
+          },
+          titleCandidates: { type: "array", items: { type: "string", enum: sourcePaths } },
+          statusCandidates: { type: "array", items: { type: "string", enum: sourcePaths } },
+          metricCandidates: { type: "array", items: { type: "string", enum: sourcePaths } },
+          timestampCandidates: { type: "array", items: { type: "string", enum: sourcePaths } },
+          warnings: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+  } as const;
 }
 
 function templateSelectionResponseFormatFor({ templateIds }: { templateIds: string[] }) {
@@ -576,6 +663,34 @@ function sourceFieldSummaries(rows: DataRecord[], paths: string[]) {
   });
 }
 
+function orderedUnique(values: Array<string | undefined>) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
+}
+
+function comparisonDataSourcePaths(comparisonData: ComparisonDataResult | undefined) {
+  if (!comparisonData) return [];
+  return orderedUnique([
+    ...(comparisonData.titleCandidates ?? []),
+    ...(comparisonData.statusCandidates ?? []),
+    ...(comparisonData.metricCandidates ?? []),
+    ...(comparisonData.timestampCandidates ?? []),
+    ...(comparisonData.fieldProfiles ?? []).map((field) => field.sourcePath),
+  ]);
+}
+
+function promptPathsForComparison(paths: string[], rows: DataRecord[], comparisonData?: ComparisonDataResult) {
+  const validPaths = new Set(paths);
+  const aiPaths = comparisonDataSourcePaths(comparisonData).filter((path) => validPaths.has(path));
+  return orderedUnique([...aiPaths, ...promptFieldPaths(paths, rows)]).slice(0, maxPromptFieldPaths);
+}
+
 function projectRowsForPrompt(rows: DataRecord[], paths: string[], limit: number) {
   const keys = Array.from(new Set(paths.map((path) => sourceKey(path)).filter((key): key is string => Boolean(key))));
   return rows.slice(0, limit).map((row) => {
@@ -694,15 +809,17 @@ function buildPrompt({
   rawData,
   extracted,
   templates,
+  comparisonData,
 }: {
   query: string;
   apiId: EquipmentApiId;
   rawData: unknown;
   extracted: RowExtraction;
   templates: A2UITemplateRegistration[];
+  comparisonData?: ComparisonDataResult;
 }) {
   const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
-  const promptPaths = promptFieldPaths(paths, extracted.rows);
+  const promptPaths = promptPathsForComparison(paths, extracted.rows, comparisonData);
   const metricTargetFields = promptPaths
     .map((path) => sourceKey(path))
     .filter((key): key is string => Boolean(key && /^(telemetry_|metric_)/i.test(key)));
@@ -730,6 +847,7 @@ function buildPrompt({
       fieldPaths: promptPaths,
       fields: sourceFieldSummaries(extracted.rows, promptPaths),
       sampleRows: projectRowsForPrompt(extracted.rows, promptPaths, maxPromptSampleRows),
+      comparisonData,
     },
     templates: registeredTemplates.map(templatePromptSummary),
     allowedTransforms,
@@ -826,11 +944,69 @@ function buildPrompt({
   };
 }
 
+function buildComparisonDataPrompt({
+  query,
+  apiId,
+  rawData,
+  extracted,
+}: {
+  query: string;
+  apiId: EquipmentApiId;
+  rawData: unknown;
+  extracted: RowExtraction;
+}) {
+  const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
+  const promptPaths = promptFieldPaths(paths, extracted.rows);
+  return {
+    promptVersion,
+    task: "Create an AI comparison data profile from unknown raw API data. Do not choose templates and do not create slot mappings.",
+    outputContract:
+      "Return JSON that explains what each important source field means. Use only observedSource.fieldPaths. Do not invent source fields.",
+    userQuery: query,
+    apiId,
+    observedSource: {
+      shape: dataShape(rawData),
+      detectedPrimaryArrayPath: extracted.arrayPath ?? "items",
+      rowCount: extracted.rowCount,
+      fieldPathCount: paths.length,
+      omittedFieldPathCount: Math.max(0, paths.length - promptPaths.length),
+      fieldPaths: promptPaths,
+      fields: sourceFieldSummaries(extracted.rows, promptPaths),
+      sampleRows: projectRowsForPrompt(extracted.rows, promptPaths, maxPromptSampleRows),
+    },
+    allowedRoles: ["identifier", "title", "status", "metric", "timestamp", "location", "image", "description", "category", "unknown"],
+    outputJsonShape: {
+      primaryArrayPath: "detected primary array path",
+      entityName: "short noun for each row, for example equipment, sensor, alarm, order",
+      rowMeaning: "short Korean sentence describing what one row represents",
+      reason: "short Korean sentence explaining the data interpretation",
+      fieldProfiles: [
+        {
+          sourcePath: "one observedSource.fieldPaths value",
+          sourceKey: "last key of sourcePath",
+          label: "human readable Korean label",
+          type: "string | number | boolean | date | datetime | object | array | unknown",
+          role: "identifier | title | status | metric | timestamp | location | image | description | category | unknown",
+          targetHint: "canonical field hint such as name, isOnline, isRunning, hasAlarm, updatedAt, or the concrete metric key",
+          confidence: "number 0..1",
+          reason: "short reason",
+          exampleValues: ["short examples from observedSource.sampleRows"],
+        },
+      ],
+      titleCandidates: ["source paths that can identify the row to users"],
+      statusCandidates: ["source paths that describe state, online/running/alarm/inspection/reservation"],
+      metricCandidates: ["numeric measurement source paths, even when the key name is unfamiliar"],
+      timestampCandidates: ["source paths for last update or measurement time"],
+      warnings: ["optional ambiguity notes"],
+    },
+  };
+}
+
 function buildTemplateSelectionPrompt(args: Parameters<typeof buildPrompt>[0]) {
   const base = buildPrompt(args);
   return {
     ...base,
-    task: "Choose exactly one registered A2UI template for the raw API data and user query. Do not create fieldMappings or slotMappings.",
+    task: "Choose exactly one registered A2UI template for the user query and AI comparison data profile. Do not create fieldMappings or slotMappings.",
     outputContract:
       "Return JSON with selectedTemplateId and reason. confidence and candidateNotes are helpful trace fields but they are not required for selection validity.",
     targetFieldRules: {
@@ -925,7 +1101,7 @@ async function requestPlannerJson<T>({
   correction,
 }: {
   stage: PlannerStage;
-  prompt: ReturnType<typeof buildTemplateSelectionPrompt> | ReturnType<typeof buildSlotMappingPrompt>;
+  prompt: ReturnType<typeof buildComparisonDataPrompt> | ReturnType<typeof buildTemplateSelectionPrompt> | ReturnType<typeof buildSlotMappingPrompt>;
   systemPrompt: string;
   responseFormatFor: () => unknown;
   correction?: { previousResult: unknown; validationErrors: string[]; instruction: string };
@@ -937,7 +1113,7 @@ async function requestPlannerJson<T>({
     console.warn("[a2ui] AI surface planner skipped because OPENAI_API_KEY is missing");
     return {
       model: config.model,
-      error: stage === "template_selection" ? aiTemplateSelectionIncompleteReason : aiSlotMappingIncompleteReason,
+      error: plannerIncompleteReason(stage),
       internalError: `A2UI AI ${stage} requires OPENAI_API_KEY.`,
     };
   }
@@ -1141,10 +1317,36 @@ async function requestPlannerJson<T>({
 
   return {
     model: config.model,
-    error: stage === "template_selection" ? aiTemplateSelectionIncompleteReason : aiSlotMappingIncompleteReason,
+    error: plannerIncompleteReason(stage),
     internalError: lastInternalError,
     attempts: attemptRecords,
   };
+}
+
+function plannerIncompleteReason(stage: PlannerStage) {
+  if (stage === "comparison_data") return aiComparisonDataIncompleteReason;
+  if (stage === "template_selection") return aiTemplateSelectionIncompleteReason;
+  return aiSlotMappingIncompleteReason;
+}
+
+function requestComparisonData(
+  prompt: ReturnType<typeof buildComparisonDataPrompt>,
+  correction?: { previousResult: unknown; validationErrors: string[] },
+) {
+  return requestPlannerJson<ComparisonDataResult>({
+    stage: "comparison_data",
+    prompt,
+    systemPrompt:
+      "You are the A2UI comparison data builder. Interpret unknown raw API fields from observed source paths and sample rows. Return JSON only. Do not choose templates, do not create fieldMappings, and do not create slotMappings. Your job is to describe what each important source field likely means so later A2UI steps can compare registered templates. Treat arbitrary numeric measurement fields as metrics when samples indicate sensor/measurement values, even if the key name is unfamiliar. Use only observedSource.fieldPaths and never invent paths.",
+    responseFormatFor: () => comparisonDataResponseFormatFor({ sourcePaths: prompt.observedSource.fieldPaths }),
+    correction: correction
+      ? {
+          ...correction,
+          instruction:
+            "The previous comparison data failed validation. Return rowMeaning, reason, and fieldProfiles using only observedSource.fieldPaths. Do not return template or slot mappings.",
+        }
+      : undefined,
+  });
 }
 
 function requestTemplateSelection(
@@ -1155,7 +1357,7 @@ function requestTemplateSelection(
     stage: "template_selection",
     prompt,
     systemPrompt:
-      "You are the A2UI template selector. Choose exactly one registered A2UI template for the raw API data and user query. Return JSON only. The only required decision fields are selectedTemplateId and reason. Do not create fieldMappings, slotMappings, render payloads, or legacy mappings. Use source.fieldPaths and source.sampleRows only as evidence for template choice. Many rows alone is not a template reason; choose based on data meaning and template contract. Telemetry templates require real telemetry or metric columns. Candidate scores are optional explanation aids, not validation requirements.",
+      "You are the A2UI template selector. Choose exactly one registered A2UI template for the AI comparison data profile and user query. Return JSON only. The only required decision fields are selectedTemplateId and reason. Do not create fieldMappings, slotMappings, render payloads, or legacy mappings. Use source.comparisonData, source.fieldPaths, and source.sampleRows as evidence for template choice. Many rows alone is not a template reason; choose based on data meaning and template contract. Telemetry templates require real metric fields from source.comparisonData.metricCandidates or fieldProfiles role=metric. Candidate scores are optional explanation aids, not validation requirements.",
     responseFormatFor: () => templateSelectionResponseFormatFor({ templateIds: prompt.allowedTemplateIds }),
     correction: correction
       ? {
@@ -1176,7 +1378,7 @@ function requestSlotMapping(
     stage: "slot_mapping",
     prompt,
     systemPrompt:
-      "You are the A2UI slot mapper. A template has already been selected. Create fieldMappings and slotMappings only for selectedTemplateId. Do not compare templates and do not change selectedTemplateId. Use only source.fieldPaths. Do not invent source fields. Do not use wildcard paths. slotMappings do not need templateId because the A2UI server will attach selectedTemplateId; if templateId is included, it must equal selectedTemplateId. Fill required slots from the selected template inputSchema. If both online/operation fields and running fields exist, map operation/online fields to isOnline and running fields to isRunning. Alarm/count fields normally map to hasAlarm, not metric slots. Metric slots should use concrete numeric telemetry or metric source paths.",
+      "You are the A2UI slot mapper. A template has already been selected. Create fieldMappings and slotMappings only for selectedTemplateId. Do not compare templates and do not change selectedTemplateId. Use source.comparisonData to understand field meaning, but use only source.fieldPaths as sourcePath values. Do not invent source fields. Do not use wildcard paths. slotMappings do not need templateId because the A2UI server will attach selectedTemplateId; if templateId is included, it must equal selectedTemplateId. Fill required slots from the selected template inputSchema. If both online/operation fields and running fields exist, map operation/online fields to isOnline and running fields to isRunning. Alarm/count fields normally map to hasAlarm, not metric slots. Metric slots should use concrete numeric metric source paths from comparisonData metric candidates or role=metric fieldProfiles.",
     responseFormatFor: () => slotMappingResponseFormatFor({
       templateId,
       sourcePaths: prompt.source.fieldPaths,
@@ -1387,6 +1589,13 @@ function mockTemplateSelection(args: {
   };
 }
 
+function mockComparisonData(args: {
+  rawData: unknown;
+  extracted: RowExtraction;
+}): ComparisonDataResult {
+  return normalizeComparisonData(fallbackComparisonData(args), args.extracted) ?? fallbackComparisonData(args);
+}
+
 function mockSlotMapping(args: {
   query: string;
   apiId: EquipmentApiId;
@@ -1416,12 +1625,7 @@ function isAllowedTargetField(mappingItem: PlannerFieldMapping, sourceValue: unk
   if (canonicalTargetFields.has(mappingItem.targetField)) return true;
   const sourceFieldType = fieldType(sourceValue);
   const key = sourceKey(mappingItem.sourcePath);
-  return Boolean(key && mappingItem.targetField === key && rolesForKey(key, sourceFieldType).includes("metric"));
-}
-
-function isConcreteTelemetryMetricPath(path?: string) {
-  const key = sourceKey(path);
-  return Boolean(key && isMetricLikeKey(key));
+  return Boolean(key && mappingItem.targetField === key && (sourceFieldType === "number" || rolesForKey(key, sourceFieldType).includes("metric")));
 }
 
 function isValidSourcePath(sourcePath: string | undefined, validSourcePaths: Set<string>) {
@@ -1563,6 +1767,158 @@ function stringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function normalizeComparisonRole(value: unknown): ComparisonFieldRole {
+  if (
+    value === "identifier" ||
+    value === "title" ||
+    value === "status" ||
+    value === "metric" ||
+    value === "timestamp" ||
+    value === "location" ||
+    value === "image" ||
+    value === "description" ||
+    value === "category"
+  ) {
+    return value;
+  }
+  return "unknown";
+}
+
+function normalizeComparisonData(comparisonData: ComparisonDataResult | undefined, extracted: RowExtraction): ComparisonDataResult | undefined {
+  if (!comparisonData || typeof comparisonData !== "object") return undefined;
+  const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
+  const validPaths = new Set(paths);
+  const firstRow = extracted.rows[0] ?? {};
+  const normalizePathList = (value: unknown) => stringArray(value).filter((path) => validPaths.has(path));
+  const fieldProfiles: ComparisonFieldProfile[] = [];
+  for (const field of Array.isArray(comparisonData.fieldProfiles) ? comparisonData.fieldProfiles : []) {
+    const sourcePath = typeof field.sourcePath === "string" && validPaths.has(field.sourcePath) ? field.sourcePath : undefined;
+    if (!sourcePath) continue;
+    const key = sourceKey(sourcePath) ?? sourcePath;
+    const sourceValue = firstRow[key];
+    fieldProfiles.push({
+      ...field,
+      sourcePath,
+      sourceKey: typeof field.sourceKey === "string" && field.sourceKey.trim() ? field.sourceKey : key,
+      type: typeof field.type === "string" ? field.type : fieldType(sourceValue),
+      role: normalizeComparisonRole(field.role),
+      targetHint: typeof field.targetHint === "string" && field.targetHint.trim()
+        ? normalizeTargetFieldValue(field.targetHint, sourcePath) ?? field.targetHint
+        : key,
+      confidence: scoreValue(field.confidence, 0.7),
+      exampleValues: Array.isArray(field.exampleValues)
+        ? field.exampleValues.slice(0, 5)
+        : extracted.rows.slice(0, maxPromptSampleRows).map((row) => row[key]).filter((value) => value !== undefined),
+      reason: typeof field.reason === "string" && field.reason.trim() ? field.reason : "AI가 source sample을 보고 필드 의미를 추정했습니다.",
+    });
+  }
+
+  return {
+    primaryArrayPath: typeof comparisonData.primaryArrayPath === "string" && comparisonData.primaryArrayPath.trim()
+      ? comparisonData.primaryArrayPath
+      : extracted.arrayPath ?? "items",
+    entityName: typeof comparisonData.entityName === "string" ? comparisonData.entityName : undefined,
+    rowMeaning: typeof comparisonData.rowMeaning === "string" ? comparisonData.rowMeaning : undefined,
+    reason: typeof comparisonData.reason === "string" ? comparisonData.reason : undefined,
+    fieldProfiles,
+    titleCandidates: normalizePathList(comparisonData.titleCandidates),
+    statusCandidates: normalizePathList(comparisonData.statusCandidates),
+    metricCandidates: normalizePathList(comparisonData.metricCandidates),
+    timestampCandidates: normalizePathList(comparisonData.timestampCandidates),
+    warnings: stringArray(comparisonData.warnings),
+  };
+}
+
+function fallbackComparisonData({ rawData, extracted }: { rawData: unknown; extracted: RowExtraction }): ComparisonDataResult {
+  const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
+  const promptPaths = promptFieldPaths(paths, extracted.rows);
+  const fields = sourceFieldSummaries(extracted.rows, promptPaths);
+  const fieldProfiles = fields.map((field) => {
+    const roles = field.roles;
+    const role = roles.includes("title")
+      ? "title"
+      : roles.includes("status")
+        ? "status"
+        : roles.includes("metric")
+          ? "metric"
+          : roles.includes("updatedAt") || roles.includes("time")
+            ? "timestamp"
+            : roles.includes("location")
+              ? "location"
+              : roles.includes("image")
+                ? "image"
+                : roles.includes("description") || roles.includes("content")
+                  ? "description"
+                  : roles.includes("category")
+                    ? "category"
+                    : roles.includes("id")
+                      ? "identifier"
+                      : "unknown";
+    return {
+      sourcePath: field.path,
+      sourceKey: field.key,
+      label: field.key,
+      type: field.type,
+      role,
+      targetHint: role === "title" ? "name" : role === "metric" ? field.key : normalizeTargetFieldValue(field.key) ?? field.key,
+      confidence: 0.55,
+      reason: "LLM 비교용 데이터 생성 실패 시 관찰된 API sample에서 만든 보조 profile입니다.",
+      exampleValues: field.examples,
+    } satisfies ComparisonFieldProfile;
+  });
+  return {
+    primaryArrayPath: extracted.arrayPath ?? "items",
+    entityName: dataShape(rawData),
+    rowMeaning: "API 응답의 한 row입니다.",
+    reason: "LLM 비교용 데이터 생성 실패 시 source 관찰값으로 보조 profile을 만들었습니다.",
+    fieldProfiles,
+    titleCandidates: fieldProfiles.filter((field) => field.role === "title").map((field) => field.sourcePath).filter((path): path is string => Boolean(path)),
+    statusCandidates: fieldProfiles.filter((field) => field.role === "status").map((field) => field.sourcePath).filter((path): path is string => Boolean(path)),
+    metricCandidates: fieldProfiles.filter((field) => field.role === "metric").map((field) => field.sourcePath).filter((path): path is string => Boolean(path)),
+    timestampCandidates: fieldProfiles.filter((field) => field.role === "timestamp").map((field) => field.sourcePath).filter((path): path is string => Boolean(path)),
+    warnings: ["comparison_data_repaired_from_observed_source"],
+  };
+}
+
+function validateComparisonData({
+  comparisonData,
+  extracted,
+}: {
+  comparisonData: ComparisonDataResult | undefined;
+  extracted: RowExtraction;
+}): ValidationResult {
+  const errors: string[] = [];
+  const sourcePaths = new Set(fieldPaths(extracted.rows, extracted.arrayPath ?? "items"));
+  if (!comparisonData) {
+    errors.push("AI comparison data did not return an object.");
+    return { ok: false, errors };
+  }
+  if (!comparisonData.rowMeaning || !comparisonData.rowMeaning.trim()) errors.push("AI comparison data did not include rowMeaning.");
+  if (!comparisonData.reason || !comparisonData.reason.trim()) errors.push("AI comparison data did not include reason.");
+  const fieldProfiles = Array.isArray(comparisonData.fieldProfiles) ? comparisonData.fieldProfiles : [];
+  if (!fieldProfiles.length) errors.push("AI comparison data did not include fieldProfiles.");
+  for (const field of fieldProfiles) {
+    if (!field.sourcePath || !sourcePaths.has(field.sourcePath)) errors.push(`AI comparison data includes unknown sourcePath: ${field.sourcePath ?? "(empty)"}`);
+    if (!field.role) errors.push(`AI comparison data field is missing role: ${field.sourcePath ?? "(empty)"}`);
+    if (!field.targetHint) errors.push(`AI comparison data field is missing targetHint: ${field.sourcePath ?? "(empty)"}`);
+    if (!field.reason) errors.push(`AI comparison data field is missing reason: ${field.sourcePath ?? "(empty)"}`);
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+function metricSourcePathsForPlanning(paths: string[], rows: DataRecord[], comparisonData?: ComparisonDataResult) {
+  const firstRow = rows[0] ?? {};
+  const validPaths = new Set(paths);
+  const aiMetricPaths = [
+    ...(comparisonData?.metricCandidates ?? []),
+    ...((comparisonData?.fieldProfiles ?? [])
+      .filter((field) => field.role === "metric" || /metric|measure|telemetry|sensor|수치|계측/i.test(`${field.targetHint ?? ""} ${field.reason ?? ""}`))
+      .map((field) => field.sourcePath)
+      .filter((path): path is string => Boolean(path))),
+  ].filter((path) => validPaths.has(path) && fieldType(firstRow[sourceKey(path) ?? ""]) === "number");
+  return orderedUnique([...aiMetricPaths, ...metricSourcePaths(paths, rows)]);
+}
+
 function candidateNoteFor(selection: TemplateSelectionResult, templateId: string) {
   return Array.isArray(selection.candidateNotes)
     ? selection.candidateNotes.find((note) => note.templateId === templateId)
@@ -1690,10 +2046,12 @@ function validatePlan({
   plan,
   templates,
   extracted,
+  comparisonData,
 }: {
   plan: AIPlannerPlan;
   templates: A2UITemplateRegistration[];
   extracted: RowExtraction;
+  comparisonData?: ComparisonDataResult;
 }): ValidationResult {
   const errors: string[] = [];
   const registeredTemplates = templates.filter((template) => template.status === "registered").map(normalizeTemplateInputSchema);
@@ -1772,9 +2130,10 @@ function validatePlan({
     }
 
     if (selectedTemplate.componentId === "equipment.telemetryStatusTable") {
-      const telemetryMetricCount = slotMappings.filter((item) => item.slot === "items[].metrics" && isConcreteTelemetryMetricPath(item.sourcePath)).length;
+      const telemetryMetricPaths = new Set(metricSourcePathsForPlanning(fieldPaths(extracted.rows, extracted.arrayPath ?? "items"), extracted.rows, comparisonData));
+      const telemetryMetricCount = slotMappings.filter((item) => item.slot === "items[].metrics" && Boolean(item.sourcePath && telemetryMetricPaths.has(item.sourcePath))).length;
       if (telemetryMetricCount < 3) {
-        errors.push(`Telemetry template requires at least 3 concrete telemetry_* or metric_* metric slot mappings, got ${telemetryMetricCount}.`);
+        errors.push(`Telemetry template requires at least 3 concrete metric slot mappings from AI comparison data, got ${telemetryMetricCount}.`);
       }
     }
   }
@@ -2013,6 +2372,7 @@ function buildTrace({
   validation,
   data,
   plannerAttempts,
+  comparisonData,
   templateSelection,
   slotMapping,
 }: {
@@ -2023,6 +2383,7 @@ function buildTrace({
   validation: ValidationResult;
   data?: EquipmentApiResponse<unknown>;
   plannerAttempts?: PlannerAttemptTrace[];
+  comparisonData?: ComparisonDataResult;
   templateSelection?: TemplateSelectionResult;
   slotMapping?: SlotMappingResult;
 }): A2UISurfacePlanTrace {
@@ -2033,6 +2394,7 @@ function buildTrace({
     reason: plan.reason,
     primaryArrayPath: plan.primaryArrayPath,
     selectedTemplateId: plan.selectedTemplateId,
+    comparisonData,
     templateSelection,
     slotMapping,
     fieldMappings: plan.fieldMappings ?? [],
@@ -2086,7 +2448,7 @@ export async function planA2UISurfaceWithAI({
 
   await emitProgress(onProgress, {
     status: "profile",
-    label: "A2UI 원천 미리보기 생성",
+    label: "API 데이터 관찰",
     detail: `rows=${extracted.rowCount}`,
     data: {
       rowCount: extracted.rowCount,
@@ -2112,8 +2474,6 @@ export async function planA2UISurfaceWithAI({
   const registeredImageCardTemplate = registeredTemplates.some((template) => template.componentId === "equipment.imageCardList");
   const registeredStatusTemplate = registeredTemplates.find((template) => template.surfaceConfig.viewType === "statusBooleanList");
   const registeredTelemetryTemplate = registeredTemplates.find((template) => template.componentId === "equipment.telemetryStatusTable");
-  const telemetryMetricPathCount = metricSourcePaths(extractedFieldPaths, extracted.rows).length;
-  const canUseTelemetryTemplate = Boolean(registeredTelemetryTemplate && telemetryMetricPathCount >= 3);
 
   await emitProgress(onProgress, {
     status: "registry_loaded",
@@ -2124,6 +2484,140 @@ export async function planA2UISurfaceWithAI({
       templateCount: registeredTemplates.length,
     },
   });
+
+  let model: string | undefined;
+  let plannerAttempts: PlannerAttemptTrace[] = [];
+  const comparisonPrompt = buildComparisonDataPrompt({ query, apiId, rawData, extracted });
+  await emitProgress(onProgress, {
+    status: "matcher",
+    label: "비교용 데이터 생성 요청",
+    detail: `fields=${comparisonPrompt.observedSource.fieldPaths.length} | rows=${comparisonPrompt.observedSource.sampleRows.length}`,
+    data: {
+      mode: "comparison_data",
+      strategy: "ai_surface_planner",
+      sourceFieldCount: comparisonPrompt.observedSource.fieldPathCount,
+      promptFieldCount: comparisonPrompt.observedSource.fieldPaths.length,
+      sourceSampleSize: comparisonPrompt.observedSource.sampleRows.length,
+    },
+  });
+
+  let comparisonAi = await requestComparisonData(comparisonPrompt);
+  model = comparisonAi.model;
+  plannerAttempts = [...plannerAttempts, ...(comparisonAi.attempts ?? [])];
+  let comparisonData = normalizeComparisonData(
+    comparisonAi.result ?? (process.env.A2UI_AI_SURFACE_PLANNER_MOCK === "1" ? mockComparisonData({ rawData, extracted }) : undefined),
+    extracted,
+  );
+  let comparisonValidation = validateComparisonData({ comparisonData, extracted });
+
+  if (!comparisonValidation.ok && process.env.A2UI_AI_SURFACE_PLANNER_MOCK !== "1") {
+    const retry = await requestComparisonData(comparisonPrompt, {
+      previousResult: comparisonData,
+      validationErrors: comparisonValidation.errors,
+    });
+    model = retry.model ?? model;
+    plannerAttempts = [...plannerAttempts, ...(retry.attempts ?? [])];
+    if (retry.result) {
+      comparisonAi = retry;
+      comparisonData = normalizeComparisonData(retry.result, extracted);
+      comparisonValidation = validateComparisonData({ comparisonData, extracted });
+    } else if (retry.internalError) {
+      comparisonAi = { ...comparisonAi, internalError: retry.internalError };
+    }
+  }
+
+  if ((!comparisonData || !comparisonValidation.ok) && canRepairIncompleteAIResult(comparisonAi)) {
+    comparisonData = normalizeComparisonData(fallbackComparisonData({ rawData, extracted }), extracted);
+    comparisonValidation = validateComparisonData({ comparisonData, extracted });
+    if (comparisonValidation.ok) {
+      model = `${model ?? "unknown"}+observed-source-repair`;
+      console.warn("[a2ui] AI comparison data used observed-source repair after incomplete LLM response", {
+        model,
+        internalError: comparisonAi.internalError,
+      });
+    }
+  }
+
+  await emitProgress(onProgress, {
+    status: "matcher",
+    label: "비교용 데이터 생성 결과 반환",
+    detail: comparisonValidation.ok
+      ? `fields=${comparisonData?.fieldProfiles?.length ?? 0} | metrics=${comparisonData?.metricCandidates?.length ?? 0}`
+      : `failed=${comparisonValidation.errors.length}`,
+    data: {
+      mode: comparisonValidation.ok ? "comparison_data_ready" : "comparison_data_failed",
+      strategy: "ai_surface_planner",
+      validation: comparisonValidation,
+      plannerAttempts,
+      comparisonData,
+    },
+  });
+
+  if (!comparisonData || !comparisonValidation.ok) {
+    const reason = comparisonValidation.errors.length
+      ? `AI comparison data failed validation: ${comparisonValidation.errors.join("; ")}`
+      : comparisonAi.error ?? aiComparisonDataIncompleteReason;
+    if (comparisonAi.internalError) console.warn("[a2ui] AI comparison data hidden failure detail", comparisonAi.internalError);
+    const validation: ValidationResult = { ok: false, errors: [reason] };
+    const failurePlan: AIPlannerPlan = {
+      confidence: 0,
+      reason,
+      primaryArrayPath: extracted.arrayPath,
+      fieldMappings: [],
+      slotMappings: [],
+      candidateEvaluations: registeredTemplates.map((template) => ({
+        templateId: template.componentId,
+        decision: "reject" as const,
+        score: 0,
+        schemaFit: 0,
+        queryFit: 0,
+        semanticFit: 0,
+        renderFit: 0,
+        reason: "AI 비교용 데이터 생성 결과가 완성되지 않아 템플릿 판단을 진행하지 않았습니다.",
+        missingRequiredSlots: [],
+        risks: ["comparison_data_incomplete"],
+      })),
+    };
+    const candidates = failurePlan.candidateEvaluations?.map(candidateTrace) ?? [];
+    const trace = buildTrace({ rawData, extracted, model, plan: failurePlan, validation, plannerAttempts, comparisonData });
+    await emitProgress(onProgress, {
+      status: "plan_validation",
+      label: "슬롯 검증",
+      detail: "comparison data failed before template selection",
+      data: {
+        mode: "invalid",
+        templateId: null,
+        reason,
+        strategy: "ai_surface_planner",
+        score: 0,
+        candidateCount: candidates.length,
+        validation,
+        plannerAttempts,
+        candidates,
+        comparisonData,
+        mapping: null,
+      },
+    });
+    return {
+      mode: "text_fallback",
+      apiId,
+      apiTitle: title,
+      registryVersion: catalog.version,
+      renderPlan: {
+        ...fallbackRenderPlan({ registryVersion: catalog.version, reason, candidates }),
+        aiSurfacePlanTrace: trace,
+      },
+      reason,
+      score: 0,
+      strategy: "ai_surface_planner",
+      candidates,
+      trace,
+      error: reason,
+    };
+  }
+
+  const telemetryMetricPathCount = metricSourcePathsForPlanning(extractedFieldPaths, extracted.rows, comparisonData).length;
+  const canUseTelemetryTemplate = Boolean(registeredTelemetryTemplate && telemetryMetricPathCount >= 3);
 
   if (apiId === "equipment-catalog" && !registeredImageCardTemplate) {
     const reason = "맞는 A2UI 템플릿이 없습니다.";
@@ -2158,7 +2652,7 @@ export async function planA2UISurfaceWithAI({
       slotMappings: [],
       candidateEvaluations,
     };
-    const trace = buildTrace({ rawData, extracted, model: "registry-gate", plan, validation });
+    const trace = buildTrace({ rawData, extracted, model: model ?? "registry-gate", plan, validation, plannerAttempts, comparisonData });
 
     await emitProgress(onProgress, {
       status: "matcher",
@@ -2239,7 +2733,7 @@ export async function planA2UISurfaceWithAI({
       slotMappings: [],
       candidateEvaluations,
     };
-    const trace = buildTrace({ rawData, extracted, model: "registry-gate", plan, validation });
+    const trace = buildTrace({ rawData, extracted, model: model ?? "registry-gate", plan, validation, plannerAttempts, comparisonData });
 
     await emitProgress(onProgress, {
       status: "matcher",
@@ -2290,7 +2784,7 @@ export async function planA2UISurfaceWithAI({
     };
   }
 
-  const selectionPrompt = buildTemplateSelectionPrompt({ query, apiId, rawData, extracted, templates });
+  const selectionPrompt = buildTemplateSelectionPrompt({ query, apiId, rawData, extracted, templates, comparisonData });
   await emitProgress(onProgress, {
     status: "matcher",
     label: "템플릿 판단 요청",
@@ -2299,11 +2793,10 @@ export async function planA2UISurfaceWithAI({
       mode: "template_selection",
       strategy: "ai_surface_planner",
       candidateCount: selectionPrompt.allowedTemplateIds.length,
+      comparisonData,
     },
   });
 
-  let model: string | undefined;
-  let plannerAttempts: PlannerAttemptTrace[] = [];
   let selectionAi = await requestTemplateSelection(selectionPrompt);
   model = selectionAi.model;
   plannerAttempts = [...plannerAttempts, ...(selectionAi.attempts ?? [])];
@@ -2355,7 +2848,7 @@ export async function planA2UISurfaceWithAI({
       candidateEvaluations,
     };
     const validation: ValidationResult = { ok: false, errors: [reason] };
-    const trace = buildTrace({ rawData, extracted, model, plan: failurePlan, validation, plannerAttempts, templateSelection: selection });
+    const trace = buildTrace({ rawData, extracted, model, plan: failurePlan, validation, plannerAttempts, comparisonData, templateSelection: selection });
     await emitProgress(onProgress, {
       status: "matcher",
       label: "판단 결과 반환",
@@ -2369,6 +2862,7 @@ export async function planA2UISurfaceWithAI({
         candidateCount: candidates.length,
         plannerAttempts,
         candidates,
+        comparisonData,
         templateSelection: selection,
       },
     });
@@ -2386,6 +2880,7 @@ export async function planA2UISurfaceWithAI({
         validation,
         plannerAttempts,
         candidates,
+        comparisonData,
         mapping: null,
         templateSelection: selection,
       },
@@ -2424,11 +2919,12 @@ export async function planA2UISurfaceWithAI({
       plannerAttempts,
       candidates,
       reason: selection.reason,
+      comparisonData,
       templateSelection: selection,
     },
   });
 
-  const mappingPrompt = buildSlotMappingPrompt({ query, apiId, rawData, extracted, templates, selection });
+  const mappingPrompt = buildSlotMappingPrompt({ query, apiId, rawData, extracted, templates, comparisonData, selection });
   await emitProgress(onProgress, {
     status: "matcher",
     label: "슬롯 생성 요청",
@@ -2439,6 +2935,7 @@ export async function planA2UISurfaceWithAI({
       strategy: "ai_surface_planner",
       sourceSampleSize: mappingPrompt.source.sampleRows.length,
       slotCount: mappingPrompt.allowedSlots.length,
+      comparisonData,
       templateSelection: selection,
     },
   });
@@ -2451,7 +2948,7 @@ export async function planA2UISurfaceWithAI({
   if (!slotMapping && canRepairIncompleteAIResult(mappingAi)) {
     const repairedMapping = mockSlotMapping({ query, apiId, extracted, templates, selectedTemplateId: selection.selectedTemplateId });
     const repairedPlan = assemblePlanFromSelectionAndMapping({ selection, mappingResult: repairedMapping, templates, extracted });
-    const repairValidation = validatePlan({ plan: repairedPlan, templates, extracted });
+    const repairValidation = validatePlan({ plan: repairedPlan, templates, extracted, comparisonData });
     if (repairValidation.ok) {
       console.warn("[a2ui] AI slot mapper used source-schema repair after incomplete LLM response", {
         model,
@@ -2474,7 +2971,7 @@ export async function planA2UISurfaceWithAI({
     if (mappingAi.internalError) console.warn("[a2ui] AI slot mapper hidden failure detail", mappingAi.internalError);
     const failurePlan = assemblePlanFromSelectionAndMapping({ selection, mappingResult: {}, templates, extracted });
     const validation: ValidationResult = { ok: false, errors: [reason] };
-    const trace = buildTrace({ rawData, extracted, model, plan: failurePlan, validation, plannerAttempts, templateSelection: selection });
+    const trace = buildTrace({ rawData, extracted, model, plan: failurePlan, validation, plannerAttempts, comparisonData, templateSelection: selection });
     await emitProgress(onProgress, {
       status: "plan_validation",
       label: "슬롯 검증",
@@ -2489,6 +2986,7 @@ export async function planA2UISurfaceWithAI({
         validation,
         plannerAttempts,
         candidates,
+        comparisonData,
         mapping: null,
         templateSelection: selection,
       },
@@ -2523,6 +3021,7 @@ export async function planA2UISurfaceWithAI({
       fieldMappingCount: slotMapping.fieldMappings?.length ?? 0,
       slotMappingCount: slotMapping.slotMappings?.length ?? 0,
       plannerAttempts,
+      comparisonData,
       slotMapping,
       templateSelection: selection,
     },
@@ -2531,7 +3030,7 @@ export async function planA2UISurfaceWithAI({
   let plan = assemblePlanFromSelectionAndMapping({ selection, mappingResult: slotMapping, templates, extracted });
   let slotMappingCleanup = keepSelectedTemplateSlotMappings(plan);
   plan = slotMappingCleanup.plan;
-  let validation = validatePlan({ plan, templates, extracted });
+  let validation = validatePlan({ plan, templates, extracted, comparisonData });
 
   if (!validation.ok && process.env.A2UI_AI_SURFACE_PLANNER_MOCK !== "1") {
     const retry = await requestSlotMapping(mappingPrompt, { previousResult: slotMapping, validationErrors: validation.errors });
@@ -2543,7 +3042,7 @@ export async function planA2UISurfaceWithAI({
       plan = assemblePlanFromSelectionAndMapping({ selection, mappingResult: slotMapping, templates, extracted });
       slotMappingCleanup = keepSelectedTemplateSlotMappings(plan);
       plan = slotMappingCleanup.plan;
-      validation = validatePlan({ plan, templates, extracted });
+      validation = validatePlan({ plan, templates, extracted, comparisonData });
     } else if (retry.internalError) {
       mappingAi = { ...mappingAi, internalError: retry.internalError };
     }
@@ -2573,6 +3072,7 @@ export async function planA2UISurfaceWithAI({
           }
         : undefined,
       candidates: validatedCandidates,
+      comparisonData,
       slotMapping,
       templateSelection: selection,
       mapping: plan.selectedTemplateId
@@ -2588,7 +3088,7 @@ export async function planA2UISurfaceWithAI({
   });
   if (!validation.ok) {
     const reason = `AI slot mapping failed validation: ${validation.errors.join("; ")}`;
-    const trace = buildTrace({ rawData, extracted, model, plan, validation, plannerAttempts, templateSelection: selection, slotMapping });
+    const trace = buildTrace({ rawData, extracted, model, plan, validation, plannerAttempts, comparisonData, templateSelection: selection, slotMapping });
     return {
       mode: "text_fallback",
       apiId,
@@ -2639,6 +3139,7 @@ export async function planA2UISurfaceWithAI({
       slotMappingCount: plan.slotMappings?.length ?? 0,
       renderRowCount: data.total,
       plannerAttempts,
+      comparisonData,
       slotMapping,
       templateSelection: selection,
       mapping: {
@@ -2654,7 +3155,7 @@ export async function planA2UISurfaceWithAI({
   const sampleDataPreview = buildSampleDataPreview(data, { sourceId: apiId, sourceKind: "api_response" });
   const derivedSchema = buildDerivedSchema(data, { sourceId: apiId, sourceKind: "api_response", sampleDataPreview });
   const mapping = mappingDecision(template, plan);
-  const trace = buildTrace({ rawData, extracted, model, plan, validation, data, plannerAttempts, templateSelection: selection, slotMapping });
+  const trace = buildTrace({ rawData, extracted, model, plan, validation, data, plannerAttempts, comparisonData, templateSelection: selection, slotMapping });
   const renderPlan: A2UIRenderPlan = {
     selectedComponentId: template.componentId,
     viewType: template.surfaceConfig.viewType,

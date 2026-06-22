@@ -94,6 +94,7 @@ export type AiSurfacePlanDemoTrace = {
   sourceArrayPath?: string;
   sourceFieldPaths: string[];
   candidateEvaluations: A2UICandidateTrace[];
+  comparisonData?: Record<string, unknown>;
   templateSelection?: Record<string, unknown>;
   slotMapping?: Record<string, unknown>;
   fieldMappings?: Record<string, unknown>[];
@@ -108,6 +109,7 @@ export type AiSurfacePlanDemoTrace = {
   displayShape: string;
   sourceDataHash: string;
   displayDataHash: string;
+  plannerAttempts?: Array<Record<string, unknown>>;
   sourceSampleRows: Record<string, unknown>[];
   rules: Array<{
     rowIndex: number;
@@ -734,17 +736,60 @@ function planDisplayData(source: unknown, scenario: DataBoundaryScenario, select
         : undefined;
     })
     .filter((mapping): mapping is NonNullable<typeof mapping> => Boolean(mapping));
+  const comparisonFieldProfiles = fieldMappings
+    .filter((mapping) => mapping.sourcePath)
+    .map((mapping) => {
+      const targetField = String(mapping.targetField);
+      const role = targetField === "name"
+        ? "title"
+        : targetField === "id"
+          ? "identifier"
+          : targetField === "updatedAt"
+            ? "timestamp"
+            : targetField === "location"
+              ? "location"
+              : targetField === "imageUrl"
+                ? "image"
+                : targetField === "description"
+                  ? "description"
+                  : targetField === "category"
+                    ? "category"
+                    : ["isOnline", "isRunning", "hasAlarm", "needsInspection", "isReserved"].includes(targetField)
+                      ? "status"
+                      : "metric";
+      return {
+        sourcePath: mapping.sourcePath,
+        sourceKey: String(mapping.sourcePath).split(".").pop(),
+        label: targetField,
+        role,
+        targetHint: targetField,
+        confidence: 0.82,
+        reason: "Demo comparison-data AI interpreted this API field before template selection.",
+      };
+    });
+  const comparisonData = {
+    primaryArrayPath: extracted.arrayPath ?? "items",
+    entityName: "equipment",
+    rowMeaning: "장비 상태 또는 계측 상태를 나타내는 한 row입니다.",
+    reason: "Demo comparison-data AI interpreted raw API fields before selecting a template.",
+    fieldProfiles: comparisonFieldProfiles,
+    titleCandidates: comparisonFieldProfiles.filter((field) => field.role === "title").map((field) => field.sourcePath),
+    statusCandidates: comparisonFieldProfiles.filter((field) => field.role === "status").map((field) => field.sourcePath),
+    metricCandidates: comparisonFieldProfiles.filter((field) => field.role === "metric").map((field) => field.sourcePath),
+    timestampCandidates: comparisonFieldProfiles.filter((field) => field.role === "timestamp").map((field) => field.sourcePath),
+  };
   return {
     displayData,
     trace: {
       applied: rules.length > 0,
       strategy: "ai_surface_planner",
-      promptVersion: "2026-06-22.a2ui-two-stage-surface-plan.v1",
+      promptVersion: "2026-06-22.a2ui-comparison-data-surface-plan.v2",
       model: "mock-a2ui-surface-planner",
       selectedTemplateId,
       sourceArrayPath: extracted.arrayPath ?? "items",
       sourceFieldPaths,
       candidateEvaluations: candidates,
+      comparisonData,
       templateSelection: {
         selectedTemplateId,
         reason: "Demo selector chose the template from source profile and registered template contract.",
@@ -1095,7 +1140,7 @@ export function buildDataBoundaryScenarioTrace(id: DataBoundaryScenarioId): Data
     meta: {
       registryVersion: 2,
       decisionReason: renderPlan.reason,
-      trace: ["source:fingerprint", "planner:source-preview", "planner:template_selection", "planner:slot_mapping", `planner:score:${score}`, "binding:renderer-payload"],
+      trace: ["source:fingerprint", "planner:source-preview", "planner:comparison_data", "planner:template_selection", "planner:slot_mapping", `planner:score:${score}`, "binding:renderer-payload"],
       strategy: "ai_surface_planner",
       score,
       candidates: renderPlan.candidates,
@@ -1189,6 +1234,16 @@ function eventData(trace: DataBoundaryScenarioTrace, step: string): Record<strin
       aiSurfacePlanTrace: trace.aiSurfacePlanTrace,
     };
   }
+  if (step === "comparison_data") {
+    return {
+      mode: "comparison_data_ready",
+      strategy: trace.renderPlan.strategy,
+      comparisonData: trace.aiSurfacePlanTrace.comparisonData,
+      validation: { ok: true, errors: [] },
+      plannerAttempts: [{ stage: "comparison_data", requestKind: "initial", outcome: "success" }],
+      aiSurfacePlanTrace: trace.aiSurfacePlanTrace,
+    };
+  }
   if (step === "slot_mapping") {
     return {
       mode: "slot_mapping_ready",
@@ -1250,9 +1305,11 @@ export function dataBoundaryFlowEvents(trace: DataBoundaryScenarioTrace): AgentF
     { ...base, id: `${turnId}-tool-call`, event: "state:business_tool_call", phase: "data_loaded", from: "main_agent", to: "business_db", label: "업무 API 도구 호출", detail: `${trace.businessToolName} -> ${trace.apiRoute}`, branch: "data" },
     { ...base, id: `${turnId}-tool-result`, event: "state:business_tool_result", phase: "data_loaded", from: "business_db", to: "main_agent", label: "업무 API 결과 반환", detail: `rows=${trace.sourceFingerprint.rowCount} | hash=${trace.sourceFingerprint.dataHash}`, branch: "data", data: eventData(trace, "business_tool_result") },
     { ...base, id: `${turnId}-a2ui-call`, event: "state:a2ui_tool_call", phase: "registry_loaded", from: "main_agent", to: "a2ui", label: "A2A 렌더 요청 전송", detail: "raw data payload", branch: "data", data: { a2uiRenderPayload: trace.a2uiRenderPayload } },
-    { ...base, id: `${turnId}-profile`, event: "state:source_preview", phase: "profile", from: "a2ui", to: "a2ui", label: "A2UI 원천 미리보기 생성", detail: `preview=${trace.sampleDataPreview.sampleSize}/${trace.sampleDataPreview.rowCount}`, branch: "data", data: eventData(trace, "source_preview") },
+    { ...base, id: `${turnId}-profile`, event: "state:source_preview", phase: "profile", from: "a2ui", to: "a2ui", label: "API 데이터 관찰", detail: `preview=${trace.sampleDataPreview.sampleSize}/${trace.sampleDataPreview.rowCount}`, branch: "data", data: eventData(trace, "source_preview") },
     { ...base, id: `${turnId}-registry`, event: "state:template_contracts", phase: "registry_loaded", from: "a2ui", to: "registry", label: "템플릿 계약 로드", detail: trace.expectedTemplateId, branch: "data" },
     { ...base, id: `${turnId}-registry-loaded`, event: "state:registry_loaded", phase: "registry_loaded", from: "registry", to: "a2ui", label: "템플릿 계약 로드 완료", detail: `templates=${trace.renderPlan.candidates?.length ?? 0}`, branch: "data" },
+    { ...base, id: `${turnId}-comparison-request`, event: "state:comparison_data_request", phase: "matcher", from: "a2ui", to: "llm", label: "비교용 데이터 생성 요청", detail: `fields=${trace.aiSurfacePlanTrace.sourceFieldPaths.length}`, branch: "data", data: { mode: "comparison_data", strategy: trace.renderPlan.strategy } },
+    { ...base, id: `${turnId}-comparison-data`, event: "state:comparison_data", phase: "matcher", from: "llm", to: "a2ui", label: "비교용 데이터 생성 결과 반환", detail: `profiles=${Array.isArray(trace.aiSurfacePlanTrace.comparisonData?.fieldProfiles) ? trace.aiSurfacePlanTrace.comparisonData.fieldProfiles.length : 0}`, branch: "data", data: eventData(trace, "comparison_data") },
     { ...base, id: `${turnId}-planner-request`, event: "state:matcher_request", phase: "matcher", from: "a2ui", to: "llm", label: "템플릿 판단 요청", detail: `candidates=${trace.renderPlan.candidates?.length ?? 0}`, branch: "data" },
     { ...base, id: `${turnId}-planner`, event: "state:ai_surface_plan", phase: "matcher", from: "llm", to: "a2ui", label: "판단 결과 반환", detail: `template=${trace.templateContract.componentId} | score=${trace.renderPlan.score}`, branch: "data", data: eventData(trace, "ai_surface_plan") },
     { ...base, id: `${turnId}-slot-request`, event: "state:slot_mapping_request", phase: "matcher", from: "a2ui", to: "llm", label: "슬롯 생성 요청", detail: trace.templateContract.componentId, branch: "data", data: { mode: "slot_mapping", templateId: trace.templateContract.componentId, templateSelection: trace.aiSurfacePlanTrace.templateSelection } },

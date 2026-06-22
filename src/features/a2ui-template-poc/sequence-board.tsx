@@ -31,7 +31,7 @@ type SequenceStepSpec = Omit<SequenceStep, "rowTop" | "rowBottom" | "y"> & {
   gapBefore?: SequenceStepGap;
 };
 
-type EvidenceLabelId = "source-preview" | "template-comparison" | "slot-generation";
+type EvidenceLabelId = "comparison-data" | "template-comparison" | "slot-generation";
 
 type BranchBlock = {
   id: AgentFlowBranch;
@@ -174,16 +174,6 @@ const steps: SequenceStep[] = buildSequenceSteps([
     branch: "data",
   },
   {
-    id: "a2ui-source-preview",
-    phase: "profile",
-    events: ["state:source_preview", "state:profile"],
-    from: "a2ui",
-    to: "a2ui",
-    label: "A2UI 원천 미리보기 생성",
-    branch: "data",
-    a2uiSubstep: true,
-  },
-  {
     id: "template-contracts",
     phase: "registry_loaded",
     events: ["state:template_contracts", "state:a2a"],
@@ -201,6 +191,8 @@ const steps: SequenceStep[] = buildSequenceSteps([
     label: "템플릿 계약 로드 완료",
     branch: "data",
   },
+  { id: "comparison-data", phase: "matcher", events: ["state:comparison_data_request"], from: "a2ui", to: "llm", label: "비교용 데이터 생성 요청", branch: "data", a2uiSubstep: true },
+  { id: "comparison-data-result", phase: "matcher", events: ["state:comparison_data"], from: "llm", to: "a2ui", label: "비교용 데이터 생성 결과 반환", branch: "data", a2uiSubstep: true },
   { id: "matcher", phase: "matcher", events: ["state:matcher_request"], from: "a2ui", to: "llm", label: "템플릿 판단 요청", branch: "data", a2uiSubstep: true },
   { id: "matcher-result", phase: "matcher", events: ["state:ai_surface_plan"], from: "llm", to: "a2ui", label: "판단 결과 반환", branch: "data", a2uiSubstep: true },
   { id: "slot-generation", phase: "matcher", events: ["state:slot_mapping_request"], from: "a2ui", to: "llm", label: "슬롯 생성 요청", branch: "data", a2uiSubstep: true },
@@ -507,7 +499,8 @@ function packetStepForActiveEvent(active: AgentFlowEvent | undefined, events: Ag
 
 function isBusyProgressEvent(event?: AgentFlowEvent) {
   return Boolean(
-    (event?.event === "state:matcher_request" && (event.data?.mode === "planning" || event.data?.mode === "template_selection"))
+    (event?.event === "state:comparison_data_request" && event.data?.mode === "comparison_data")
+      || (event?.event === "state:matcher_request" && (event.data?.mode === "planning" || event.data?.mode === "template_selection"))
       || (event?.event === "state:slot_mapping_request" && event.data?.mode === "slot_mapping"),
   );
 }
@@ -679,10 +672,6 @@ function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function stringArray(value: unknown) {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-}
-
 function recordArray(value: unknown) {
   return Array.isArray(value)
     ? value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
@@ -735,11 +724,6 @@ function eventEvidenceText(event?: AgentFlowEvent, fallback = "sample") {
   return evidenceLabel(event?.evidenceKind) ?? (event ? "event" : fallback);
 }
 
-function traceRecordFromEvent(event?: AgentFlowEvent) {
-  const data = recordValue(event?.data);
-  return recordValue(data.aiSurfacePlanTrace);
-}
-
 function sourceToolFromEvent(event?: AgentFlowEvent) {
   const data = recordValue(event?.data);
   return nonEmptyRecord(data.sourceTool) ?? nonEmptyRecord(nonEmptyRecord(data.tool_metadata)?.sourceTool);
@@ -767,78 +751,54 @@ function aiSurfaceTraceFromEvents(...events: Array<AgentFlowEvent | undefined>) 
   return undefined;
 }
 
-function sourceFieldPathsFromEvent(event?: AgentFlowEvent) {
-  const data = recordValue(event?.data);
-  const trace = traceRecordFromEvent(event);
-  return stringArray(data.sourceFieldPaths).length ? stringArray(data.sourceFieldPaths) : stringArray(trace.sourceFieldPaths);
-}
-
 function stepDisplayLabel(step: SequenceStep) {
   return step.label;
 }
 
-function aiCompareInputFromTrace(trace?: Record<string, unknown>) {
-  if (!trace) return undefined;
-  const fieldPaths = stringArray(trace.sourceFieldPaths);
-  const sampleRows = Array.isArray(trace.sourceSampleRows) ? trace.sourceSampleRows : undefined;
-  const rowCount = trace.sourceRowCount ?? trace.rowCount;
-  return cleanJsonValue({
-    promptVersion: trace.promptVersion,
-    model: trace.model,
-    source: {
-      shape: trace.sourceShape,
-      detectedPrimaryArrayPath: trace.sourceArrayPath ?? "items",
-      rowCount,
-      fieldPathCount: fieldPaths.length || undefined,
-      fieldPaths: fieldPaths.length ? fieldPaths : undefined,
-      sampleRows,
-    },
-  });
-}
-
-function sourcePreviewEvidenceView(trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]): DetailViewModel {
-  const businessEvent = latestEvent(events, ["state:business_tool_result", "state:data_loaded"]);
-  const toolCallEvent = latestEvent(events, ["state:a2ui_tool_call", "transport:a2a_send"]);
-  const event = latestEvent(events, ["state:source_preview", "state:profile"]);
+function comparisonDataEvidenceView(trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]): DetailViewModel {
+  const requestEvent = latestEvent(events, ["state:comparison_data_request"]);
+  const resultEvent = latestEvent(events, ["state:comparison_data"]);
   const toolResultEvent = latestEvent(events, ["state:a2ui_tool_result", "transport:a2a_result", "done"]);
-  const aiSurfacePlanTrace = trace?.aiSurfacePlanTrace ?? aiSurfaceTraceFromEvents(event, toolResultEvent, businessEvent, toolCallEvent);
-  const sourceTool = sourceToolFromEvent(toolResultEvent) ?? sourceToolFromEvent(businessEvent) ?? sourceToolFromEvent(toolCallEvent);
+  const eventTrace = aiSurfaceTraceFromEvents(resultEvent, toolResultEvent, requestEvent);
+  const requestData = recordValue(requestEvent?.data) ?? {};
+  const resultData = recordValue(resultEvent?.data) ?? {};
+  const comparisonData = recordValue(trace?.aiSurfacePlanTrace.comparisonData)
+    ?? recordValue(resultData.comparisonData)
+    ?? recordValue(eventTrace?.comparisonData);
+
   const inputJson = trace
-    ? aiCompareInputFromTrace(trace.aiSurfacePlanTrace)
-    : aiCompareInputFromTrace(aiSurfacePlanTrace) ?? aiCompareInputFromTrace(recordValue(event?.data)) ?? cleanJsonValue({
-        sourcePreviewEvent: eventPayload(event),
-        a2uiRenderRequestEvent: eventPayload(toolCallEvent),
-      });
-  const outputJson = trace
     ? cleanJsonValue({
-        sampleDataPreview: trace.sampleDataPreview,
-        derivedSchema: trace.derivedSchema,
-        aiSurfacePlanTrace: {
-          promptVersion: trace.aiSurfacePlanTrace.promptVersion,
-          model: trace.aiSurfacePlanTrace.model,
-          sourceShape: trace.aiSurfacePlanTrace.sourceShape,
-          sourceArrayPath: trace.aiSurfacePlanTrace.sourceArrayPath,
-          sourceRowCount: trace.aiSurfacePlanTrace.sourceRowCount,
-          sourceFieldPaths: trace.aiSurfacePlanTrace.sourceFieldPaths,
-          sourceSampleRows: trace.aiSurfacePlanTrace.sourceSampleRows,
-          beforeRows: trace.aiSurfacePlanTrace.beforeRows,
-        },
-        a2uiRenderPayload: trace.a2uiRenderPayload,
+        sourceShape: trace.aiSurfacePlanTrace.sourceShape,
+        sourceArrayPath: trace.aiSurfacePlanTrace.sourceArrayPath,
+        sourceRowCount: trace.aiSurfacePlanTrace.sourceRowCount,
+        sourceFieldPaths: trace.aiSurfacePlanTrace.sourceFieldPaths,
+        sourceSampleRows: trace.aiSurfacePlanTrace.sourceSampleRows,
       })
     : cleanJsonValue({
-        sourcePreviewEvent: eventPayload(event),
-        sourceTool,
-        aiSurfacePlanTrace,
-        a2uiToolResultEvent: eventPayload(toolResultEvent),
+        comparisonDataRequestEvent: eventPayload(requestEvent),
+        sourceFieldCount: requestData.sourceFieldCount,
+        promptFieldCount: requestData.promptFieldCount,
+        sourceSampleSize: requestData.sourceSampleSize,
+      });
+
+  const outputJson = trace
+    ? cleanJsonValue({
+        comparisonData,
+        plannerAttempts: trace.aiSurfacePlanTrace.plannerAttempts?.filter((attempt) => attempt.stage === "comparison_data"),
+      })
+    : cleanJsonValue({
+        comparisonData,
+        validation: resultData.validation,
+        comparisonDataEvent: eventPayload(resultEvent),
       });
 
   return {
-    eyebrow: `Evidence: ${eventEvidenceText(event, trace ? "sample" : "pending")}`,
-    title: "비교용 데이터로 변환",
-    purpose: "원본 API 데이터에서 실제 AI 비교에 쓰는 bounded input으로 변환한 input/output JSON입니다.",
+    eyebrow: `Evidence: ${eventEvidenceText(resultEvent ?? requestEvent, trace ? "sample" : "pending")}`,
+    title: "비교용 데이터 생성",
+    purpose: "AI가 raw API field와 sample을 보고 화면 후보 비교에 쓸 의미 profile을 생성한 결과입니다.",
     jsonPanels: [
-      { title: "Input JSON: AI 비교 입력값", value: inputJson },
-      { title: "Output JSON: 비교용 데이터", value: outputJson },
+      { title: "Input JSON: 관찰된 API 데이터", value: inputJson },
+      { title: "Output JSON: AI 비교용 데이터", value: outputJson },
     ],
   };
 }
@@ -888,6 +848,7 @@ function templateComparisonEvidenceView(trace: DataBoundaryScenarioTrace | undef
         aiSurfacePlanTraceInput: {
           promptVersion: trace.aiSurfacePlanTrace.promptVersion,
           model: trace.aiSurfacePlanTrace.model,
+          comparisonData: trace.aiSurfacePlanTrace.comparisonData,
           sourceShape: trace.aiSurfacePlanTrace.sourceShape,
           sourceArrayPath: trace.aiSurfacePlanTrace.sourceArrayPath,
           sourceRowCount: trace.aiSurfacePlanTrace.sourceRowCount,
@@ -898,6 +859,7 @@ function templateComparisonEvidenceView(trace: DataBoundaryScenarioTrace | undef
     : cleanJsonValue({
         sourcePreviewEvent: eventPayload(profileEvent),
         sourceTool,
+        comparisonData: eventTrace?.comparisonData,
         templateSelectionTrace: recordValue(eventTrace?.templateSelection),
         templateSelectionEvent: eventPayload(matcherEvent),
       });
@@ -949,6 +911,7 @@ function slotGenerationEvidenceView(trace: DataBoundaryScenarioTrace | undefined
     ? cleanJsonValue({
         selectedTemplateId: trace.aiSurfacePlanTrace.selectedTemplateId,
         templateSelection: traceSelection,
+        comparisonData: trace?.aiSurfacePlanTrace.comparisonData ?? eventTrace?.comparisonData,
         source: {
           sourceArrayPath: trace.aiSurfacePlanTrace.sourceArrayPath,
           sourceFieldPaths: trace.aiSurfacePlanTrace.sourceFieldPaths,
@@ -988,18 +951,16 @@ function slotGenerationEvidenceView(trace: DataBoundaryScenarioTrace | undefined
   };
 }
 
-function sourcePreviewEvidenceSubtitle(trace: DataBoundaryScenarioTrace | undefined, event?: AgentFlowEvent) {
-  if (trace) {
-    return `행 ${formatCount(trace.sourceFingerprint.rowCount)}건 · 필드 ${formatCount(trace.aiSurfacePlanTrace.sourceFieldPaths.length)}개`;
-  }
-
-  const data = recordValue(event?.data);
-  const fieldPaths = sourceFieldPathsFromEvent(event);
-  const fieldCount = fieldPaths.length || numberValue(data.sourceFieldCount);
-  const rowCount = numberValue(data.previewRowCount) ?? numberValue(data.rowCount) ?? numberValue(data.sourceRowCount);
-  const rowText = rowCount !== undefined ? `행 ${formatCount(rowCount)}건` : "행 대기 중";
-  const fieldText = fieldCount ? `필드 ${formatCount(fieldCount)}개` : "필드 대기 중";
-  return `${rowText} · ${fieldText}`;
+function comparisonDataEvidenceSubtitle(trace: DataBoundaryScenarioTrace | undefined, event?: AgentFlowEvent) {
+  const eventData = recordValue(event?.data) ?? {};
+  const comparisonData = recordValue(trace?.aiSurfacePlanTrace.comparisonData) ?? recordValue(eventData.comparisonData) ?? {};
+  const fieldProfiles = recordArray(comparisonData.fieldProfiles);
+  const metricCandidates = Array.isArray(comparisonData.metricCandidates) ? comparisonData.metricCandidates.length : 0;
+  const validation = recordValue(eventData.validation) ?? {};
+  if (validation.ok === false) return "생성 실패";
+  const fieldText = fieldProfiles.length ? `해석 필드 ${formatCount(fieldProfiles.length)}개` : "해석 대기 중";
+  const metricText = metricCandidates ? `계측 후보 ${formatCount(metricCandidates)}개` : "계측 후보 없음";
+  return `${fieldText} · ${metricText}`;
 }
 
 function templateComparisonEvidenceSubtitle(trace: DataBoundaryScenarioTrace | undefined, event?: AgentFlowEvent) {
@@ -1035,7 +996,7 @@ function slotGenerationEvidenceSubtitle(trace: DataBoundaryScenarioTrace | undef
 }
 
 function evidenceLabels(trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]) {
-  const sourceEvent = latestEvent(events, ["state:source_preview", "state:profile"]);
+  const comparisonDataEvent = latestEvent(events, ["state:comparison_data", "state:comparison_data_request"]);
   const comparisonEvent = latestEvent(events, ["state:ai_surface_plan", "state:matcher"]);
   const slotEvent = latestEvent(events, ["state:mapping_applied", "state:plan_validation", "state:slot_mapping_plan", "state:slot_mapping_request"]);
   const labels: Array<{
@@ -1045,12 +1006,12 @@ function evidenceLabels(trace: DataBoundaryScenarioTrace | undefined, events: Ag
     badge: string;
   }> = [];
 
-  if (trace || sourceEvent) {
+  if (trace || comparisonDataEvent) {
     labels.push({
-      id: "source-preview",
-      title: "비교용 데이터로 변환",
-      subtitle: sourcePreviewEvidenceSubtitle(trace, sourceEvent),
-      badge: eventEvidenceText(sourceEvent, trace ? "sample" : "event"),
+      id: "comparison-data",
+      title: "비교용 데이터 생성",
+      subtitle: comparisonDataEvidenceSubtitle(trace, comparisonDataEvent),
+      badge: eventEvidenceText(comparisonDataEvent, trace ? "sample" : "event"),
     });
   }
 
@@ -1076,7 +1037,7 @@ function evidenceLabels(trace: DataBoundaryScenarioTrace | undefined, events: Ag
 }
 
 function evidenceDetailView(id: EvidenceLabelId, trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]) {
-  if (id === "source-preview") return sourcePreviewEvidenceView(trace, events);
+  if (id === "comparison-data") return comparisonDataEvidenceView(trace, events);
   if (id === "slot-generation") return slotGenerationEvidenceView(trace, events);
   return templateComparisonEvidenceView(trace, events);
 }

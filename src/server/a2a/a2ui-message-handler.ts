@@ -404,6 +404,7 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string, onProgre
         trace: [
           "source:raw-business-api",
           "planner:source-preview",
+          "planner:comparison_data",
           "planner:template_selection",
           "planner:slot_mapping",
           `planner:score:${plan.score}`,

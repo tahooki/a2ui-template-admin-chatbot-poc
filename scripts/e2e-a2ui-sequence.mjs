@@ -123,7 +123,9 @@ function assertOrderedSubsequence({ actual, expected, label }) {
 }
 
 function assertProgressSequence({ label, events, expectedTemplateId, expectedSourceArrayPath }) {
-  const progress = events.map((event) => event.progressUpdate).filter(Boolean);
+  const progress = events
+    .map((event) => event.progressUpdate)
+    .filter((event) => event && event.status !== "profile");
   const compact = progress.map((event) => ({
     status: event.status,
     label: event.label,
@@ -135,9 +137,10 @@ function assertProgressSequence({ label, events, expectedTemplateId, expectedSou
     label,
     actual: compact,
     expected: [
-      { status: "profile", label: "A2UI 원천 미리보기 생성" },
       { status: "a2a", label: "A2UI 레지스트리" },
       { status: "registry_loaded", label: "A2UI 레지스트리" },
+      { status: "matcher", label: "비교용 데이터 생성 요청", mode: "comparison_data" },
+      { status: "matcher", label: "비교용 데이터 생성 결과 반환", mode: "comparison_data_ready" },
       { status: "matcher", label: "템플릿 판단 요청", mode: "template_selection" },
       { status: "matcher", label: "판단 결과 반환", mode: "template_selected", templateId: expectedTemplateId },
       { status: "matcher", label: "슬롯 생성 요청", mode: "slot_mapping", templateId: expectedTemplateId },
@@ -156,9 +159,11 @@ function assertProgressSequence({ label, events, expectedTemplateId, expectedSou
   const aiTrace = decision.aiSurfacePlanTrace ?? decision.sourceTool?.aiSurfacePlanTrace;
 
   expect(surface?.templateId === expectedTemplateId, `${label} should return ${expectedTemplateId}, got ${surface?.templateId}`);
+  expect(surface?.meta?.trace?.includes("planner:comparison_data"), `${label} surface trace should include planner:comparison_data`);
   expect(surface?.meta?.trace?.includes("planner:template_selection"), `${label} surface trace should include planner:template_selection`);
   expect(surface?.meta?.trace?.includes("planner:slot_mapping"), `${label} surface trace should include planner:slot_mapping`);
   expect(tracePart?.data?.aiSurfacePlanTrace?.templateSelection?.selectedTemplateId === expectedTemplateId, `${label} trace artifact should include templateSelection`);
+  expect(aiTrace?.comparisonData?.fieldProfiles?.length > 0, `${label} decision trace should include AI comparison data fieldProfiles`);
   expect(aiTrace?.templateSelection?.selectedTemplateId === expectedTemplateId, `${label} decision trace should include selected template`);
   expect(aiTrace?.slotMapping?.fieldMappings?.length > 0, `${label} decision trace should include slot mapping fieldMappings`);
   expect(aiTrace?.slotMapping?.slotMappings?.length > 0, `${label} decision trace should include slotMappings`);
@@ -169,6 +174,7 @@ function assertProgressSequence({ label, events, expectedTemplateId, expectedSou
 
   const attemptStages = new Set((aiTrace?.plannerAttempts ?? []).map((attempt) => attempt.stage));
   if (attemptStages.size > 0) {
+    expect(attemptStages.has("comparison_data"), `${label} attempts should include comparison_data`);
     expect(attemptStages.has("template_selection"), `${label} attempts should include template_selection`);
     expect(attemptStages.has("slot_mapping"), `${label} attempts should include slot_mapping`);
   }
