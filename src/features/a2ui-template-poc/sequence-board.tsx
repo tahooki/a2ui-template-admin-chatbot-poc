@@ -751,6 +751,18 @@ function aiSurfaceTraceFromEvents(...events: Array<AgentFlowEvent | undefined>) 
   return undefined;
 }
 
+function comparisonDataFromTrace(trace: DataBoundaryScenarioTrace | undefined) {
+  return nonEmptyRecord(trace?.aiSurfacePlanTrace.comparisonData);
+}
+
+function comparisonDataFromEvent(event?: AgentFlowEvent) {
+  const data = recordValue(event?.data);
+  const direct = nonEmptyRecord(data.comparisonData);
+  if (direct) return direct;
+  const trace = aiSurfaceTraceFromEvent(event);
+  return nonEmptyRecord(trace?.comparisonData);
+}
+
 function stepDisplayLabel(step: SequenceStep) {
   return step.label;
 }
@@ -762,9 +774,9 @@ function comparisonDataEvidenceView(trace: DataBoundaryScenarioTrace | undefined
   const eventTrace = aiSurfaceTraceFromEvents(resultEvent, toolResultEvent, requestEvent);
   const requestData = recordValue(requestEvent?.data) ?? {};
   const resultData = recordValue(resultEvent?.data) ?? {};
-  const comparisonData = recordValue(trace?.aiSurfacePlanTrace.comparisonData)
-    ?? recordValue(resultData.comparisonData)
-    ?? recordValue(eventTrace?.comparisonData);
+  const comparisonData = comparisonDataFromTrace(trace)
+    ?? nonEmptyRecord(resultData.comparisonData)
+    ?? nonEmptyRecord(eventTrace?.comparisonData);
 
   const inputJson = trace
     ? cleanJsonValue({
@@ -953,9 +965,11 @@ function slotGenerationEvidenceView(trace: DataBoundaryScenarioTrace | undefined
 
 function comparisonDataEvidenceSubtitle(trace: DataBoundaryScenarioTrace | undefined, event?: AgentFlowEvent) {
   const eventData = recordValue(event?.data) ?? {};
-  const comparisonData = recordValue(trace?.aiSurfacePlanTrace.comparisonData) ?? recordValue(eventData.comparisonData) ?? {};
+  const comparisonData = comparisonDataFromTrace(trace) ?? comparisonDataFromEvent(event) ?? {};
   const fieldProfiles = recordArray(comparisonData.fieldProfiles);
-  const metricCandidates = Array.isArray(comparisonData.metricCandidates) ? comparisonData.metricCandidates.length : 0;
+  const metricCandidateCount = Array.isArray(comparisonData.metricCandidates) ? comparisonData.metricCandidates.length : 0;
+  const metricProfileCount = fieldProfiles.filter((field) => field.role === "metric").length;
+  const metricCandidates = Math.max(metricCandidateCount, metricProfileCount);
   const validation = recordValue(eventData.validation) ?? {};
   if (validation.ok === false) return "생성 실패";
   const fieldText = fieldProfiles.length ? `해석 필드 ${formatCount(fieldProfiles.length)}개` : "해석 대기 중";
@@ -1003,7 +1017,6 @@ function evidenceLabels(trace: DataBoundaryScenarioTrace | undefined, events: Ag
     id: EvidenceLabelId;
     title: string;
     subtitle: string;
-    badge: string;
   }> = [];
 
   if (trace || comparisonDataEvent) {
@@ -1011,7 +1024,6 @@ function evidenceLabels(trace: DataBoundaryScenarioTrace | undefined, events: Ag
       id: "comparison-data",
       title: "비교용 데이터 생성",
       subtitle: comparisonDataEvidenceSubtitle(trace, comparisonDataEvent),
-      badge: eventEvidenceText(comparisonDataEvent, trace ? "sample" : "event"),
     });
   }
 
@@ -1020,7 +1032,6 @@ function evidenceLabels(trace: DataBoundaryScenarioTrace | undefined, events: Ag
       id: "template-comparison",
       title: "템플릿 판단",
       subtitle: templateComparisonEvidenceSubtitle(trace, comparisonEvent),
-      badge: eventEvidenceText(comparisonEvent, trace ? "sample" : "event"),
     });
   }
 
@@ -1029,7 +1040,6 @@ function evidenceLabels(trace: DataBoundaryScenarioTrace | undefined, events: Ag
       id: "slot-generation",
       title: "슬롯 생성",
       subtitle: slotGenerationEvidenceSubtitle(trace, slotEvent),
-      badge: eventEvidenceText(slotEvent, trace ? "sample" : "event"),
     });
   }
 
@@ -1327,7 +1337,6 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
               const position = labelPosition(step);
               const displayLabel = stepDisplayLabel(step);
               const evidenceKind = stepEvidenceKind(step, events, active);
-              const evidence = evidenceLabel(evidenceKind);
               return (
                 <div
                   className={stepClass(step, completed, active, evidenceKind)}
@@ -1339,7 +1348,6 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
                 >
                   <span title={displayLabel}>
                     <span className={styles.sequenceStepText}>{displayLabel}</span>
-                    {evidence ? <span className={styles.sequenceStepEvidence}>{evidence}</span> : null}
                   </span>
                 </div>
               );
@@ -1381,7 +1389,6 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
                   <strong>{label.title}</strong>
                   <small>{label.subtitle}</small>
                 </span>
-                <em>{label.badge}</em>
               </button>
             </div>
           ))}

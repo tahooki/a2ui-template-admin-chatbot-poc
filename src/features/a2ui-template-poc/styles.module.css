@@ -832,7 +832,7 @@
 }
 
 .sequenceModalBackdrop {
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 40;
   display: flex;
@@ -843,10 +843,11 @@
 }
 
 .sequenceModal {
-  width: min(1040px, calc(100% - 24px));
-  height: min(760px, calc(100% - 24px));
-  max-height: calc(100% - 24px);
-  min-height: 280px;
+  width: min(1040px, calc(100vw - 36px));
+  height: calc(100vh - 36px);
+  height: calc(100dvh - 36px);
+  max-height: none;
+  min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
@@ -907,10 +908,13 @@
 }
 
 .sequenceModal .sequenceTraceDetail {
+  height: 100%;
   min-height: 0;
   max-height: none;
+  grid-template-rows: auto auto minmax(0, 1fr);
   border: 0;
   border-radius: 8px;
+  overflow: visible;
   padding: 0;
 }
 
@@ -1050,6 +1054,7 @@
 }
 
 .sequenceJsonGrid {
+  min-height: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
@@ -1057,7 +1062,9 @@
 
 .sequenceJsonPanel {
   min-width: 0;
+  min-height: 0;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 7px;
   border: 1px solid rgba(148, 163, 184, 0.34);
   border-radius: 8px;
@@ -1074,6 +1081,7 @@
 
 .sequenceJsonPanel pre {
   max-height: 560px;
+  min-height: 0;
   margin: 0;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 6px;
@@ -1088,6 +1096,10 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.sequenceModal .sequenceJsonPanel pre {
+  max-height: none;
 }
 
 .sequenceDetailFlow {
@@ -1557,18 +1569,6 @@
   text-overflow: ellipsis;
 }
 
-.sequenceStepEvidence {
-  flex: 0 0 auto;
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  padding: 1px 4px;
-  font-size: 8px;
-  font-weight: 950;
-  line-height: 1.05;
-  opacity: 0.78;
-  text-transform: uppercase;
-}
-
 .sequenceStepEvidence_inferred_transport > span {
   border-style: dashed;
 }
@@ -1644,19 +1644,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sequenceEvidenceLabel em {
-  flex: 0 0 auto;
-  border: 1px solid rgba(37, 99, 235, 0.48);
-  border-radius: 999px;
-  color: #2563eb;
-  font-style: normal;
-  font-size: 8px;
-  font-weight: 950;
-  line-height: 1;
-  padding: 3px 5px;
-  text-transform: uppercase;
 }
 
 .sequenceEvidenceLabelSelected button {
