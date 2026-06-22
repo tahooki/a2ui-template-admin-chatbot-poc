@@ -180,10 +180,8 @@ const maxPromptFieldPaths = 64;
 const maxPromptSampleRows = 3;
 const maxRenderRows = 10;
 const defaultPlannerAttempts: PlannerAttemptConfig[] = [
-  { maxTokens: 3500, responseFormat: "json_schema" },
   { maxTokens: 6000, responseFormat: "json_schema" },
-  { maxTokens: 6000, responseFormat: "json_object" },
-  { maxTokens: 9000, responseFormat: "none" },
+  { maxTokens: 6000, responseFormat: "json_schema" },
 ];
 const aiPlannerIncompleteReason = "AI가 화면 조건 비교 결과를 끝까지 완성하지 못해 선택을 확정하지 못했습니다.";
 const plannerAttemptPreviewLength = 1600;
