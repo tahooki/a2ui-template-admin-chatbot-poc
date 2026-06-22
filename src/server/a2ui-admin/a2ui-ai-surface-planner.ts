@@ -76,11 +76,35 @@ type ValidationResult = {
   errors: string[];
 };
 
+type PlannerResponseFormat = "json_schema" | "json_object" | "none";
+
+type PlannerAttemptConfig = {
+  maxTokens: number;
+  responseFormat: PlannerResponseFormat;
+};
+
+type PlannerAttemptTrace = {
+  requestKind: "initial" | "correction";
+  attempt: number;
+  responseFormat: PlannerResponseFormat;
+  maxTokens: number;
+  durationMs: number;
+  outcome: "success" | "http_error" | "envelope_parse_error" | "missing_content" | "content_parse_error" | "request_error";
+  status?: number;
+  finishReason?: string;
+  rawResponseLength?: number;
+  rawResponsePreview?: string;
+  contentLength?: number;
+  contentPreview?: string;
+  error?: string;
+};
+
 type AIPlannerRequestResult = {
   plan?: AIPlannerPlan;
   model?: string;
   error?: string;
   internalError?: string;
+  attempts?: PlannerAttemptTrace[];
 };
 
 export type A2UISurfacePlanTrace = {
@@ -103,6 +127,7 @@ export type A2UISurfacePlanTrace = {
   sourceDataHash: string;
   renderDataHash?: string;
   renderDataByteLength?: number;
+  plannerAttempts?: PlannerAttemptTrace[];
   beforeRows: DataRecord[];
   afterRows?: DataRecord[];
 };
@@ -154,13 +179,14 @@ const allowedTransforms: PlannerTransform[] = ["copy", "boolean_code", "number_t
 const maxPromptFieldPaths = 64;
 const maxPromptSampleRows = 3;
 const maxRenderRows = 10;
-const plannerAttempts: Array<{ maxTokens: number; responseFormat: "json_schema" | "json_object" | "none" }> = [
+const defaultPlannerAttempts: PlannerAttemptConfig[] = [
   { maxTokens: 3500, responseFormat: "json_schema" },
   { maxTokens: 6000, responseFormat: "json_schema" },
   { maxTokens: 6000, responseFormat: "json_object" },
   { maxTokens: 9000, responseFormat: "none" },
 ];
 const aiPlannerIncompleteReason = "AI가 화면 조건 비교 결과를 끝까지 완성하지 못해 선택을 확정하지 못했습니다.";
+const plannerAttemptPreviewLength = 1600;
 const canonicalTargetFields = new Set([
   "id",
   "name",
@@ -177,6 +203,37 @@ const canonicalTargetFields = new Set([
 ]);
 const defaultTrueValues = ["Y", "YES", "TRUE", "1", "ON", "ONLINE", "RUN", "RUNNING", "ACTIVE", "OK"];
 const defaultFalseValues = ["N", "NO", "FALSE", "0", "OFF", "OFFLINE", "STOP", "STOPPED", "INACTIVE", "NG"];
+
+function positiveIntegerFromEnv(name: string) {
+  const value = process.env[name];
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function plannerResponseFormatFromEnv(value: string | undefined): PlannerResponseFormat | undefined {
+  if (value === "json_schema" || value === "json_object" || value === "none") return value;
+  return undefined;
+}
+
+function plannerAttemptsForRequest(): PlannerAttemptConfig[] {
+  const fixedMaxTokens = positiveIntegerFromEnv("A2UI_AI_SURFACE_PLANNER_MAX_TOKENS");
+  const requestedAttemptCount = positiveIntegerFromEnv("A2UI_AI_SURFACE_PLANNER_ATTEMPTS");
+  const responseFormat = plannerResponseFormatFromEnv(process.env.A2UI_AI_SURFACE_PLANNER_RESPONSE_FORMAT) ?? "json_schema";
+
+  if (fixedMaxTokens) {
+    const attemptCount = Math.min(requestedAttemptCount ?? 1, 8);
+    return Array.from({ length: attemptCount }, () => ({ maxTokens: fixedMaxTokens, responseFormat }));
+  }
+
+  if (requestedAttemptCount) return defaultPlannerAttempts.slice(0, Math.min(requestedAttemptCount, defaultPlannerAttempts.length));
+  return defaultPlannerAttempts;
+}
+
+function previewText(value: string, limit = plannerAttemptPreviewLength) {
+  return value.length > limit ? `${value.slice(0, limit)}...<truncated>` : value;
+}
+
 function plannerResponseFormatFor({
   templateIds,
   sourcePaths,
@@ -668,6 +725,14 @@ async function requestAIPlan(
     };
   }
 
+  const attemptConfigs = plannerAttemptsForRequest();
+  const requestKind = correction ? "correction" : "initial";
+  const attemptRecords: PlannerAttemptTrace[] = [];
+  const recordAttempt = (record: PlannerAttemptTrace) => {
+    attemptRecords.push(record);
+    console.info("[a2ui] AI surface planner attempt summary", record);
+  };
+
   const userPayload = correction
     ? {
         ...prompt,
@@ -694,7 +759,7 @@ async function requestAIPlan(
   ];
 
   let lastInternalError: string | undefined;
-  for (const [attemptIndex, attempt] of plannerAttempts.entries()) {
+  for (const [attemptIndex, attempt] of attemptConfigs.entries()) {
     const requestBody: Record<string, unknown> = {
       model: config.model,
       messages,
@@ -712,6 +777,7 @@ async function requestAIPlan(
       requestBody.response_format = { type: "json_object" };
     }
 
+    const startedAt = Date.now();
     try {
       const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
@@ -722,19 +788,33 @@ async function requestAIPlan(
         body: JSON.stringify(requestBody),
       });
       const rawText = await response.text();
+      const durationMs = Date.now() - startedAt;
       console.info(
         "[a2ui] AI surface planner raw response",
         response.status,
         `attempt=${attemptIndex + 1}`,
+        `requestKind=${requestKind}`,
         `format=${attempt.responseFormat}`,
         `maxTokens=${attempt.maxTokens}`,
         rawText.slice(0, 6000),
       );
       if (!response.ok) {
         lastInternalError = `A2UI AI surface planning request failed with status ${response.status}.`;
+        recordAttempt({
+          requestKind,
+          attempt: attemptIndex + 1,
+          responseFormat: attempt.responseFormat,
+          maxTokens: attempt.maxTokens,
+          durationMs,
+          outcome: "http_error",
+          status: response.status,
+          rawResponseLength: rawText.length,
+          rawResponsePreview: previewText(rawText),
+          error: lastInternalError,
+        });
         console.warn("[a2ui] AI surface planner request failed", lastInternalError, rawText.slice(0, 2000));
         if (response.status === 401 || response.status === 403) break;
-        if (attemptIndex < plannerAttempts.length - 1) continue;
+        if (attemptIndex < attemptConfigs.length - 1) continue;
         break;
       }
 
@@ -743,6 +823,18 @@ async function requestAIPlan(
         payload = JSON.parse(rawText) as typeof payload;
       } catch (error) {
         lastInternalError = `A2UI AI surface planning response was not JSON: ${errorMessage(error)}`;
+        recordAttempt({
+          requestKind,
+          attempt: attemptIndex + 1,
+          responseFormat: attempt.responseFormat,
+          maxTokens: attempt.maxTokens,
+          durationMs,
+          outcome: "envelope_parse_error",
+          status: response.status,
+          rawResponseLength: rawText.length,
+          rawResponsePreview: previewText(rawText),
+          error: lastInternalError,
+        });
         console.warn("[a2ui] AI surface planner envelope parse failed", lastInternalError, rawText.slice(0, 2000));
         break;
       }
@@ -751,15 +843,59 @@ async function requestAIPlan(
       const content = choice?.message?.content;
       if (!content) {
         lastInternalError = "A2UI AI surface planning response did not include content.";
+        recordAttempt({
+          requestKind,
+          attempt: attemptIndex + 1,
+          responseFormat: attempt.responseFormat,
+          maxTokens: attempt.maxTokens,
+          durationMs,
+          outcome: "missing_content",
+          status: response.status,
+          finishReason: choice?.finish_reason,
+          rawResponseLength: rawText.length,
+          rawResponsePreview: previewText(rawText),
+          contentLength: 0,
+          error: lastInternalError,
+        });
         console.warn("[a2ui] AI surface planner response missing content", { finishReason: choice?.finish_reason });
-        if (attemptIndex < plannerAttempts.length - 1) continue;
+        if (attemptIndex < attemptConfigs.length - 1) continue;
         break;
       }
 
       try {
-        return { model: config.model, plan: parsePlannerContent(content) };
+        const plan = parsePlannerContent(content);
+        recordAttempt({
+          requestKind,
+          attempt: attemptIndex + 1,
+          responseFormat: attempt.responseFormat,
+          maxTokens: attempt.maxTokens,
+          durationMs,
+          outcome: "success",
+          status: response.status,
+          finishReason: choice.finish_reason,
+          rawResponseLength: rawText.length,
+          rawResponsePreview: previewText(rawText),
+          contentLength: content.length,
+          contentPreview: previewText(content),
+        });
+        return { model: config.model, plan, attempts: attemptRecords };
       } catch (error) {
         lastInternalError = `A2UI AI surface planning content was not valid JSON: ${errorMessage(error)}`;
+        recordAttempt({
+          requestKind,
+          attempt: attemptIndex + 1,
+          responseFormat: attempt.responseFormat,
+          maxTokens: attempt.maxTokens,
+          durationMs,
+          outcome: "content_parse_error",
+          status: response.status,
+          finishReason: choice.finish_reason,
+          rawResponseLength: rawText.length,
+          rawResponsePreview: previewText(rawText),
+          contentLength: content.length,
+          contentPreview: previewText(content),
+          error: lastInternalError,
+        });
         console.warn("[a2ui] AI surface planner content parse failed", {
           attempt: attemptIndex + 1,
           responseFormat: attempt.responseFormat,
@@ -769,10 +905,19 @@ async function requestAIPlan(
           error: errorMessage(error),
           contentPreview: content.slice(0, 2000),
         });
-        if (attemptIndex < plannerAttempts.length - 1) continue;
+        if (attemptIndex < attemptConfigs.length - 1) continue;
       }
     } catch (error) {
       lastInternalError = `A2UI AI surface planning request failed: ${errorMessage(error)}`;
+      recordAttempt({
+        requestKind,
+        attempt: attemptIndex + 1,
+        responseFormat: attempt.responseFormat,
+        maxTokens: attempt.maxTokens,
+        durationMs: Date.now() - startedAt,
+        outcome: "request_error",
+        error: lastInternalError,
+      });
       console.warn("[a2ui] AI surface planner request threw", lastInternalError);
       break;
     }
@@ -782,6 +927,7 @@ async function requestAIPlan(
     model: config.model,
     error: aiPlannerIncompleteReason,
     internalError: lastInternalError,
+    attempts: attemptRecords,
   };
 }
 
@@ -1449,6 +1595,7 @@ function buildTrace({
   plan,
   validation,
   data,
+  plannerAttempts,
 }: {
   rawData: unknown;
   extracted: RowExtraction;
@@ -1456,6 +1603,7 @@ function buildTrace({
   plan: AIPlannerPlan;
   validation: ValidationResult;
   data?: EquipmentApiResponse<unknown>;
+  plannerAttempts?: PlannerAttemptTrace[];
 }): A2UISurfacePlanTrace {
   return {
     promptVersion,
@@ -1477,6 +1625,7 @@ function buildTrace({
     sourceDataHash: dataHash(rawData),
     renderDataHash: data ? dataHash(data) : undefined,
     renderDataByteLength: data ? byteLength(data) : undefined,
+    plannerAttempts,
     beforeRows: extracted.rows.slice(0, 2),
     afterRows: (data?.items as DataRecord[] | undefined)?.slice(0, 2),
   };
@@ -1780,7 +1929,7 @@ export async function planA2UISurfaceWithAI({
       slotMappings: [],
       candidateEvaluations,
     };
-    const trace = buildTrace({ rawData, extracted, model: ai.model, plan: failurePlan, validation });
+    const trace = buildTrace({ rawData, extracted, model: ai.model, plan: failurePlan, validation, plannerAttempts: ai.attempts });
     await emitProgress(onProgress, {
       status: "plan_validation",
       label: "Validate AI plan",
@@ -1793,6 +1942,7 @@ export async function planA2UISurfaceWithAI({
         score: 0,
         candidateCount: candidates.length,
         validation,
+        plannerAttempts: ai.attempts,
         candidates,
         mapping: null,
       },
@@ -1828,6 +1978,7 @@ export async function planA2UISurfaceWithAI({
       strategy: "ai_surface_planner",
       score: plan.confidence,
       candidateCount: candidates.length,
+      plannerAttempts: ai.attempts,
       candidates,
     },
   });
@@ -1836,12 +1987,16 @@ export async function planA2UISurfaceWithAI({
   plan = slotMappingCleanup.plan;
   let validation = validatePlan({ plan, templates, extracted });
   if (!validation.ok && process.env.A2UI_AI_SURFACE_PLANNER_MOCK !== "1") {
+    const initialAttempts = ai.attempts ?? [];
     const retry = await requestAIPlan(prompt, { previousPlan: plan, validationErrors: validation.errors });
+    const combinedAttempts = [...initialAttempts, ...(retry.attempts ?? [])];
     if (retry.plan) {
-      ai = retry;
+      ai = { ...retry, attempts: combinedAttempts };
       slotMappingCleanup = keepSelectedTemplateSlotMappings(normalizeAIPlan(retry.plan, extracted));
       plan = slotMappingCleanup.plan;
       validation = validatePlan({ plan, templates, extracted });
+    } else if (retry.attempts?.length) {
+      ai = { ...ai, attempts: combinedAttempts, internalError: retry.internalError ?? ai.internalError };
     }
   }
 
@@ -1861,6 +2016,7 @@ export async function planA2UISurfaceWithAI({
       score: plan.confidence,
       candidateCount: validatedCandidates.length,
       validation,
+      plannerAttempts: ai.attempts,
       slotMappingCleanup: slotMappingCleanup.removedCount > 0
         ? {
             removedCount: slotMappingCleanup.removedCount,
@@ -1881,7 +2037,7 @@ export async function planA2UISurfaceWithAI({
   });
   if (!validation.ok) {
     const reason = `AI surface plan failed validation: ${validation.errors.join("; ")}`;
-    const trace = buildTrace({ rawData, extracted, model: ai.model, plan, validation });
+    const trace = buildTrace({ rawData, extracted, model: ai.model, plan, validation, plannerAttempts: ai.attempts });
     return {
       mode: "text_fallback",
       apiId,
@@ -1931,6 +2087,7 @@ export async function planA2UISurfaceWithAI({
       fieldMappingCount: plan.fieldMappings?.length ?? 0,
       slotMappingCount: plan.slotMappings?.length ?? 0,
       renderRowCount: data.total,
+      plannerAttempts: ai.attempts,
       mapping: {
         templateId: plan.selectedTemplateId,
         confidence: plan.confidence ?? 0,
@@ -1944,7 +2101,7 @@ export async function planA2UISurfaceWithAI({
   const sampleDataPreview = buildSampleDataPreview(data, { sourceId: apiId, sourceKind: "api_response" });
   const derivedSchema = buildDerivedSchema(data, { sourceId: apiId, sourceKind: "api_response", sampleDataPreview });
   const mapping = mappingDecision(template, plan);
-  const trace = buildTrace({ rawData, extracted, model: ai.model, plan, validation, data });
+  const trace = buildTrace({ rawData, extracted, model: ai.model, plan, validation, data, plannerAttempts: ai.attempts });
   const renderPlan: A2UIRenderPlan = {
     selectedComponentId: template.componentId,
     viewType: template.surfaceConfig.viewType,

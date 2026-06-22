@@ -212,6 +212,21 @@ export type A2UIRenderPlan = {
     sourceDataHash?: string;
     renderDataHash?: string;
     renderDataByteLength?: number;
+    plannerAttempts?: Array<{
+      requestKind?: "initial" | "correction";
+      attempt?: number;
+      responseFormat?: "json_schema" | "json_object" | "none";
+      maxTokens?: number;
+      durationMs?: number;
+      outcome?: string;
+      status?: number;
+      finishReason?: string;
+      rawResponseLength?: number;
+      rawResponsePreview?: string;
+      contentLength?: number;
+      contentPreview?: string;
+      error?: string;
+    }>;
     beforeRows?: Record<string, unknown>[];
     afterRows?: Record<string, unknown>[];
   };
