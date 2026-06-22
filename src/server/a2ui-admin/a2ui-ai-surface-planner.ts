@@ -904,6 +904,121 @@ function isConcreteTelemetryMetricPath(path?: string) {
   return Boolean(key && /^(telemetry_|metric_)/i.test(key));
 }
 
+function isValidSourcePath(sourcePath: string | undefined, validSourcePaths: Set<string>) {
+  return Boolean(sourcePath && validSourcePaths.has(sourcePath));
+}
+
+function findSourcePathByKeys(paths: string[], keys: string[]) {
+  return paths.find((path) => {
+    const key = sourceKey(path) ?? "";
+    return keys.some((candidate) => key.toLowerCase() === candidate.toLowerCase());
+  });
+}
+
+function sourcePathForTarget(targetField: string | undefined, paths: string[], slot?: string) {
+  const normalized = normalizeTargetFieldValue(targetField, undefined, slot);
+  if (!normalized) return undefined;
+  if (/^(telemetry_|metric_)/i.test(normalized)) return findSourcePathByKeys(paths, [normalized]);
+  if (normalized === "id") return findSourcePathByKeys(paths, ["id", "eqpId", "eqp_id", "assetId"]);
+  if (normalized === "name") return findSourcePathByKeys(paths, ["name", "equipmentName", "eqpNm", "eqp_nm", "assetDisplayName", "assetName", "title"]);
+  if (normalized === "isOnline") return findSourcePathByKeys(paths, ["isOnline", "opYn", "operation_yn", "operStateCd"]);
+  if (normalized === "isRunning") return findSourcePathByKeys(paths, ["isRunning", "runYn", "running_code", "runStateYn"]);
+  if (normalized === "hasAlarm") return findSourcePathByKeys(paths, ["hasAlarm", "alrmCnt", "alarm_count", "alarmTotalCnt"]);
+  if (normalized === "needsInspection") return findSourcePathByKeys(paths, ["needsInspection", "inspReqYn", "inspection_required", "inspectDueYn"]);
+  if (normalized === "isReserved") return findSourcePathByKeys(paths, ["isReserved", "reserved_flag", "reserveFlag"]);
+  if (normalized === "updatedAt") return findSourcePathByKeys(paths, ["updatedAt", "lastDtm", "last_dtm", "lastSignalAt"]);
+  if (normalized === "location") return findSourcePathByKeys(paths, ["location", "site", "site_nm", "plantZone"]);
+  if (normalized === "imageUrl") return findSourcePathByKeys(paths, ["imageUrl", "thumbnailUrl", "photoUrl"]);
+  if (normalized === "description") return findSourcePathByKeys(paths, ["description", "summary", "content"]);
+  if (normalized === "category") return findSourcePathByKeys(paths, ["category", "type"]);
+  return undefined;
+}
+
+function normalizeSourcePath(sourcePath: string | undefined, paths: string[], targetField?: string, slot?: string) {
+  const validSourcePaths = new Set(paths);
+  if (isValidSourcePath(sourcePath, validSourcePaths)) return sourcePath;
+
+  const key = sourceKey(sourcePath);
+  const byKey = key ? findSourcePathByKeys(paths, [key]) : undefined;
+  if (byKey) return byKey;
+
+  return sourcePathForTarget(targetField, paths, slot) ?? sourcePath;
+}
+
+function normalizeTargetFieldValue(targetField: string | undefined, sourcePath?: string, slot?: string) {
+  if (!targetField) return targetField;
+  const key = sourceKey(targetField.trim()) ?? targetField.trim();
+  const sourcePathKey = sourceKey(sourcePath);
+
+  if (sourcePathKey && /^(telemetry_|metric_)/i.test(sourcePathKey)) return sourcePathKey;
+  if (canonicalTargetFields.has(key)) return key;
+  if (/^(telemetry_|metric_)/i.test(key)) return key;
+
+  const fieldHint = `${slot ?? ""} ${key} ${sourcePathKey ?? ""}`;
+  if (/title|label|name|equipmentName|eqpNm|eqp_nm|assetDisplayName|assetName/i.test(fieldHint)) return "name";
+  if (/^id$|Id$|_id$|assetId|eqp_id/i.test(fieldHint)) return "id";
+  if (/image|photo|thumbnail/i.test(fieldHint)) return "imageUrl";
+  if (/description|content|summary/i.test(fieldHint)) return "description";
+  if (/category|type/i.test(fieldHint)) return "category";
+  if (/location|zone|site|plant/i.test(fieldHint)) return "location";
+  if (/updatedAt|last|dtm|date|time|signal/i.test(fieldHint)) return "updatedAt";
+  if (/running|runYn|runStateYn|running_code/i.test(fieldHint)) return "isRunning";
+  if (/online|opYn|operation_yn|operStateCd|oper/i.test(fieldHint)) return "isOnline";
+  if (/alarm|alrm/i.test(fieldHint)) return "hasAlarm";
+  if (/inspection|inspect|insp/i.test(fieldHint)) return "needsInspection";
+  if (/reserved|reserve/i.test(fieldHint)) return "isReserved";
+  return key;
+}
+
+function normalizeTransformForTarget(mappingItem: PlannerFieldMapping, sourceValue: unknown): PlannerTransform {
+  if (allowedTransforms.includes(mappingItem.transform)) {
+    if (!["isOnline", "isRunning", "hasAlarm", "needsInspection", "isReserved"].includes(mappingItem.targetField)) return mappingItem.transform;
+    if (mappingItem.transform !== "copy") return mappingItem.transform;
+  }
+
+  if (["isOnline", "isRunning", "hasAlarm", "needsInspection", "isReserved"].includes(mappingItem.targetField)) {
+    if (typeof sourceValue === "number") return "number_to_boolean";
+    if (typeof sourceValue === "string") return "boolean_code";
+  }
+
+  return allowedTransforms.includes(mappingItem.transform) ? mappingItem.transform : "copy";
+}
+
+function normalizeAIPlan(plan: AIPlannerPlan, extracted: RowExtraction): AIPlannerPlan {
+  const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
+  const firstRow = extracted.rows[0] ?? {};
+
+  const fieldMappings = (plan.fieldMappings ?? []).map((item) => {
+    const sourcePath = normalizeSourcePath(item.sourcePath, paths, item.targetField);
+    const targetField = normalizeTargetFieldValue(item.targetField, sourcePath);
+    const sourceValueKey = sourceKey(sourcePath);
+    const normalizedItem = {
+      ...item,
+      sourcePath,
+      targetField: targetField ?? item.targetField,
+    };
+    return {
+      ...normalizedItem,
+      transform: normalizeTransformForTarget(normalizedItem, sourceValueKey ? firstRow[sourceValueKey] : undefined),
+    };
+  });
+
+  const slotMappings = (plan.slotMappings ?? []).map((item) => {
+    const sourcePath = normalizeSourcePath(item.sourcePath, paths, item.targetField, item.slot);
+    return {
+      ...item,
+      sourcePath,
+      targetField: normalizeTargetFieldValue(item.targetField, sourcePath, item.slot),
+    };
+  });
+
+  return {
+    ...plan,
+    fieldMappings,
+    slotMappings,
+  };
+}
+
 function keepSelectedTemplateSlotMappings(plan: AIPlannerPlan) {
   const selectedTemplateId = plan.selectedTemplateId;
   const slotMappings = Array.isArray(plan.slotMappings) ? plan.slotMappings : [];
@@ -1545,6 +1660,7 @@ export async function planA2UISurfaceWithAI({
 
   let ai = await requestAIPlan(prompt);
   let plan = ai.plan ?? (process.env.A2UI_AI_SURFACE_PLANNER_MOCK === "1" ? mockPlan({ query, apiId, extracted, templates }) : undefined);
+  if (plan) plan = normalizeAIPlan(plan, extracted);
   if (!plan) {
     const reason = ai.error ?? aiPlannerIncompleteReason;
     if (ai.internalError) console.warn("[a2ui] AI surface planner hidden failure detail", ai.internalError);
@@ -1629,7 +1745,7 @@ export async function planA2UISurfaceWithAI({
     const retry = await requestAIPlan(prompt, { previousPlan: plan, validationErrors: validation.errors });
     if (retry.plan) {
       ai = retry;
-      slotMappingCleanup = keepSelectedTemplateSlotMappings(retry.plan);
+      slotMappingCleanup = keepSelectedTemplateSlotMappings(normalizeAIPlan(retry.plan, extracted));
       plan = slotMappingCleanup.plan;
       validation = validatePlan({ plan, templates, extracted });
     }
