@@ -153,6 +153,7 @@ const promptVersion = "2026-06-21.a2ui-surface-plan.v1" as const;
 const allowedTransforms: PlannerTransform[] = ["copy", "boolean_code", "number_to_boolean", "default_false"];
 const maxPromptFieldPaths = 64;
 const maxPromptSampleRows = 3;
+const maxRenderRows = 10;
 const plannerTokenBudgets = [3500, 6000];
 const aiPlannerIncompleteReason = "AI가 화면 조건 비교 결과를 끝까지 완성하지 못해 선택을 확정하지 못했습니다.";
 const canonicalTargetFields = new Set([
@@ -1094,9 +1095,61 @@ function applyTransform(mappingItem: PlannerFieldMapping, sourceValue: unknown) 
   return undefined;
 }
 
+function timestampFromValue(value: unknown) {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function latestTimestampForRow(row: DataRecord, preferredKey?: string) {
+  const keys = [
+    preferredKey,
+    "updatedAt",
+    "lastUpdatedAt",
+    "lastDtm",
+    "last_dtm",
+    "lastSignalAt",
+    "timestamp",
+    "time",
+    "date",
+  ].filter((key): key is string => Boolean(key));
+
+  for (const key of Array.from(new Set(keys))) {
+    const timestamp = timestampFromValue(row[key]);
+    if (timestamp !== undefined) return timestamp;
+  }
+  return undefined;
+}
+
+function displayRowsForPlan(plan: AIPlannerPlan, extracted: RowExtraction) {
+  const updatedAtSourcePath =
+    plan.fieldMappings?.find((item) => item.targetField === "updatedAt" && item.sourcePath)?.sourcePath ??
+    plan.slotMappings?.find((item) => /updatedAt|time/i.test(item.slot) && item.sourcePath)?.sourcePath;
+  const preferredKey = sourceKey(updatedAtSourcePath);
+  const rowsWithIndex = extracted.rows.map((row, index) => ({
+    row,
+    index,
+    timestamp: latestTimestampForRow(row, preferredKey),
+  }));
+
+  if (rowsWithIndex.some((item) => item.timestamp !== undefined)) {
+    rowsWithIndex.sort((left, right) => {
+      if (left.timestamp === undefined && right.timestamp === undefined) return right.index - left.index;
+      if (left.timestamp === undefined) return 1;
+      if (right.timestamp === undefined) return -1;
+      return right.timestamp - left.timestamp || right.index - left.index;
+    });
+  }
+
+  return rowsWithIndex.slice(0, maxRenderRows).map((item) => item.row);
+}
+
 function applyPlan(plan: AIPlannerPlan, extracted: RowExtraction): EquipmentApiResponse<unknown> {
   const mappings = plan.fieldMappings ?? [];
-  const items = extracted.rows.map((row) => {
+  const displayRows = displayRowsForPlan(plan, extracted);
+  const items = displayRows.map((row) => {
     const next: DataRecord = {};
     for (const item of mappings) {
       const key = sourceKey(item.sourcePath);
@@ -1110,9 +1163,9 @@ function applyPlan(plan: AIPlannerPlan, extracted: RowExtraction): EquipmentApiR
 
   return {
     items,
-    total: extracted.rowCount,
+    total: items.length,
     page: extracted.page ?? 1,
-    pageSize: extracted.pageSize ?? items.length,
+    pageSize: items.length,
   };
 }
 
@@ -1690,7 +1743,7 @@ export async function planA2UISurfaceWithAI({
     fieldMapping: fieldMappingFromSlots(template, plan),
     isFallback: false,
     registryVersion: catalog.version,
-    maxItems: template.surfaceConfig.maxItems,
+    maxItems: Math.min(maxRenderRows, data.items.length),
     strategy: "ai_surface_planner",
 	    candidates: validatedCandidates,
     mapping,
