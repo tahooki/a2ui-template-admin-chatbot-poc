@@ -31,7 +31,7 @@ type SequenceStepSpec = Omit<SequenceStep, "rowTop" | "rowBottom" | "y"> & {
   gapBefore?: SequenceStepGap;
 };
 
-type EvidenceLabelId = "source-preview" | "template-comparison";
+type EvidenceLabelId = "source-preview" | "template-comparison" | "slot-generation";
 
 type BranchBlock = {
   id: AgentFlowBranch;
@@ -74,13 +74,13 @@ type SequenceBoardProps = {
 };
 
 const lanes: ActorLane[] = [
-  { id: "chat", label: "Chat UI" },
-  { id: "next", label: "Next /api/chat" },
-  { id: "main_agent", label: "Main Agent" },
-  { id: "business_db", label: "Business DB/API" },
-  { id: "a2ui", label: "A2UI Agent" },
+  { id: "chat", label: "채팅 UI" },
+  { id: "next", label: "Next API" },
+  { id: "main_agent", label: "메인 에이전트" },
+  { id: "business_db", label: "업무 DB/API" },
+  { id: "a2ui", label: "A2UI 에이전트" },
   { id: "llm", label: "LLM" },
-  { id: "registry", label: "A2UI Registry" },
+  { id: "registry", label: "A2UI 레지스트리" },
 ];
 
 const actorNodeWidth = 144;
@@ -142,16 +142,16 @@ function buildSequenceSteps(specs: SequenceStepSpec[]) {
 }
 
 const steps: SequenceStep[] = buildSequenceSteps([
-  { id: "chat-stream", phase: "request", events: ["request_start", "response_open"], from: "chat", to: "main_agent", label: "Open chat stream" },
-  { id: "intent", phase: "intent", events: ["state:planning", "state:intent"], from: "main_agent", to: "llm", label: "Classify data request", gapBefore: "selfLoop" },
-  { id: "intent-result", phase: "intent", events: ["state:intent_result"], from: "llm", to: "main_agent", label: "Return selected intent" },
+  { id: "chat-stream", phase: "request", events: ["request_start", "response_open"], from: "chat", to: "main_agent", label: "채팅 스트림 열기" },
+  { id: "intent", phase: "intent", events: ["state:planning", "state:intent"], from: "main_agent", to: "llm", label: "API 데이터 호출 판단", gapBefore: "selfLoop" },
+  { id: "intent-result", phase: "intent", events: ["state:intent_result"], from: "llm", to: "main_agent", label: "API 데이터 호출 여부반환" },
   {
     id: "business-tool-call",
     phase: "intent",
     events: ["state:business_tool_selected", "state:business_tool_call", "state:tool"],
     from: "main_agent",
     to: "business_db",
-    label: "Select and call business API",
+    label: "업무 API 선택/호출",
     branch: "data",
     gapBefore: "section",
   },
@@ -161,7 +161,7 @@ const steps: SequenceStep[] = buildSequenceSteps([
     events: ["state:business_tool_result", "state:data_loaded"],
     from: "business_db",
     to: "main_agent",
-    label: "Source data for compare",
+    label: "API 데이터 호출",
     branch: "data",
   },
   {
@@ -170,7 +170,7 @@ const steps: SequenceStep[] = buildSequenceSteps([
     events: ["state:a2ui_tool_call", "transport:a2a_send"],
     from: "main_agent",
     to: "a2ui",
-    label: "POST /api/a2a/message:send",
+    label: "A2A 렌더 요청 전송",
     branch: "data",
   },
   {
@@ -179,7 +179,7 @@ const steps: SequenceStep[] = buildSequenceSteps([
     events: ["state:source_preview", "state:profile"],
     from: "a2ui",
     to: "a2ui",
-    label: "Build A2UI source preview",
+    label: "A2UI 원천 미리보기 생성",
     branch: "data",
     a2uiSubstep: true,
   },
@@ -189,7 +189,7 @@ const steps: SequenceStep[] = buildSequenceSteps([
     events: ["state:template_contracts", "state:a2a"],
     from: "a2ui",
     to: "registry",
-    label: "Load template contracts",
+    label: "템플릿 계약 로드",
     branch: "data",
   },
   {
@@ -198,20 +198,22 @@ const steps: SequenceStep[] = buildSequenceSteps([
     events: ["state:registry_loaded"],
     from: "registry",
     to: "a2ui",
-    label: "Template contracts loaded",
+    label: "템플릿 계약 로드 완료",
     branch: "data",
   },
-  { id: "matcher", phase: "matcher", events: ["state:matcher_request"], from: "a2ui", to: "llm", label: "AI Surface Planner", branch: "data", a2uiSubstep: true },
-  { id: "matcher-result", phase: "matcher", events: ["state:ai_surface_plan"], from: "llm", to: "a2ui", label: "Return surface plan", branch: "data", a2uiSubstep: true },
-  { id: "plan-validation", phase: "matcher", events: ["state:plan_validation"], from: "a2ui", to: "a2ui", label: "Validate AI plan", branch: "data", a2uiSubstep: true },
-  { id: "mapping-applied", phase: "matcher", events: ["state:mapping_applied"], from: "a2ui", to: "a2ui", label: "Apply field/slot mapping", branch: "data", a2uiSubstep: true },
+  { id: "matcher", phase: "matcher", events: ["state:matcher_request"], from: "a2ui", to: "llm", label: "템플릿 판단 요청", branch: "data", a2uiSubstep: true },
+  { id: "matcher-result", phase: "matcher", events: ["state:ai_surface_plan"], from: "llm", to: "a2ui", label: "판단 결과 반환", branch: "data", a2uiSubstep: true },
+  { id: "slot-generation", phase: "matcher", events: ["state:slot_mapping_request"], from: "a2ui", to: "llm", label: "슬롯 생성 요청", branch: "data", a2uiSubstep: true },
+  { id: "slot-generation-result", phase: "matcher", events: ["state:slot_mapping_plan"], from: "llm", to: "a2ui", label: "슬롯 생성 결과 반환", branch: "data", a2uiSubstep: true },
+  { id: "plan-validation", phase: "matcher", events: ["state:plan_validation"], from: "a2ui", to: "a2ui", label: "슬롯 검증", branch: "data", a2uiSubstep: true },
+  { id: "mapping-applied", phase: "matcher", events: ["state:mapping_applied"], from: "a2ui", to: "a2ui", label: "데이터 / 슬롯 맵핑", branch: "data", a2uiSubstep: true },
   {
     id: "a2a-result",
     phase: "matcher",
     events: ["transport:a2a_result", "state:a2ui_tool_result"],
     from: "a2ui",
     to: "main_agent",
-    label: "Return trace + render decision",
+    label: "트레이스/렌더 결정 반환",
     branch: "data",
     a2uiSubstep: true,
   },
@@ -221,7 +223,7 @@ const steps: SequenceStep[] = buildSequenceSteps([
     events: ["text", "delta"],
     from: "main_agent",
     to: "chat",
-    label: "Return fallback text",
+    label: "대체 텍스트 반환",
     branch: "no_template",
     gapBefore: "section",
   },
@@ -231,7 +233,7 @@ const steps: SequenceStep[] = buildSequenceSteps([
     events: ["surface"],
     from: "main_agent",
     to: "chat",
-    label: "Return selected A2UI surface",
+    label: "선택된 A2UI 화면 반환",
     branch: "matched",
     gapBefore: "section",
   },
@@ -266,9 +268,9 @@ function branchBlockFromSpec(spec: BranchBlockSpec): BranchBlock {
 }
 
 const branchBlockSpecs: BranchBlockSpec[] = [
-  { id: "data", label: "A2UI render path", firstStepId: "business-tool-call", lastStepId: "a2a-result" },
-  { id: "no_template", label: "Text fallback output", firstStepId: "fallback-text", lastStepId: "fallback-text" },
-  { id: "matched", label: "Selected A2UI output", firstStepId: "surface", lastStepId: "surface" },
+  { id: "data", label: "A2UI 렌더 경로", firstStepId: "business-tool-call", lastStepId: "a2a-result" },
+  { id: "no_template", label: "텍스트 대체 응답", firstStepId: "fallback-text", lastStepId: "fallback-text" },
+  { id: "matched", label: "선택된 A2UI 화면", firstStepId: "surface", lastStepId: "surface" },
 ];
 
 const branchBlocks: BranchBlock[] = branchBlockSpecs.map(branchBlockFromSpec);
@@ -504,7 +506,10 @@ function packetStepForActiveEvent(active: AgentFlowEvent | undefined, events: Ag
 }
 
 function isBusyProgressEvent(event?: AgentFlowEvent) {
-  return Boolean(event?.event === "state:matcher_request" && event.data?.mode === "planning");
+  return Boolean(
+    (event?.event === "state:matcher_request" && (event.data?.mode === "planning" || event.data?.mode === "template_selection"))
+      || (event?.event === "state:slot_mapping_request" && event.data?.mode === "slot_mapping"),
+  );
 }
 
 function cameraStateForScroll(target: string, left: number, top: number, zoom: number, mode: CameraState["mode"]): CameraState {
@@ -768,23 +773,7 @@ function sourceFieldPathsFromEvent(event?: AgentFlowEvent) {
   return stringArray(data.sourceFieldPaths).length ? stringArray(data.sourceFieldPaths) : stringArray(trace.sourceFieldPaths);
 }
 
-function stepEvent(step: SequenceStep, events: AgentFlowEvent[]) {
-  const stepEvents = step.events ?? [];
-  return events.findLast((event) => stepEvents.includes(event.event));
-}
-
-function stepToolName(step: SequenceStep, trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]) {
-  if (trace) return trace.businessToolName;
-  const event = stepEvent(step, events);
-  const eventData = recordValue(event?.data);
-  const sourceToolName = eventData.sourceToolName;
-  const label = eventData.label;
-  return typeof sourceToolName === "string" ? sourceToolName : typeof label === "string" ? label : undefined;
-}
-
-function stepDisplayLabel(step: SequenceStep, trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]) {
-  const toolName = stepToolName(step, trace, events);
-  if (step.id === "business-tool-call" && toolName) return `Use ${toolName}`;
+function stepDisplayLabel(step: SequenceStep) {
   return step.label;
 }
 
@@ -909,8 +898,8 @@ function templateComparisonEvidenceView(trace: DataBoundaryScenarioTrace | undef
     : cleanJsonValue({
         sourcePreviewEvent: eventPayload(profileEvent),
         sourceTool,
-        aiSurfacePlanTrace: eventTrace,
-        matcherInputEvent: eventPayload(matcherEvent),
+        templateSelectionTrace: recordValue(eventTrace?.templateSelection),
+        templateSelectionEvent: eventPayload(matcherEvent),
       });
   const outputJson = trace
     ? cleanJsonValue({
@@ -918,10 +907,8 @@ function templateComparisonEvidenceView(trace: DataBoundaryScenarioTrace | undef
         selectedTemplateId: selectedTemplate,
         score,
         reason: reason || undefined,
-        renderPlan: trace.renderPlan,
-        aiSurfacePlanTrace: trace.aiSurfacePlanTrace,
-        mappingComparison: trace.mappingComparison,
-        surfaceEnvelope: trace.surfaceEnvelope,
+        templateSelection: recordValue(trace.aiSurfacePlanTrace.templateSelection),
+        candidates,
       })
     : cleanJsonValue({
         result: noTemplateResult ? "no_template" : "selected",
@@ -929,19 +916,74 @@ function templateComparisonEvidenceView(trace: DataBoundaryScenarioTrace | undef
         score,
         reason: reason || undefined,
         candidates,
-        aiSurfacePlanTrace: eventTrace,
+        templateSelection: matcherData.templateSelection ?? eventTrace?.templateSelection,
+        templateSelectionEvent: eventPayload(matcherEvent),
+      });
+
+  return {
+    eyebrow: `Evidence: ${eventEvidenceText(matcherEvent ?? validationEvent ?? mappingEvent, trace ? "sample" : "pending")}`,
+    title: "템플릿 판단",
+    purpose: "1차 LLM이 raw API profile과 등록 템플릿을 보고 어떤 화면 템플릿을 선택했는지 보여줍니다.",
+    jsonPanels: [
+      { title: "Input JSON: 템플릿 판단 입력값", value: inputJson },
+      { title: "Output JSON: 판단 결과", value: outputJson },
+    ],
+  };
+}
+
+function slotGenerationEvidenceView(trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]): DetailViewModel {
+  const requestEvent = latestEvent(events, ["state:slot_mapping_request"]);
+  const slotEvent = latestEvent(events, ["state:slot_mapping_plan"]);
+  const validationEvent = latestEvent(events, ["state:plan_validation"]);
+  const mappingEvent = latestEvent(events, ["state:mapping_applied"]);
+  const toolResultEvent = latestEvent(events, ["state:a2ui_tool_result", "transport:a2a_result", "done"]);
+  const eventTrace = aiSurfaceTraceFromEvents(slotEvent, mappingEvent, validationEvent, toolResultEvent, requestEvent);
+  const requestData = recordValue(requestEvent?.data);
+  const slotData = recordValue(slotEvent?.data);
+  const validationData = recordValue(validationEvent?.data);
+  const mappingData = recordValue(mappingEvent?.data);
+  const traceSlotMapping = recordValue(trace?.aiSurfacePlanTrace.slotMapping) ?? recordValue(eventTrace?.slotMapping);
+  const traceSelection = recordValue(trace?.aiSurfacePlanTrace.templateSelection) ?? recordValue(eventTrace?.templateSelection);
+
+  const inputJson = trace
+    ? cleanJsonValue({
+        selectedTemplateId: trace.aiSurfacePlanTrace.selectedTemplateId,
+        templateSelection: traceSelection,
+        source: {
+          sourceArrayPath: trace.aiSurfacePlanTrace.sourceArrayPath,
+          sourceFieldPaths: trace.aiSurfacePlanTrace.sourceFieldPaths,
+          sampleRows: trace.aiSurfacePlanTrace.sourceSampleRows?.slice?.(0, 1),
+        },
+        templateContract: trace.templateContract,
+      })
+    : cleanJsonValue({
+        slotMappingRequestEvent: eventPayload(requestEvent),
+        templateSelection: requestData.templateSelection ?? traceSelection,
+        selectedTemplateId: requestData.templateId ?? slotData.templateId ?? validationData.templateId,
+      });
+
+  const outputJson = trace
+    ? cleanJsonValue({
+        slotMapping: traceSlotMapping,
+        fieldMappings: trace.aiSurfacePlanTrace.fieldMappings,
+        slotMappings: trace.aiSurfacePlanTrace.slotMappings,
+        validation: trace.aiSurfacePlanTrace.validation,
+        mappingComparison: trace.mappingComparison,
+      })
+    : cleanJsonValue({
+        slotMapping: slotData.slotMapping ?? validationData.slotMapping ?? mappingData.slotMapping ?? traceSlotMapping,
         validationEvent: eventPayload(validationEvent),
         mappingEvent: eventPayload(mappingEvent),
         a2uiToolResultEvent: eventPayload(toolResultEvent),
       });
 
   return {
-    eyebrow: `Evidence: ${eventEvidenceText(mappingEvent ?? validationEvent ?? matcherEvent, trace ? "sample" : "pending")}`,
-    title: "화면 조건 비교",
-    purpose: "AI에게 들어간 input JSON과 A2UI 출력 결정 JSON입니다. 후보 선택/미선택 판단 값을 그대로 표시합니다.",
+    eyebrow: `Evidence: ${eventEvidenceText(mappingEvent ?? validationEvent ?? slotEvent ?? requestEvent, trace ? "sample" : "pending")}`,
+    title: "슬롯 생성",
+    purpose: "2차 LLM이 선택된 템플릿 하나의 required slot에 raw source field를 어떻게 연결했는지 보여줍니다.",
     jsonPanels: [
-      { title: "Input JSON: AI 비교 입력값", value: inputJson },
-      { title: "Output JSON: AI 선택 결과", value: outputJson },
+      { title: "Input JSON: 슬롯 생성 입력값", value: inputJson },
+      { title: "Output JSON: 슬롯/필드 매핑 결과", value: outputJson },
     ],
   };
 }
@@ -976,9 +1018,26 @@ function templateComparisonEvidenceSubtitle(trace: DataBoundaryScenarioTrace | u
   return `${scoreText} · ${candidateText}`;
 }
 
+function slotGenerationEvidenceSubtitle(trace: DataBoundaryScenarioTrace | undefined, event?: AgentFlowEvent) {
+  if (trace) {
+    const fieldCount = trace.aiSurfacePlanTrace.fieldMappings?.length ?? trace.aiSurfacePlanTrace.rules.length;
+    const slotCount = trace.aiSurfacePlanTrace.slotMappings?.length ?? trace.mappingComparison.length;
+    return `필드 ${formatCount(fieldCount)}개 · 슬롯 ${formatCount(slotCount)}개`;
+  }
+
+  const data = recordValue(event?.data);
+  const slotMapping = recordValue(data.slotMapping);
+  const fieldCount = numberValue(data.fieldMappingCount) ?? recordArray(slotMapping.fieldMappings).length;
+  const slotCount = numberValue(data.slotMappingCount) ?? recordArray(slotMapping.slotMappings).length;
+  const fieldText = fieldCount ? `필드 ${formatCount(fieldCount)}개` : "필드 대기 중";
+  const slotText = slotCount ? `슬롯 ${formatCount(slotCount)}개` : "슬롯 대기 중";
+  return `${fieldText} · ${slotText}`;
+}
+
 function evidenceLabels(trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]) {
   const sourceEvent = latestEvent(events, ["state:source_preview", "state:profile"]);
-  const comparisonEvent = latestEvent(events, ["state:mapping_applied", "state:plan_validation", "state:ai_surface_plan", "state:matcher"]);
+  const comparisonEvent = latestEvent(events, ["state:ai_surface_plan", "state:matcher"]);
+  const slotEvent = latestEvent(events, ["state:mapping_applied", "state:plan_validation", "state:slot_mapping_plan", "state:slot_mapping_request"]);
   const labels: Array<{
     id: EvidenceLabelId;
     title: string;
@@ -998,9 +1057,18 @@ function evidenceLabels(trace: DataBoundaryScenarioTrace | undefined, events: Ag
   if (trace || comparisonEvent) {
     labels.push({
       id: "template-comparison",
-      title: "화면 조건 비교",
+      title: "템플릿 판단",
       subtitle: templateComparisonEvidenceSubtitle(trace, comparisonEvent),
       badge: eventEvidenceText(comparisonEvent, trace ? "sample" : "event"),
+    });
+  }
+
+  if (trace || slotEvent) {
+    labels.push({
+      id: "slot-generation",
+      title: "슬롯 생성",
+      subtitle: slotGenerationEvidenceSubtitle(trace, slotEvent),
+      badge: eventEvidenceText(slotEvent, trace ? "sample" : "event"),
     });
   }
 
@@ -1008,9 +1076,9 @@ function evidenceLabels(trace: DataBoundaryScenarioTrace | undefined, events: Ag
 }
 
 function evidenceDetailView(id: EvidenceLabelId, trace: DataBoundaryScenarioTrace | undefined, events: AgentFlowEvent[]) {
-  return id === "source-preview"
-    ? sourcePreviewEvidenceView(trace, events)
-    : templateComparisonEvidenceView(trace, events);
+  if (id === "source-preview") return sourcePreviewEvidenceView(trace, events);
+  if (id === "slot-generation") return slotGenerationEvidenceView(trace, events);
+  return templateComparisonEvidenceView(trace, events);
 }
 
 export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, dataBoundaryTrace }: SequenceBoardProps) {
@@ -1296,7 +1364,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
 
             {visibleSteps.map((step) => {
               const position = labelPosition(step);
-              const displayLabel = stepDisplayLabel(step, dataBoundaryTrace, events);
+              const displayLabel = stepDisplayLabel(step);
               const evidenceKind = stepEvidenceKind(step, events, active);
               const evidence = evidenceLabel(evidenceKind);
               return (

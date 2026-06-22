@@ -53,6 +53,33 @@ type PlannerCandidateEvaluation = {
   risks?: string[];
 };
 
+type TemplateCandidateNote = {
+  templateId?: string;
+  decision?: "select" | "reject" | string;
+  reason?: string;
+  score?: unknown;
+  confidence?: unknown;
+  schemaFit?: unknown;
+  queryFit?: unknown;
+  semanticFit?: unknown;
+  renderFit?: unknown;
+  missingRequiredSlots?: unknown;
+  risks?: unknown;
+};
+
+type TemplateSelectionResult = {
+  selectedTemplateId?: string;
+  reason?: string;
+  confidence?: unknown;
+  candidateNotes?: TemplateCandidateNote[];
+};
+
+type SlotMappingResult = {
+  fieldMappings?: PlannerFieldMapping[];
+  slotMappings?: PlannerSlotMapping[];
+  reason?: string;
+};
+
 type AIPlannerPlan = {
   selectedTemplateId?: string;
   confidence?: number;
@@ -77,6 +104,7 @@ type ValidationResult = {
 };
 
 type PlannerResponseFormat = "json_schema" | "json_object" | "none";
+type PlannerStage = "template_selection" | "slot_mapping";
 
 type PlannerAttemptConfig = {
   maxTokens: number;
@@ -84,6 +112,7 @@ type PlannerAttemptConfig = {
 };
 
 type PlannerAttemptTrace = {
+  stage: PlannerStage;
   requestKind: "initial" | "correction";
   attempt: number;
   responseFormat: PlannerResponseFormat;
@@ -99,8 +128,8 @@ type PlannerAttemptTrace = {
   error?: string;
 };
 
-type AIPlannerRequestResult = {
-  plan?: AIPlannerPlan;
+type PlannerJsonRequestResult<T> = {
+  result?: T;
   model?: string;
   error?: string;
   internalError?: string;
@@ -114,6 +143,8 @@ export type A2UISurfacePlanTrace = {
   reason?: string;
   primaryArrayPath?: string;
   selectedTemplateId?: string;
+  templateSelection?: TemplateSelectionResult;
+  slotMapping?: SlotMappingResult;
   fieldMappings: PlannerFieldMapping[];
   slotMappings: PlannerSlotMapping[];
   candidateEvaluations: PlannerCandidateEvaluation[];
@@ -161,9 +192,9 @@ export type A2UISurfacePlanResult =
       score?: number;
       strategy: "ai_surface_planner";
       candidates?: A2UICandidateTrace[];
-	      trace?: A2UISurfacePlanTrace;
-	      error?: string;
-	    };
+      trace?: A2UISurfacePlanTrace;
+      error?: string;
+    };
 
 export type A2UISurfacePlanProgress = {
   status: "profile" | "a2a" | "registry_loaded" | "matcher" | "plan_validation" | "mapping_applied";
@@ -174,16 +205,18 @@ export type A2UISurfacePlanProgress = {
 
 export type A2UISurfacePlanProgressHandler = (progress: A2UISurfacePlanProgress) => void | Promise<void>;
 
-const promptVersion = "2026-06-21.a2ui-surface-plan.v1" as const;
+const promptVersion = "2026-06-22.a2ui-two-stage-surface-plan.v1" as const;
 const allowedTransforms: PlannerTransform[] = ["copy", "boolean_code", "number_to_boolean", "default_false"];
-const maxPromptFieldPaths = 64;
+const maxPromptFieldPaths = 40;
 const maxPromptSampleRows = 3;
 const maxRenderRows = 10;
+const maxPromptJsonLength = 60000;
 const defaultPlannerAttempts: PlannerAttemptConfig[] = [
   { maxTokens: 6000, responseFormat: "json_schema" },
   { maxTokens: 6000, responseFormat: "json_schema" },
 ];
-const aiPlannerIncompleteReason = "AI가 화면 조건 비교 결과를 끝까지 완성하지 못해 선택을 확정하지 못했습니다.";
+const aiTemplateSelectionIncompleteReason = "AI가 템플릿 판단 결과를 끝까지 완성하지 못해 선택을 확정하지 못했습니다.";
+const aiSlotMappingIncompleteReason = "AI가 선택된 템플릿의 슬롯 생성 결과를 끝까지 완성하지 못했습니다.";
 const plannerAttemptPreviewLength = 1600;
 const titleSourceKeys = ["name", "equipmentName", "equipment_name", "eqpNm", "eqp_nm", "assetDisplayName", "assetName", "asset_nm", "asset_name", "title"];
 const idSourceKeys = ["id", "eqpId", "eqp_id", "equipmentId", "equipment_id", "assetId", "asset_id"];
@@ -244,13 +277,53 @@ function previewText(value: string, limit = plannerAttemptPreviewLength) {
   return value.length > limit ? `${value.slice(0, limit)}...<truncated>` : value;
 }
 
-function plannerResponseFormatFor({
-  templateIds,
+function templateSelectionResponseFormatFor({ templateIds }: { templateIds: string[] }) {
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "a2ui_template_selection",
+      strict: false,
+      schema: {
+        type: "object",
+        additionalProperties: true,
+        required: ["selectedTemplateId", "reason"],
+        properties: {
+          selectedTemplateId: { type: "string", enum: templateIds },
+          reason: { type: "string" },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+          candidateNotes: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: true,
+              properties: {
+                templateId: { type: "string", enum: templateIds },
+                decision: { type: "string", enum: ["select", "reject"] },
+                reason: { type: "string" },
+                score: { type: "number", minimum: 0, maximum: 1 },
+                confidence: { type: "number", minimum: 0, maximum: 1 },
+                schemaFit: { type: "number", minimum: 0, maximum: 1 },
+                queryFit: { type: "number", minimum: 0, maximum: 1 },
+                semanticFit: { type: "number", minimum: 0, maximum: 1 },
+                renderFit: { type: "number", minimum: 0, maximum: 1 },
+                missingRequiredSlots: { type: "array", items: { type: "string" } },
+                risks: { type: "array", items: { type: "string" } },
+              },
+            },
+          },
+        },
+      },
+    },
+  } as const;
+}
+
+function slotMappingResponseFormatFor({
+  templateId,
   sourcePaths,
   targetFields,
   slots,
 }: {
-  templateIds: string[];
+  templateId: string;
   sourcePaths: string[];
   targetFields: string[];
   slots: string[];
@@ -258,71 +331,48 @@ function plannerResponseFormatFor({
   return {
     type: "json_schema",
     json_schema: {
-      name: "a2ui_surface_plan",
-      strict: true,
+      name: "a2ui_slot_mapping",
+      strict: false,
       schema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["selectedTemplateId", "confidence", "reason", "primaryArrayPath", "fieldMappings", "slotMappings", "candidateEvaluations"],
-      properties: {
-        selectedTemplateId: { type: "string", enum: templateIds },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
-        reason: { type: "string" },
-        primaryArrayPath: { type: "string" },
-        fieldMappings: {
-          type: "array",
-          items: {
-            type: "object",
-            additionalProperties: false,
-            required: ["targetField", "sourcePath", "transform", "trueValues", "falseValues", "defaultValue", "reason"],
-            properties: {
-              targetField: { type: "string", enum: targetFields },
-              sourcePath: { type: "string", enum: sourcePaths },
-              transform: { type: "string", enum: allowedTransforms },
-              trueValues: { type: "array", items: { type: ["string", "number", "boolean"] } },
-              falseValues: { type: "array", items: { type: ["string", "number", "boolean"] } },
-              defaultValue: { type: ["string", "number", "boolean", "null"] },
-              reason: { type: "string" },
+        type: "object",
+        additionalProperties: true,
+        required: ["fieldMappings", "slotMappings"],
+        properties: {
+          reason: { type: "string" },
+          fieldMappings: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: true,
+              required: ["targetField", "sourcePath", "transform", "reason"],
+              properties: {
+                targetField: { type: "string", enum: targetFields },
+                sourcePath: { type: "string", enum: sourcePaths },
+                transform: { type: "string", enum: allowedTransforms },
+                trueValues: { type: "array", items: { type: ["string", "number", "boolean"] } },
+                falseValues: { type: "array", items: { type: ["string", "number", "boolean"] } },
+                defaultValue: { type: ["string", "number", "boolean", "null"] },
+                reason: { type: "string" },
+              },
+            },
+          },
+          slotMappings: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: true,
+              required: ["slot", "sourcePath", "targetField", "transform", "reason"],
+              properties: {
+                templateId: { type: "string", enum: [templateId] },
+                slot: { type: "string", enum: slots },
+                sourcePath: { type: "string", enum: sourcePaths },
+                targetField: { type: "string", enum: targetFields },
+                transform: { type: "string", enum: allowedTransforms },
+                reason: { type: "string" },
+              },
             },
           },
         },
-        slotMappings: {
-          type: "array",
-          items: {
-            type: "object",
-            additionalProperties: false,
-            required: ["templateId", "slot", "sourcePath", "targetField", "transform", "reason"],
-            properties: {
-              templateId: { type: "string", enum: templateIds },
-              slot: { type: "string", enum: slots },
-              sourcePath: { type: "string", enum: sourcePaths },
-              targetField: { type: "string", enum: targetFields },
-              transform: { type: "string", enum: allowedTransforms },
-              reason: { type: "string" },
-            },
-          },
-        },
-        candidateEvaluations: {
-          type: "array",
-          items: {
-            type: "object",
-            additionalProperties: false,
-            required: ["templateId", "decision", "score", "schemaFit", "queryFit", "semanticFit", "renderFit", "reason", "missingRequiredSlots", "risks"],
-            properties: {
-              templateId: { type: "string", enum: templateIds },
-              decision: { type: "string", enum: ["select", "reject"] },
-              score: { type: "number", minimum: 0, maximum: 1 },
-              schemaFit: { type: "number", minimum: 0, maximum: 1 },
-              queryFit: { type: "number", minimum: 0, maximum: 1 },
-              semanticFit: { type: "number", minimum: 0, maximum: 1 },
-              renderFit: { type: "number", minimum: 0, maximum: 1 },
-              reason: { type: "string" },
-              missingRequiredSlots: { type: "array", items: { type: "string" } },
-              risks: { type: "array", items: { type: "string" } },
-            },
-          },
-        },
-      },
       },
     },
   } as const;
@@ -437,6 +487,38 @@ function fieldPaths(rows: DataRecord[], arrayPath = "items") {
   return keys.map((key) => `${arrayPath}[].${key}`);
 }
 
+function promptFieldPaths(paths: string[], rows: DataRecord[]) {
+  const firstRow = rows[0] ?? {};
+  return paths
+    .map((path, index) => {
+      const key = sourceKey(path) ?? "";
+      const sourceValue = firstRow[key];
+      const isIdentityOrStatus =
+        keyMatchesAny(key, [
+          ...idSourceKeys,
+          ...titleSourceKeys,
+          ...onlineSourceKeys,
+          ...runningSourceKeys,
+          ...alarmSourceKeys,
+          ...inspectionSourceKeys,
+          ...reservedSourceKeys,
+        ]);
+      const rank = isIdentityOrStatus
+        ? 0
+        : fieldType(sourceValue) === "number" && isMetricLikeKey(key)
+          ? 1
+          : keyMatchesAny(key, [...updatedAtSourceKeys, ...locationSourceKeys])
+            ? 2
+            : rolesForKey(key, fieldType(sourceValue)).length > 0
+              ? 3
+              : 4;
+      return { path, index, rank };
+    })
+    .sort((left, right) => left.rank - right.rank || left.index - right.index)
+    .slice(0, maxPromptFieldPaths)
+    .map((item) => item.path);
+}
+
 function sourceKey(sourcePath?: string) {
   if (!sourcePath) return undefined;
   return sourcePath.replace(/\[\]/g, "").split(".").pop();
@@ -494,9 +576,25 @@ function sourceFieldSummaries(rows: DataRecord[], paths: string[]) {
   });
 }
 
-function compactJson(value: unknown, limit = 14000) {
+function projectRowsForPrompt(rows: DataRecord[], paths: string[], limit: number) {
+  const keys = Array.from(new Set(paths.map((path) => sourceKey(path)).filter((key): key is string => Boolean(key))));
+  return rows.slice(0, limit).map((row) => {
+    const projected: DataRecord = {};
+    for (const key of keys) {
+      if (row[key] !== undefined) projected[key] = row[key];
+    }
+    return projected;
+  });
+}
+
+function compactJson(value: unknown, limit = maxPromptJsonLength) {
   const text = JSON.stringify(value, null, 2);
-  return text.length > limit ? `${text.slice(0, limit)}\n...truncated` : text;
+  if (text.length <= limit) return text;
+  console.warn("[a2ui] AI surface planner prompt exceeded compact target; sending full valid JSON", {
+    length: text.length,
+    targetLength: limit,
+  });
+  return text;
 }
 
 function stripCodeFence(text: string) {
@@ -535,14 +633,14 @@ function extractJsonObjectText(text: string) {
   return undefined;
 }
 
-function parsePlannerContent(content: string): AIPlannerPlan {
+function parsePlannerContent<T>(content: string): T {
   const stripped = stripCodeFence(content);
   try {
-    return JSON.parse(stripped) as AIPlannerPlan;
+    return JSON.parse(stripped) as T;
   } catch (error) {
     const extracted = extractJsonObjectText(stripped);
     if (!extracted) throw error;
-    return JSON.parse(extracted) as AIPlannerPlan;
+    return JSON.parse(extracted) as T;
   }
 }
 
@@ -604,7 +702,7 @@ function buildPrompt({
   templates: A2UITemplateRegistration[];
 }) {
   const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
-  const promptPaths = paths.slice(0, maxPromptFieldPaths);
+  const promptPaths = promptFieldPaths(paths, extracted.rows);
   const metricTargetFields = promptPaths
     .map((path) => sourceKey(path))
     .filter((key): key is string => Boolean(key && /^(telemetry_|metric_)/i.test(key)));
@@ -631,7 +729,7 @@ function buildPrompt({
       omittedFieldPathCount: Math.max(0, paths.length - promptPaths.length),
       fieldPaths: promptPaths,
       fields: sourceFieldSummaries(extracted.rows, promptPaths),
-      sampleRows: extracted.rows.slice(0, maxPromptSampleRows),
+      sampleRows: projectRowsForPrompt(extracted.rows, promptPaths, maxPromptSampleRows),
     },
     templates: registeredTemplates.map(templatePromptSummary),
     allowedTransforms,
@@ -728,10 +826,110 @@ function buildPrompt({
   };
 }
 
-async function requestAIPlan(
-  prompt: ReturnType<typeof buildPrompt>,
-  correction?: { previousPlan: AIPlannerPlan; validationErrors: string[] },
-): Promise<AIPlannerRequestResult> {
+function buildTemplateSelectionPrompt(args: Parameters<typeof buildPrompt>[0]) {
+  const base = buildPrompt(args);
+  return {
+    ...base,
+    task: "Choose exactly one registered A2UI template for the raw API data and user query. Do not create fieldMappings or slotMappings.",
+    outputContract:
+      "Return JSON with selectedTemplateId and reason. confidence and candidateNotes are helpful trace fields but they are not required for selection validity.",
+    targetFieldRules: {
+      ...base.targetFieldRules,
+      renderRule: "Do not create mappings in this step. Mapping happens in the next slot-generation step after the template is selected.",
+      candidateRule: "candidateNotes may explain why templates were selected or rejected, but selectedTemplateId and reason are the source of truth.",
+    },
+    outputJsonShape: {
+      selectedTemplateId: "registered template id",
+      reason: "short Korean sentence explaining the choice",
+      confidence: "optional number 0..1",
+      candidateNotes: [
+        {
+          templateId: "optional registered template id",
+          decision: "optional select | reject",
+          reason: "optional short reason",
+        },
+      ],
+    },
+  };
+}
+
+function buildSlotMappingPrompt({
+  selection,
+  ...args
+}: Parameters<typeof buildPrompt>[0] & {
+  selection: TemplateSelectionResult;
+}) {
+  const base = buildPrompt(args);
+  const selectedTemplate = base.templates.find((template) => template.templateId === selection.selectedTemplateId);
+  const selectedSlots = selectedTemplate?.inputSchema
+    ? Array.from(new Set([
+        ...selectedTemplate.inputSchema.requiredSlots.map((slot) => slot.slot),
+        ...(selectedTemplate.inputSchema.optionalSlots ?? []).map((slot) => slot.slot),
+      ])).sort()
+    : [];
+
+  return {
+    ...base,
+    task: "Create fieldMappings and slotMappings only for the already selected A2UI template. Do not compare templates and do not change selectedTemplateId.",
+    outputContract:
+      "Return JSON with fieldMappings and slotMappings for the selected template only. Use only source.fieldPaths, selectedTemplateSlots, allowedTargetFields, and allowedTransforms.",
+    selectedTemplateId: selection.selectedTemplateId,
+    selectionReason: selection.reason,
+    templates: selectedTemplate ? [selectedTemplate] : [],
+    allowedTemplateIds: selection.selectedTemplateId ? [selection.selectedTemplateId] : [],
+    allowedSlots: selectedSlots,
+    source: {
+      ...base.source,
+      sampleRows: base.source.sampleRows.slice(0, 1),
+    },
+    targetFieldRules: {
+      ...base.targetFieldRules,
+      templateSelectionRules: [
+        "Template selection already happened. Do not choose or compare templates in this step.",
+        "Do not choose a template in this step. slotMappings do not need templateId; the A2UI server will attach selectedTemplateId. If templateId is included, it must equal selectedTemplateId.",
+      ],
+      renderRule: "A2UI will apply fieldMappings to display rows, then bind selected template slots through slotMappings.",
+      candidateRule: "Do not return candidateEvaluations in this step.",
+    },
+    outputJsonShape: {
+      fieldMappings: [
+        {
+          targetField: "canonical field or concrete metric field",
+          sourcePath: "one source.fieldPaths value",
+          transform: "copy | boolean_code | number_to_boolean | default_false",
+          trueValues: "optional array for boolean_code",
+          falseValues: "optional array for boolean_code",
+          defaultValue: "optional for default_false",
+          reason: "short string",
+        },
+      ],
+      slotMappings: [
+        {
+          slot: "one selected template slot",
+          sourcePath: "one source.fieldPaths value",
+          targetField: "matching fieldMappings targetField",
+          transform: "copy | boolean_code | number_to_boolean | default_false",
+          reason: "short string",
+        },
+      ],
+      reason: "optional short Korean sentence",
+    },
+  };
+}
+
+async function requestPlannerJson<T>({
+  stage,
+  prompt,
+  systemPrompt,
+  responseFormatFor,
+  correction,
+}: {
+  stage: PlannerStage;
+  prompt: ReturnType<typeof buildTemplateSelectionPrompt> | ReturnType<typeof buildSlotMappingPrompt>;
+  systemPrompt: string;
+  responseFormatFor: () => unknown;
+  correction?: { previousResult: unknown; validationErrors: string[]; instruction: string };
+}): Promise<PlannerJsonRequestResult<T>> {
   if (process.env.A2UI_AI_SURFACE_PLANNER_MOCK === "1") return { model: "mock-a2ui-surface-planner" };
 
   const config = openAIConfig();
@@ -739,8 +937,8 @@ async function requestAIPlan(
     console.warn("[a2ui] AI surface planner skipped because OPENAI_API_KEY is missing");
     return {
       model: config.model,
-      error: aiPlannerIncompleteReason,
-      internalError: "A2UI AI surface planning requires OPENAI_API_KEY.",
+      error: stage === "template_selection" ? aiTemplateSelectionIncompleteReason : aiSlotMappingIncompleteReason,
+      internalError: `A2UI AI ${stage} requires OPENAI_API_KEY.`,
     };
   }
 
@@ -756,10 +954,9 @@ async function requestAIPlan(
     ? {
         ...prompt,
         correctionRequest: {
-          instruction:
-            "The previous plan failed A2UI validation. Re-evaluate all templates from the raw source schema and return a corrected plan. Do not patch only the invalid field; choose another template if the selected template cannot satisfy required slots.",
+          instruction: correction.instruction,
           validationErrors: correction.validationErrors,
-          previousInvalidPlan: correction.previousPlan,
+          previousInvalidResult: correction.previousResult,
         },
       }
     : prompt;
@@ -767,9 +964,7 @@ async function requestAIPlan(
   const messages = [
     {
       role: "system",
-      content:
-        "You are the A2UI server-side surface planner. You must do two jobs: map raw business API fields to A2UI display fields and template slots, then compare all registered A2UI template candidates and choose the best one. Return JSON only in the required schema. Do not return a legacy mappings object. Do not invent source fields. Use only source paths listed in source.fieldPaths. Use transforms only from allowedTransforms. Prefer the template whose inputSchema can be filled with high confidence and whose selectionGuide matches the user query and source data semantics. If both online/operation fields and running fields exist, map operation/online fields to isOnline and running fields to isRunning. If two templates are similar, explain the tie-breaker using required slots, metric/status/image evidence, row count, and user query. candidateEvaluations must include every registered template exactly once: one decision=select and all others decision=reject. For every rejected candidate, include the concrete reason. The final selected template must still satisfy required slots. For repeated metric/status slots, return one mapping per concrete source path, with at most 4 metric mappings. Do not use wildcard paths. " +
-        "Telemetry templates require real telemetry or metric columns: select equipment.telemetryStatusTable only when at least 3 concrete telemetry_* or metric_* numeric source fields can fill metric slots. Many rows alone is not telemetry. Alarm/count fields such as alarm_count, alarmTotalCnt, alrmCnt, count, or cnt should normally become hasAlarm status evidence, not items[].metrics.",
+      content: systemPrompt,
     },
     {
       role: "user",
@@ -786,12 +981,7 @@ async function requestAIPlan(
       max_tokens: attempt.maxTokens,
     };
     if (attempt.responseFormat === "json_schema") {
-      requestBody.response_format = plannerResponseFormatFor({
-        templateIds: prompt.allowedTemplateIds,
-        sourcePaths: prompt.source.fieldPaths,
-        targetFields: prompt.allowedTargetFields,
-        slots: prompt.allowedSlots,
-      });
+      requestBody.response_format = responseFormatFor();
     } else if (attempt.responseFormat === "json_object") {
       requestBody.response_format = { type: "json_object" };
     }
@@ -812,6 +1002,7 @@ async function requestAIPlan(
         "[a2ui] AI surface planner raw response",
         response.status,
         `attempt=${attemptIndex + 1}`,
+        `stage=${stage}`,
         `requestKind=${requestKind}`,
         `format=${attempt.responseFormat}`,
         `maxTokens=${attempt.maxTokens}`,
@@ -820,6 +1011,7 @@ async function requestAIPlan(
       if (!response.ok) {
         lastInternalError = `A2UI AI surface planning request failed with status ${response.status}.`;
         recordAttempt({
+          stage,
           requestKind,
           attempt: attemptIndex + 1,
           responseFormat: attempt.responseFormat,
@@ -843,6 +1035,7 @@ async function requestAIPlan(
       } catch (error) {
         lastInternalError = `A2UI AI surface planning response was not JSON: ${errorMessage(error)}`;
         recordAttempt({
+          stage,
           requestKind,
           attempt: attemptIndex + 1,
           responseFormat: attempt.responseFormat,
@@ -863,6 +1056,7 @@ async function requestAIPlan(
       if (!content) {
         lastInternalError = "A2UI AI surface planning response did not include content.";
         recordAttempt({
+          stage,
           requestKind,
           attempt: attemptIndex + 1,
           responseFormat: attempt.responseFormat,
@@ -882,8 +1076,9 @@ async function requestAIPlan(
       }
 
       try {
-        const plan = parsePlannerContent(content);
+        const result = parsePlannerContent<T>(content);
         recordAttempt({
+          stage,
           requestKind,
           attempt: attemptIndex + 1,
           responseFormat: attempt.responseFormat,
@@ -897,10 +1092,11 @@ async function requestAIPlan(
           contentLength: content.length,
           contentPreview: previewText(content),
         });
-        return { model: config.model, plan, attempts: attemptRecords };
+        return { model: config.model, result, attempts: attemptRecords };
       } catch (error) {
         lastInternalError = `A2UI AI surface planning content was not valid JSON: ${errorMessage(error)}`;
         recordAttempt({
+          stage,
           requestKind,
           attempt: attemptIndex + 1,
           responseFormat: attempt.responseFormat,
@@ -929,6 +1125,7 @@ async function requestAIPlan(
     } catch (error) {
       lastInternalError = `A2UI AI surface planning request failed: ${errorMessage(error)}`;
       recordAttempt({
+        stage,
         requestKind,
         attempt: attemptIndex + 1,
         responseFormat: attempt.responseFormat,
@@ -944,10 +1141,56 @@ async function requestAIPlan(
 
   return {
     model: config.model,
-    error: aiPlannerIncompleteReason,
+    error: stage === "template_selection" ? aiTemplateSelectionIncompleteReason : aiSlotMappingIncompleteReason,
     internalError: lastInternalError,
     attempts: attemptRecords,
   };
+}
+
+function requestTemplateSelection(
+  prompt: ReturnType<typeof buildTemplateSelectionPrompt>,
+  correction?: { previousResult: unknown; validationErrors: string[] },
+) {
+  return requestPlannerJson<TemplateSelectionResult>({
+    stage: "template_selection",
+    prompt,
+    systemPrompt:
+      "You are the A2UI template selector. Choose exactly one registered A2UI template for the raw API data and user query. Return JSON only. The only required decision fields are selectedTemplateId and reason. Do not create fieldMappings, slotMappings, render payloads, or legacy mappings. Use source.fieldPaths and source.sampleRows only as evidence for template choice. Many rows alone is not a template reason; choose based on data meaning and template contract. Telemetry templates require real telemetry or metric columns. Candidate scores are optional explanation aids, not validation requirements.",
+    responseFormatFor: () => templateSelectionResponseFormatFor({ templateIds: prompt.allowedTemplateIds }),
+    correction: correction
+      ? {
+          ...correction,
+          instruction:
+            "The previous template selection failed validation. Return only a registered selectedTemplateId and a non-empty reason. Do not return mappings.",
+        }
+      : undefined,
+  });
+}
+
+function requestSlotMapping(
+  prompt: ReturnType<typeof buildSlotMappingPrompt>,
+  correction?: { previousResult: unknown; validationErrors: string[] },
+) {
+  const templateId = prompt.selectedTemplateId ?? "";
+  return requestPlannerJson<SlotMappingResult>({
+    stage: "slot_mapping",
+    prompt,
+    systemPrompt:
+      "You are the A2UI slot mapper. A template has already been selected. Create fieldMappings and slotMappings only for selectedTemplateId. Do not compare templates and do not change selectedTemplateId. Use only source.fieldPaths. Do not invent source fields. Do not use wildcard paths. slotMappings do not need templateId because the A2UI server will attach selectedTemplateId; if templateId is included, it must equal selectedTemplateId. Fill required slots from the selected template inputSchema. If both online/operation fields and running fields exist, map operation/online fields to isOnline and running fields to isRunning. Alarm/count fields normally map to hasAlarm, not metric slots. Metric slots should use concrete numeric telemetry or metric source paths.",
+    responseFormatFor: () => slotMappingResponseFormatFor({
+      templateId,
+      sourcePaths: prompt.source.fieldPaths,
+      targetFields: prompt.allowedTargetFields,
+      slots: prompt.allowedSlots,
+    }),
+    correction: correction
+      ? {
+          ...correction,
+          instruction:
+            "The previous slot mapping failed A2UI validation. Keep the same selectedTemplateId and return corrected fieldMappings and slotMappings only.",
+        }
+      : undefined,
+  });
 }
 
 function pathForKey(paths: string[], keys: string[]) {
@@ -982,11 +1225,13 @@ function mockPlan({
   apiId,
   extracted,
   templates,
+  selectedTemplateId: selectedTemplateIdOverride,
 }: {
   query: string;
   apiId: EquipmentApiId;
   extracted: RowExtraction;
   templates: A2UITemplateRegistration[];
+  selectedTemplateId?: string;
 }): AIPlannerPlan {
   const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
   const registeredTemplateIds = new Set(templates.filter((template) => template.status === "registered").map((template) => template.componentId));
@@ -994,12 +1239,13 @@ function mockPlan({
   const querySaysWide = /계측|텔레메트리|telemetry|metric|진단|wide|컬럼\s*(많|다|큰)/i.test(query);
   const canRenderTelemetry = telemetryMetricPaths.length >= 3 && registeredTemplateIds.has("equipment.telemetryStatusTable");
   const statusTemplateId = templates.find((template) => template.status === "registered" && template.surfaceConfig.viewType === "statusBooleanList")?.componentId;
-  const selectedTemplateId =
+  const selectedTemplateId = selectedTemplateIdOverride ?? (
     apiId === "equipment-catalog"
       ? "equipment.imageCardList"
       : canRenderTelemetry && (querySaysWide || telemetryMetricPaths.length >= 3)
         ? "equipment.telemetryStatusTable"
-        : statusTemplateId ?? "equipment.statusBooleanList";
+        : statusTemplateId ?? "equipment.statusBooleanList"
+  );
 
   const titlePath = pathForKey(paths, titleSourceKeys);
   const idPath = pathForKey(paths, idSourceKeys);
@@ -1112,6 +1358,47 @@ function mockPlan({
     fieldMappings,
     slotMappings,
     candidateEvaluations,
+  };
+}
+
+function mockTemplateSelection(args: {
+  query: string;
+  apiId: EquipmentApiId;
+  extracted: RowExtraction;
+  templates: A2UITemplateRegistration[];
+}): TemplateSelectionResult {
+  const plan = mockPlan(args);
+  return {
+    selectedTemplateId: plan.selectedTemplateId,
+    confidence: plan.confidence,
+    reason: plan.reason,
+    candidateNotes: plan.candidateEvaluations?.map((candidate) => ({
+      templateId: candidate.templateId,
+      decision: candidate.decision,
+      reason: candidate.reason,
+      score: candidate.score,
+      schemaFit: candidate.schemaFit,
+      queryFit: candidate.queryFit,
+      semanticFit: candidate.semanticFit,
+      renderFit: candidate.renderFit,
+      missingRequiredSlots: candidate.missingRequiredSlots,
+      risks: candidate.risks,
+    })),
+  };
+}
+
+function mockSlotMapping(args: {
+  query: string;
+  apiId: EquipmentApiId;
+  extracted: RowExtraction;
+  templates: A2UITemplateRegistration[];
+  selectedTemplateId?: string;
+}): SlotMappingResult {
+  const plan = mockPlan(args);
+  return {
+    reason: plan.reason,
+    fieldMappings: plan.fieldMappings,
+    slotMappings: plan.slotMappings,
   };
 }
 
@@ -1252,11 +1539,119 @@ function normalizeAIPlan(plan: AIPlannerPlan, extracted: RowExtraction): AIPlann
   };
 }
 
-function canRepairIncompleteAIPlan(ai: AIPlannerRequestResult) {
+function canRepairIncompleteAIResult(ai: Pick<PlannerJsonRequestResult<unknown>, "error" | "internalError">) {
   if (!ai.error) return false;
   const internalError = ai.internalError ?? "";
   if (/OPENAI_API_KEY|status 401|status 403|unauthorized|forbidden|invalid_api_key/i.test(internalError)) return false;
   return true;
+}
+
+function scoreValue(value: unknown, fallback: number) {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.min(1, value > 1 && value <= 100 ? value / 100 : value));
+  if (typeof value === "string") {
+    const text = value.trim().toLowerCase();
+    if (text === "high") return 0.85;
+    if (text === "medium") return 0.5;
+    if (text === "low") return 0.2;
+    const parsed = Number.parseFloat(text.replace(/%$/, ""));
+    if (Number.isFinite(parsed)) return Math.max(0, Math.min(1, parsed > 1 && parsed <= 100 ? parsed / 100 : parsed));
+  }
+  return fallback;
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function candidateNoteFor(selection: TemplateSelectionResult, templateId: string) {
+  return Array.isArray(selection.candidateNotes)
+    ? selection.candidateNotes.find((note) => note.templateId === templateId)
+    : undefined;
+}
+
+function candidateEvaluationsFromSelection(selection: TemplateSelectionResult, templates: A2UITemplateRegistration[]): PlannerCandidateEvaluation[] {
+  const selectedTemplateId = selection.selectedTemplateId;
+  const confidence = scoreValue(selection.confidence, selectedTemplateId ? 0.86 : 0);
+  return templates
+    .filter((template) => template.status === "registered")
+    .map((template) => {
+      const selected = template.componentId === selectedTemplateId;
+      const note = candidateNoteFor(selection, template.componentId);
+      const score = scoreValue(note?.score ?? note?.confidence, selected ? confidence : 0.2);
+      return {
+        templateId: template.componentId,
+        decision: selected ? "select" as const : "reject" as const,
+        score,
+        schemaFit: scoreValue(note?.schemaFit, score),
+        queryFit: scoreValue(note?.queryFit, score),
+        semanticFit: scoreValue(note?.semanticFit, score),
+        renderFit: scoreValue(note?.renderFit, score),
+        reason:
+          typeof note?.reason === "string" && note.reason.trim()
+            ? note.reason
+            : selected
+              ? selection.reason ?? "AI가 이 등록 템플릿을 선택했습니다."
+              : "선택된 템플릿이 아니므로 제외했습니다.",
+        missingRequiredSlots: stringArray(note?.missingRequiredSlots),
+        risks: stringArray(note?.risks),
+      };
+    });
+}
+
+function validateTemplateSelection({
+  selection,
+  templates,
+  apiId,
+  telemetryMetricPathCount,
+}: {
+  selection: TemplateSelectionResult | undefined;
+  templates: A2UITemplateRegistration[];
+  apiId: EquipmentApiId;
+  telemetryMetricPathCount: number;
+}): ValidationResult {
+  const errors: string[] = [];
+  const selectedTemplateId = selection?.selectedTemplateId;
+  const registeredIds = new Set(templates.filter((template) => template.status === "registered").map((template) => template.componentId));
+
+  if (!selectedTemplateId) errors.push("AI template selection did not include selectedTemplateId.");
+  else if (!registeredIds.has(selectedTemplateId)) errors.push(`Selected template is not registered: ${selectedTemplateId}`);
+  if (!selection?.reason || !selection.reason.trim()) errors.push("AI template selection did not include reason.");
+  if (apiId === "equipment-catalog" && selectedTemplateId && selectedTemplateId !== "equipment.imageCardList") {
+    errors.push(`equipment-catalog must select equipment.imageCardList, got ${selectedTemplateId}.`);
+  }
+  if (selectedTemplateId === "equipment.telemetryStatusTable" && telemetryMetricPathCount < 3) {
+    errors.push(`Telemetry template requires at least 3 telemetry/metric source fields before slot mapping, got ${telemetryMetricPathCount}.`);
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors,
+  };
+}
+
+function assemblePlanFromSelectionAndMapping({
+  selection,
+  mappingResult,
+  templates,
+  extracted,
+}: {
+  selection: TemplateSelectionResult;
+  mappingResult: SlotMappingResult;
+  templates: A2UITemplateRegistration[];
+  extracted: RowExtraction;
+}): AIPlannerPlan {
+  return normalizeAIPlan({
+    selectedTemplateId: selection.selectedTemplateId,
+    confidence: scoreValue(selection.confidence, 0.86),
+    reason: selection.reason,
+    primaryArrayPath: extracted.arrayPath ?? "items",
+    fieldMappings: mappingResult.fieldMappings ?? [],
+    slotMappings: (mappingResult.slotMappings ?? []).map((item) => ({
+      ...item,
+      templateId: item.templateId ?? selection.selectedTemplateId,
+    })),
+    candidateEvaluations: candidateEvaluationsFromSelection(selection, templates),
+  }, extracted);
 }
 
 function keepSelectedTemplateSlotMappings(plan: AIPlannerPlan) {
@@ -1288,123 +1683,6 @@ function keepSelectedTemplateSlotMappings(plan: AIPlannerPlan) {
     },
     removedCount: removed.length,
     removedTemplateIds: Array.from(new Set(removed.map((item) => item.templateId).filter((templateId): templateId is string => Boolean(templateId)))),
-  };
-}
-
-function normalizeSlotNameForTemplate(slotName: string, template: A2UITemplateRegistration, targetField?: string, sourcePath?: string) {
-  const normalized = normalizeTemplateInputSchema(template);
-  const inputSchema = normalized.inputSchema;
-  if (!inputSchema) return slotName;
-  const slots = new Set([
-    ...inputSchema.requiredSlots.map((slot) => slot.slot),
-    ...(inputSchema.optionalSlots ?? []).map((slot) => slot.slot),
-  ]);
-  if (slots.has(slotName)) return slotName;
-
-  const hint = `${slotName} ${targetField ?? ""} ${sourceKey(sourcePath) ?? ""}`;
-  const matchingSlot = (pattern: RegExp) => Array.from(slots).find((slot) => pattern.test(slot));
-  if (/title|label|name|equipmentName|eqpNm|eqp_nm|assetDisplayName|assetName/i.test(hint)) return matchingSlot(/title/i) ?? slotName;
-  if (/status|flag|online|running|alarm|inspection|reserve|opYn|runYn|oper|state/i.test(hint)) return matchingSlot(/statusFlags/i) ?? slotName;
-  if (/metric|telemetry/i.test(hint)) return matchingSlot(/metrics/i) ?? slotName;
-  return slotName;
-}
-
-function normalizeSelectedTemplateSlotMappings(plan: AIPlannerPlan, templates: A2UITemplateRegistration[], extracted: RowExtraction): AIPlannerPlan {
-  const selectedTemplate = templates.find((template) => template.status === "registered" && template.componentId === plan.selectedTemplateId);
-  if (!selectedTemplate) return plan;
-
-  const normalizedTemplate = normalizeTemplateInputSchema(selectedTemplate);
-  const inputSchema = normalizedTemplate.inputSchema;
-  if (!inputSchema) return plan;
-  const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
-  const firstRow = extracted.rows[0] ?? {};
-  const fieldMappings = [...(plan.fieldMappings ?? [])];
-  const slotMappings = (plan.slotMappings ?? []).map((item) => ({
-    ...item,
-    slot: normalizeSlotNameForTemplate(item.slot, selectedTemplate, item.targetField, item.sourcePath),
-  }));
-
-  const sourceValue = (sourcePath?: string) => {
-    const key = sourceKey(sourcePath);
-    return key ? firstRow[key] : undefined;
-  };
-  const countSlot = (slotName: string) => slotMappings.filter((item) => item.slot === slotName && item.sourcePath && paths.includes(item.sourcePath)).length;
-  const hasSlotSource = (slotName: string, sourcePath?: string) => slotMappings.some((item) => item.slot === slotName && item.sourcePath === sourcePath);
-  const fieldMappingFor = (targetField: string, sourcePath?: string) =>
-    fieldMappings.find((item) => (sourcePath && item.sourcePath === sourcePath) || item.targetField === targetField);
-  const ensureFieldMapping = (targetField: string, sourcePath: string, reason: string) => {
-    let mappingItem = fieldMappingFor(targetField, sourcePath);
-    if (mappingItem) return mappingItem;
-    const base: PlannerFieldMapping = {
-      targetField,
-      sourcePath,
-      transform: "copy",
-      reason,
-    };
-    mappingItem = {
-      ...base,
-      transform: normalizeTransformForTarget(base, sourceValue(sourcePath)),
-    };
-    fieldMappings.push(mappingItem);
-    return mappingItem;
-  };
-  const addSlotMapping = (slotName: string, mappingItem: PlannerFieldMapping, reason: string) => {
-    if (!mappingItem.sourcePath || hasSlotSource(slotName, mappingItem.sourcePath)) return;
-    slotMappings.push({
-      templateId: selectedTemplate.componentId,
-      slot: slotName,
-      sourcePath: mappingItem.sourcePath,
-      targetField: mappingItem.targetField,
-      transform: mappingItem.transform,
-      reason,
-    });
-  };
-
-  for (const slot of inputSchema.requiredSlots) {
-    const minCount = slot.minCount ?? 1;
-
-    if (/title/i.test(slot.slot) && countSlot(slot.slot) < minCount) {
-      const sourcePath = sourcePathForTarget("name", paths, slot.slot);
-      if (!sourcePath) continue;
-      const mappingItem = ensureFieldMapping("name", sourcePath, "A2UI filled required title slot from recognized equipment name field.");
-      addSlotMapping(slot.slot, mappingItem, "A2UI filled required title slot from recognized equipment name field.");
-    }
-
-    if (/statusFlags/i.test(slot.slot) && countSlot(slot.slot) < minCount) {
-      const statusMappings = statusTargetFields
-        .map((targetField) => {
-          const sourcePath = sourcePathForTarget(targetField, paths, slot.slot);
-          return sourcePath
-            ? ensureFieldMapping(targetField, sourcePath, "A2UI filled required status slot from recognized status field.")
-            : fieldMappings.find((item) => item.targetField === targetField && item.sourcePath);
-        })
-        .filter((item): item is PlannerFieldMapping => Boolean(item?.sourcePath));
-      for (const mappingItem of statusMappings) {
-        if (countSlot(slot.slot) >= minCount) break;
-        addSlotMapping(slot.slot, mappingItem, "A2UI filled required status slot from recognized status field.");
-      }
-    }
-
-    if (/metrics/i.test(slot.slot) && countSlot(slot.slot) < minCount) {
-      const metricMappings = metricSourcePaths(paths, extracted.rows)
-        .map((sourcePath) => {
-          const targetField = sourceKey(sourcePath);
-          return targetField
-            ? ensureFieldMapping(targetField, sourcePath, "A2UI filled required metric slot from recognized telemetry metric field.")
-            : undefined;
-        })
-        .filter((item): item is PlannerFieldMapping => Boolean(item?.sourcePath));
-      for (const mappingItem of metricMappings) {
-        if (countSlot(slot.slot) >= minCount) break;
-        addSlotMapping(slot.slot, mappingItem, "A2UI filled required metric slot from recognized telemetry metric field.");
-      }
-    }
-  }
-
-  return {
-    ...plan,
-    fieldMappings,
-    slotMappings,
   };
 }
 
@@ -1735,6 +2013,8 @@ function buildTrace({
   validation,
   data,
   plannerAttempts,
+  templateSelection,
+  slotMapping,
 }: {
   rawData: unknown;
   extracted: RowExtraction;
@@ -1743,6 +2023,8 @@ function buildTrace({
   validation: ValidationResult;
   data?: EquipmentApiResponse<unknown>;
   plannerAttempts?: PlannerAttemptTrace[];
+  templateSelection?: TemplateSelectionResult;
+  slotMapping?: SlotMappingResult;
 }): A2UISurfacePlanTrace {
   return {
     promptVersion,
@@ -1751,6 +2033,8 @@ function buildTrace({
     reason: plan.reason,
     primaryArrayPath: plan.primaryArrayPath,
     selectedTemplateId: plan.selectedTemplateId,
+    templateSelection,
+    slotMapping,
     fieldMappings: plan.fieldMappings ?? [],
     slotMappings: plan.slotMappings ?? [],
     candidateEvaluations: plan.candidateEvaluations ?? [],
@@ -1802,7 +2086,7 @@ export async function planA2UISurfaceWithAI({
 
   await emitProgress(onProgress, {
     status: "profile",
-    label: "Build A2UI source preview",
+    label: "A2UI 원천 미리보기 생성",
     detail: `rows=${extracted.rowCount}`,
     data: {
       rowCount: extracted.rowCount,
@@ -1818,8 +2102,8 @@ export async function planA2UISurfaceWithAI({
 
   await emitProgress(onProgress, {
     status: "a2a",
-    label: "A2UI Registry",
-    detail: "Load template contracts",
+    label: "A2UI 레지스트리",
+    detail: "템플릿 계약 로드",
   });
 
   const catalog = await readTemplateCatalog();
@@ -1833,7 +2117,7 @@ export async function planA2UISurfaceWithAI({
 
   await emitProgress(onProgress, {
     status: "registry_loaded",
-    label: "A2UI Registry",
+    label: "A2UI 레지스트리",
     detail: `templates=${registeredTemplates.length}`,
     data: {
       registryVersion: catalog.version,
@@ -1878,7 +2162,7 @@ export async function planA2UISurfaceWithAI({
 
     await emitProgress(onProgress, {
       status: "matcher",
-      label: "AI Surface Planner",
+      label: "판단 결과 반환",
       detail: "no compatible image-card template",
       data: {
         mode: "no_template",
@@ -1892,7 +2176,7 @@ export async function planA2UISurfaceWithAI({
     });
     await emitProgress(onProgress, {
       status: "plan_validation",
-      label: "Validate AI plan",
+      label: "슬롯 검증",
       detail: "validator rejected plan: image-card template is not registered",
       data: {
         mode: "invalid",
@@ -1959,7 +2243,7 @@ export async function planA2UISurfaceWithAI({
 
     await emitProgress(onProgress, {
       status: "matcher",
-      label: "AI Surface Planner",
+      label: "판단 결과 반환",
       detail: "no compatible status template",
       data: {
         mode: "no_template",
@@ -1973,7 +2257,7 @@ export async function planA2UISurfaceWithAI({
     });
     await emitProgress(onProgress, {
       status: "plan_validation",
-      label: "Validate AI plan",
+      label: "슬롯 검증",
       detail: "validator rejected plan: status template is not registered",
       data: {
         mode: "invalid",
@@ -2006,60 +2290,62 @@ export async function planA2UISurfaceWithAI({
     };
   }
 
-  const prompt = buildPrompt({ query, apiId, rawData, extracted, templates });
+  const selectionPrompt = buildTemplateSelectionPrompt({ query, apiId, rawData, extracted, templates });
   await emitProgress(onProgress, {
     status: "matcher",
-    label: "AI Surface Planner",
-    detail: `candidates=${prompt.allowedTemplateIds.length}`,
+    label: "템플릿 판단 요청",
+    detail: `candidates=${selectionPrompt.allowedTemplateIds.length}`,
     data: {
-      mode: "planning",
+      mode: "template_selection",
       strategy: "ai_surface_planner",
-      candidateCount: prompt.allowedTemplateIds.length,
+      candidateCount: selectionPrompt.allowedTemplateIds.length,
     },
   });
 
-  let ai = await requestAIPlan(prompt);
-  let plan = ai.plan ?? (process.env.A2UI_AI_SURFACE_PLANNER_MOCK === "1" ? mockPlan({ query, apiId, extracted, templates }) : undefined);
-  if (plan) plan = normalizeAIPlan(plan, extracted);
-  if (!plan && canRepairIncompleteAIPlan(ai)) {
-    const repairedPlan = normalizeAIPlan(mockPlan({ query, apiId, extracted, templates }), extracted);
-    const repairValidation = validatePlan({ plan: repairedPlan, templates, extracted });
-    if (repairValidation.ok) {
-      console.warn("[a2ui] AI surface planner used source-schema repair after incomplete LLM response", {
-        model: ai.model,
-        internalError: ai.internalError,
-        selectedTemplateId: repairedPlan.selectedTemplateId,
-      });
-      plan = repairedPlan;
-      ai = {
-        ...ai,
-        model: `${ai.model ?? "unknown"}+source-schema-repair`,
-      };
-    } else {
-      console.warn("[a2ui] AI surface planner source-schema repair failed validation", {
-        model: ai.model,
-        internalError: ai.internalError,
-        validationErrors: repairValidation.errors,
-      });
+  let model: string | undefined;
+  let plannerAttempts: PlannerAttemptTrace[] = [];
+  let selectionAi = await requestTemplateSelection(selectionPrompt);
+  model = selectionAi.model;
+  plannerAttempts = [...plannerAttempts, ...(selectionAi.attempts ?? [])];
+  let selection = selectionAi.result ?? (process.env.A2UI_AI_SURFACE_PLANNER_MOCK === "1" ? mockTemplateSelection({ query, apiId, extracted, templates }) : undefined);
+  let selectionValidation = validateTemplateSelection({ selection, templates, apiId, telemetryMetricPathCount });
+
+  if (!selectionValidation.ok && process.env.A2UI_AI_SURFACE_PLANNER_MOCK !== "1") {
+    const retry = await requestTemplateSelection(selectionPrompt, {
+      previousResult: selection,
+      validationErrors: selectionValidation.errors,
+    });
+    model = retry.model ?? model;
+    plannerAttempts = [...plannerAttempts, ...(retry.attempts ?? [])];
+    if (retry.result) {
+      selectionAi = retry;
+      selection = retry.result;
+      selectionValidation = validateTemplateSelection({ selection, templates, apiId, telemetryMetricPathCount });
+    } else if (retry.internalError) {
+      selectionAi = { ...selectionAi, internalError: retry.internalError };
     }
   }
-  if (!plan) {
-    const reason = ai.error ?? aiPlannerIncompleteReason;
-    if (ai.internalError) console.warn("[a2ui] AI surface planner hidden failure detail", ai.internalError);
-    const candidateEvaluations: PlannerCandidateEvaluation[] = registeredTemplates.map((template) => ({
-      templateId: template.componentId,
-      decision: "reject",
-      score: 0,
-      schemaFit: 0,
-      queryFit: 0,
-      semanticFit: 0,
-      renderFit: 0,
-      reason: "AI 비교 결과가 완성되지 않아 선택하지 않았습니다.",
-      missingRequiredSlots: [],
-      risks: ["ai_surface_plan_incomplete"],
-    }));
+
+  if (!selection || !selectionValidation.ok) {
+    const reason = selectionValidation.errors.length
+      ? `AI template selection failed validation: ${selectionValidation.errors.join("; ")}`
+      : selectionAi.error ?? aiTemplateSelectionIncompleteReason;
+    if (selectionAi.internalError) console.warn("[a2ui] AI template selection hidden failure detail", selectionAi.internalError);
+    const candidateEvaluations = selection
+      ? candidateEvaluationsFromSelection(selection, templates)
+      : registeredTemplates.map((template) => ({
+          templateId: template.componentId,
+          decision: "reject" as const,
+          score: 0,
+          schemaFit: 0,
+          queryFit: 0,
+          semanticFit: 0,
+          renderFit: 0,
+          reason: "AI 템플릿 판단 결과가 완성되지 않아 선택하지 않았습니다.",
+          missingRequiredSlots: [],
+          risks: ["template_selection_incomplete"],
+        }));
     const candidates = candidateEvaluations.map(candidateTrace);
-    const validation: ValidationResult = { ok: false, errors: [reason] };
     const failurePlan: AIPlannerPlan = {
       confidence: 0,
       reason,
@@ -2068,11 +2354,28 @@ export async function planA2UISurfaceWithAI({
       slotMappings: [],
       candidateEvaluations,
     };
-    const trace = buildTrace({ rawData, extracted, model: ai.model, plan: failurePlan, validation, plannerAttempts: ai.attempts });
+    const validation: ValidationResult = { ok: false, errors: [reason] };
+    const trace = buildTrace({ rawData, extracted, model, plan: failurePlan, validation, plannerAttempts, templateSelection: selection });
+    await emitProgress(onProgress, {
+      status: "matcher",
+      label: "판단 결과 반환",
+      detail: "template selection failed",
+      data: {
+        mode: "template_selection_failed",
+        templateId: null,
+        reason,
+        strategy: "ai_surface_planner",
+        score: 0,
+        candidateCount: candidates.length,
+        plannerAttempts,
+        candidates,
+        templateSelection: selection,
+      },
+    });
     await emitProgress(onProgress, {
       status: "plan_validation",
-      label: "Validate AI plan",
-      detail: "planner did not return a complete JSON plan",
+      label: "슬롯 검증",
+      detail: "template selection failed before slot generation",
       data: {
         mode: "invalid",
         templateId: null,
@@ -2081,9 +2384,10 @@ export async function planA2UISurfaceWithAI({
         score: 0,
         candidateCount: candidates.length,
         validation,
-        plannerAttempts: ai.attempts,
+        plannerAttempts,
         candidates,
         mapping: null,
+        templateSelection: selection,
       },
     });
     return {
@@ -2104,50 +2408,156 @@ export async function planA2UISurfaceWithAI({
     };
   }
 
-  const candidates = (plan.candidateEvaluations ?? []).map(candidateTrace);
+  const candidates = candidateEvaluationsFromSelection(selection, templates).map(candidateTrace);
   await emitProgress(onProgress, {
     status: "matcher",
-    label: "AI Surface Planner",
-    detail: [plan.selectedTemplateId ? `template=${plan.selectedTemplateId}` : undefined, typeof plan.confidence === "number" ? `score=${plan.confidence.toFixed(2)}` : undefined]
+    label: "판단 결과 반환",
+    detail: [selection.selectedTemplateId ? `template=${selection.selectedTemplateId}` : undefined, `reason=${selection.reason}`]
       .filter(Boolean)
       .join(" | "),
     data: {
-      mode: "plan_ready",
-      templateId: plan.selectedTemplateId,
+      mode: "template_selected",
+      templateId: selection.selectedTemplateId,
       strategy: "ai_surface_planner",
-      score: plan.confidence,
+      score: scoreValue(selection.confidence, 0.86),
       candidateCount: candidates.length,
-      plannerAttempts: ai.attempts,
+      plannerAttempts,
       candidates,
+      reason: selection.reason,
+      templateSelection: selection,
     },
   });
 
+  const mappingPrompt = buildSlotMappingPrompt({ query, apiId, rawData, extracted, templates, selection });
+  await emitProgress(onProgress, {
+    status: "matcher",
+    label: "슬롯 생성 요청",
+    detail: `template=${selection.selectedTemplateId}`,
+    data: {
+      mode: "slot_mapping",
+      templateId: selection.selectedTemplateId,
+      strategy: "ai_surface_planner",
+      sourceSampleSize: mappingPrompt.source.sampleRows.length,
+      slotCount: mappingPrompt.allowedSlots.length,
+      templateSelection: selection,
+    },
+  });
+
+  let mappingAi = await requestSlotMapping(mappingPrompt);
+  model = mappingAi.model ?? model;
+  plannerAttempts = [...plannerAttempts, ...(mappingAi.attempts ?? [])];
+  let slotMapping = mappingAi.result ?? (process.env.A2UI_AI_SURFACE_PLANNER_MOCK === "1" ? mockSlotMapping({ query, apiId, extracted, templates, selectedTemplateId: selection.selectedTemplateId }) : undefined);
+
+  if (!slotMapping && canRepairIncompleteAIResult(mappingAi)) {
+    const repairedMapping = mockSlotMapping({ query, apiId, extracted, templates, selectedTemplateId: selection.selectedTemplateId });
+    const repairedPlan = assemblePlanFromSelectionAndMapping({ selection, mappingResult: repairedMapping, templates, extracted });
+    const repairValidation = validatePlan({ plan: repairedPlan, templates, extracted });
+    if (repairValidation.ok) {
+      console.warn("[a2ui] AI slot mapper used source-schema repair after incomplete LLM response", {
+        model,
+        internalError: mappingAi.internalError,
+        selectedTemplateId: selection.selectedTemplateId,
+      });
+      slotMapping = repairedMapping;
+      model = `${model ?? "unknown"}+source-schema-repair`;
+    } else {
+      console.warn("[a2ui] AI slot mapper source-schema repair failed validation", {
+        model,
+        internalError: mappingAi.internalError,
+        validationErrors: repairValidation.errors,
+      });
+    }
+  }
+
+  if (!slotMapping) {
+    const reason = mappingAi.error ?? aiSlotMappingIncompleteReason;
+    if (mappingAi.internalError) console.warn("[a2ui] AI slot mapper hidden failure detail", mappingAi.internalError);
+    const failurePlan = assemblePlanFromSelectionAndMapping({ selection, mappingResult: {}, templates, extracted });
+    const validation: ValidationResult = { ok: false, errors: [reason] };
+    const trace = buildTrace({ rawData, extracted, model, plan: failurePlan, validation, plannerAttempts, templateSelection: selection });
+    await emitProgress(onProgress, {
+      status: "plan_validation",
+      label: "슬롯 검증",
+      detail: "slot mapper did not return complete mapping JSON",
+      data: {
+        mode: "invalid",
+        templateId: selection.selectedTemplateId,
+        reason,
+        strategy: "ai_surface_planner",
+        score: scoreValue(selection.confidence, 0.86),
+        candidateCount: candidates.length,
+        validation,
+        plannerAttempts,
+        candidates,
+        mapping: null,
+        templateSelection: selection,
+      },
+    });
+    return {
+      mode: "text_fallback",
+      apiId,
+      apiTitle: title,
+      registryVersion: catalog.version,
+      renderPlan: {
+        ...fallbackRenderPlan({ registryVersion: catalog.version, reason, candidates }),
+        aiSurfacePlanTrace: trace,
+      },
+      reason,
+      score: scoreValue(selection.confidence, 0.86),
+      strategy: "ai_surface_planner",
+      candidates,
+      trace,
+      error: reason,
+    };
+  }
+
+  await emitProgress(onProgress, {
+    status: "matcher",
+    label: "슬롯 생성 결과 반환",
+    detail: `fields=${slotMapping.fieldMappings?.length ?? 0} | slots=${slotMapping.slotMappings?.length ?? 0}`,
+    data: {
+      mode: "slot_mapping_ready",
+      templateId: selection.selectedTemplateId,
+      strategy: "ai_surface_planner",
+      score: scoreValue(selection.confidence, 0.86),
+      fieldMappingCount: slotMapping.fieldMappings?.length ?? 0,
+      slotMappingCount: slotMapping.slotMappings?.length ?? 0,
+      plannerAttempts,
+      slotMapping,
+      templateSelection: selection,
+    },
+  });
+
+  let plan = assemblePlanFromSelectionAndMapping({ selection, mappingResult: slotMapping, templates, extracted });
   let slotMappingCleanup = keepSelectedTemplateSlotMappings(plan);
-  plan = normalizeSelectedTemplateSlotMappings(slotMappingCleanup.plan, templates, extracted);
+  plan = slotMappingCleanup.plan;
   let validation = validatePlan({ plan, templates, extracted });
+
   if (!validation.ok && process.env.A2UI_AI_SURFACE_PLANNER_MOCK !== "1") {
-    const initialAttempts = ai.attempts ?? [];
-    const retry = await requestAIPlan(prompt, { previousPlan: plan, validationErrors: validation.errors });
-    const combinedAttempts = [...initialAttempts, ...(retry.attempts ?? [])];
-    if (retry.plan) {
-      ai = { ...retry, attempts: combinedAttempts };
-      slotMappingCleanup = keepSelectedTemplateSlotMappings(normalizeAIPlan(retry.plan, extracted));
-      plan = normalizeSelectedTemplateSlotMappings(slotMappingCleanup.plan, templates, extracted);
+    const retry = await requestSlotMapping(mappingPrompt, { previousResult: slotMapping, validationErrors: validation.errors });
+    model = retry.model ?? model;
+    plannerAttempts = [...plannerAttempts, ...(retry.attempts ?? [])];
+    if (retry.result) {
+      mappingAi = retry;
+      slotMapping = retry.result;
+      plan = assemblePlanFromSelectionAndMapping({ selection, mappingResult: slotMapping, templates, extracted });
+      slotMappingCleanup = keepSelectedTemplateSlotMappings(plan);
+      plan = slotMappingCleanup.plan;
       validation = validatePlan({ plan, templates, extracted });
-    } else if (retry.attempts?.length) {
-      ai = { ...ai, attempts: combinedAttempts, internalError: retry.internalError ?? ai.internalError };
+    } else if (retry.internalError) {
+      mappingAi = { ...mappingAi, internalError: retry.internalError };
     }
   }
 
   const validatedCandidates = (plan.candidateEvaluations ?? []).map(candidateTrace);
   await emitProgress(onProgress, {
     status: "plan_validation",
-    label: "Validate AI plan",
+    label: "슬롯 검증",
     detail: validation.ok
       ? slotMappingCleanup.removedCount > 0
-        ? `validator accepted returned plan after selected-template slot cleanup (${slotMappingCleanup.removedCount} removed)`
-        : "validator accepted returned plan"
-      : `validator rejected plan: ${validation.errors.length} errors`,
+        ? `validator accepted slot plan after selected-template slot cleanup (${slotMappingCleanup.removedCount} removed)`
+        : "validator accepted slot plan"
+      : `validator rejected slot plan: ${validation.errors.length} errors`,
     data: {
       mode: validation.ok ? "validated" : "invalid",
       templateId: plan.selectedTemplateId,
@@ -2155,7 +2565,7 @@ export async function planA2UISurfaceWithAI({
       score: plan.confidence,
       candidateCount: validatedCandidates.length,
       validation,
-      plannerAttempts: ai.attempts,
+      plannerAttempts,
       slotMappingCleanup: slotMappingCleanup.removedCount > 0
         ? {
             removedCount: slotMappingCleanup.removedCount,
@@ -2163,6 +2573,8 @@ export async function planA2UISurfaceWithAI({
           }
         : undefined,
       candidates: validatedCandidates,
+      slotMapping,
+      templateSelection: selection,
       mapping: plan.selectedTemplateId
         ? {
             templateId: plan.selectedTemplateId,
@@ -2175,21 +2587,21 @@ export async function planA2UISurfaceWithAI({
     },
   });
   if (!validation.ok) {
-    const reason = `AI surface plan failed validation: ${validation.errors.join("; ")}`;
-    const trace = buildTrace({ rawData, extracted, model: ai.model, plan, validation, plannerAttempts: ai.attempts });
+    const reason = `AI slot mapping failed validation: ${validation.errors.join("; ")}`;
+    const trace = buildTrace({ rawData, extracted, model, plan, validation, plannerAttempts, templateSelection: selection, slotMapping });
     return {
       mode: "text_fallback",
       apiId,
       apiTitle: title,
       registryVersion: catalog.version,
       renderPlan: {
-	        ...fallbackRenderPlan({ registryVersion: catalog.version, reason, candidates: validatedCandidates }),
+        ...fallbackRenderPlan({ registryVersion: catalog.version, reason, candidates: validatedCandidates }),
         aiSurfacePlanTrace: trace,
       },
       reason,
       score: plan.confidence,
       strategy: "ai_surface_planner",
-	      candidates: validatedCandidates,
+      candidates: validatedCandidates,
       trace,
       error: reason,
     };
@@ -2203,11 +2615,11 @@ export async function planA2UISurfaceWithAI({
       apiId,
       apiTitle: title,
       registryVersion: catalog.version,
-	      renderPlan: fallbackRenderPlan({ registryVersion: catalog.version, reason, candidates: validatedCandidates }),
+      renderPlan: fallbackRenderPlan({ registryVersion: catalog.version, reason, candidates: validatedCandidates }),
       reason,
       score: plan.confidence,
       strategy: "ai_surface_planner",
-	      candidates: validatedCandidates,
+      candidates: validatedCandidates,
       error: reason,
     };
   }
@@ -2215,7 +2627,7 @@ export async function planA2UISurfaceWithAI({
   const data = applyPlan(plan, extracted);
   await emitProgress(onProgress, {
     status: "mapping_applied",
-    label: "Apply field/slot mapping",
+    label: "데이터 / 슬롯 맵핑",
     detail: `mappings=${plan.fieldMappings?.length ?? 0}`,
     data: {
       mode: "render_surface",
@@ -2226,7 +2638,9 @@ export async function planA2UISurfaceWithAI({
       fieldMappingCount: plan.fieldMappings?.length ?? 0,
       slotMappingCount: plan.slotMappings?.length ?? 0,
       renderRowCount: data.total,
-      plannerAttempts: ai.attempts,
+      plannerAttempts,
+      slotMapping,
+      templateSelection: selection,
       mapping: {
         templateId: plan.selectedTemplateId,
         confidence: plan.confidence ?? 0,
@@ -2240,7 +2654,7 @@ export async function planA2UISurfaceWithAI({
   const sampleDataPreview = buildSampleDataPreview(data, { sourceId: apiId, sourceKind: "api_response" });
   const derivedSchema = buildDerivedSchema(data, { sourceId: apiId, sourceKind: "api_response", sampleDataPreview });
   const mapping = mappingDecision(template, plan);
-  const trace = buildTrace({ rawData, extracted, model: ai.model, plan, validation, data, plannerAttempts: ai.attempts });
+  const trace = buildTrace({ rawData, extracted, model, plan, validation, data, plannerAttempts, templateSelection: selection, slotMapping });
   const renderPlan: A2UIRenderPlan = {
     selectedComponentId: template.componentId,
     viewType: template.surfaceConfig.viewType,
@@ -2251,7 +2665,7 @@ export async function planA2UISurfaceWithAI({
     registryVersion: catalog.version,
     maxItems: Math.min(maxRenderRows, data.items.length),
     strategy: "ai_surface_planner",
-	    candidates: validatedCandidates,
+    candidates: validatedCandidates,
     mapping,
     aiSurfacePlanTrace: trace,
   };
@@ -2271,7 +2685,7 @@ export async function planA2UISurfaceWithAI({
     score: renderPlan.score,
     strategy: "ai_surface_planner",
     mapping,
-	    candidates: validatedCandidates,
+    candidates: validatedCandidates,
     trace,
   };
 }

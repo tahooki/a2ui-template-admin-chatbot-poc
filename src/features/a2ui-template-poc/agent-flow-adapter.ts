@@ -214,7 +214,7 @@ function localEvent(source: ChatFlowSourceEvent, state: AgentFlowAdapterState): 
         phase: "request",
         from: "chat",
         to: "next",
-        label: "POST /api/chat",
+        label: "채팅 요청 수신",
         detail: source.query,
         severity: "info",
         physicalEmitter: "chat",
@@ -230,7 +230,7 @@ function localEvent(source: ChatFlowSourceEvent, state: AgentFlowAdapterState): 
         phase: "bridge",
         from: "next",
         to: "main_agent",
-        label: "Open /chat/stream",
+        label: "채팅 스트림 열기",
         detail: `registry=v${source.registryVersion}`,
         severity: "info",
         physicalEmitter: "next",
@@ -246,7 +246,7 @@ function localEvent(source: ChatFlowSourceEvent, state: AgentFlowAdapterState): 
         phase: "error",
         from: state.hasDataTask ? "a2ui" : "next",
         to: "chat",
-        label: "Request failed",
+        label: "요청 실패",
         detail: textValue(source.data.message, "Unable to complete chat request."),
         branch: "error",
         severity: "error",
@@ -270,7 +270,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "planning",
         from: "main_agent",
         to: "main_agent",
-        label: "Plan chat turn",
+        label: "대화 처리 계획",
         detail: label || "Main Agent started planning.",
         severity: "info",
         physicalEmitter: "main-agent",
@@ -295,7 +295,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "intent",
         from: "main_agent",
         to: "llm",
-        label: isGeneral ? "Classify as general chat" : "Classify as data task",
+        label: isGeneral ? "일반 대화로 분류" : "API 데이터 호출 판단",
         detail,
         branch,
         severity: "info",
@@ -307,7 +307,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "intent",
         from: "llm",
         to: "main_agent",
-        label: isGeneral ? "Return general intent" : "Return selected business intent",
+        label: isGeneral ? "일반 의도 반환" : "API 데이터 호출 여부반환",
         detail,
         branch,
         severity: "success",
@@ -324,7 +324,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "data_loaded",
         from: "main_agent",
         to: "business_db",
-        label: "Query business data",
+        label: "업무 데이터 조회",
         detail: label || "equipment data",
         branch: "data",
         severity: "info",
@@ -341,7 +341,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "intent",
         from: "main_agent",
         to: "main_agent",
-        label: "Choose business API tool",
+        label: "업무 API 도구 선택",
         detail: toolDetail(source) || label,
         branch: "data",
         severity: "info",
@@ -358,7 +358,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "data_loaded",
         from: "main_agent",
         to: "business_db",
-        label: "Call business API tool",
+        label: "업무 API 도구 호출",
         detail: toolDetail(source) || label,
         branch: "data",
         severity: "info",
@@ -375,7 +375,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "data_loaded",
         from: "business_db",
         to: "main_agent",
-        label: "Business tool result",
+        label: "업무 API 결과 반환",
         detail: toolDetail(source) || profileDetail(source),
         branch: "data",
         severity: "success",
@@ -396,7 +396,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "registry_loaded",
         from: "main_agent",
         to: "a2ui",
-        label: "POST /api/a2a/message:send",
+        label: "A2A 렌더 요청 전송",
         detail: renderToolDetail(source) || "raw business result render request",
         branch: "data",
         severity: "info",
@@ -417,7 +417,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "matcher",
         from: "a2ui",
         to: "main_agent",
-        label: isNoTemplate ? "Return trace + no-template result" : "Return trace + surface artifact",
+        label: isNoTemplate ? "트레이스/템플릿 없음 결과 반환" : "트레이스/화면 결과 반환",
         detail,
         branch: "data",
         severity: isNoTemplate ? "warning" : "success",
@@ -435,7 +435,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "data_loaded",
         from: "business_db",
         to: "main_agent",
-        label: "Business data loaded",
+        label: "업무 데이터 로드 완료",
         detail: profileDetail(source),
         branch: "data",
         severity: "success",
@@ -445,7 +445,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
     ];
   }
 
-	  if (status === "profile") {
+    if (status === "profile") {
     const events: AgentFlowEvent[] = [];
     if (!phaseSeen(existingEvents, "data_loaded")) {
       events.push(
@@ -454,7 +454,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
           phase: "data_loaded",
           from: "business_db",
           to: "main_agent",
-          label: "Business data loaded",
+          label: "업무 데이터 로드 완료",
           detail: profileDetail(source),
           branch: "data",
           severity: "success",
@@ -469,15 +469,15 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "profile",
         from: "a2ui",
         to: "a2ui",
-	        label: "Build A2UI source preview",
-	        detail: profileDetail(source),
-	        branch: "data",
-	        severity: "success",
-	        physicalEmitter: a2uiEmitter(source),
-	        evidenceKind: a2uiEvidenceKind(source),
-	        data: a2uiStepData(source, { traceStep: "source_preview" }),
-	      }),
-	    );
+          label: "A2UI 원천 미리보기 생성",
+          detail: profileDetail(source),
+          branch: "data",
+          severity: "success",
+          physicalEmitter: a2uiEmitter(source),
+          evidenceKind: a2uiEvidenceKind(source),
+          data: a2uiStepData(source, { traceStep: "source_preview" }),
+        }),
+      );
     return events;
   }
 
@@ -488,16 +488,16 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "registry_loaded",
         from: "a2ui",
         to: "registry",
-	        label: "Load template contracts",
-	        detail: isLiveA2UIProgress(source) ? (shortText(source.data.detail) ?? label) : `derived after A2A result | transport=${status}${label ? ` | ${label}` : ""}`,
-	        branch: "data",
-	        severity: "info",
-	        physicalEmitter: a2uiEmitter(source),
-	        evidenceKind: a2uiEvidenceKind(source),
-	        data: a2uiStepData(source, { traceStep: "template_contract_request" }),
-	      }),
-	    ];
-	  }
+          label: "템플릿 계약 로드",
+          detail: isLiveA2UIProgress(source) ? (shortText(source.data.detail) ?? label) : `derived after A2A result | transport=${status}${label ? ` | ${label}` : ""}`,
+          branch: "data",
+          severity: "info",
+          physicalEmitter: a2uiEmitter(source),
+          evidenceKind: a2uiEvidenceKind(source),
+          data: a2uiStepData(source, { traceStep: "template_contract_request" }),
+        }),
+      ];
+    }
 
   if (status === "registry_loaded") {
     return [
@@ -506,20 +506,20 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "registry_loaded",
         from: "registry",
         to: "a2ui",
-        label: "Template contracts loaded",
-	        detail: source.data.templateCount ? `templates=${String(source.data.templateCount)}` : undefined,
-	        branch: "data",
-	        severity: "success",
-	        physicalEmitter: a2uiEmitter(source),
-	        evidenceKind: a2uiEvidenceKind(source),
-	        data: a2uiStepData(source, { traceStep: "template_contracts_loaded" }),
-	      }),
-	    ];
-	  }
+        label: "템플릿 계약 로드 완료",
+          detail: source.data.templateCount ? `templates=${String(source.data.templateCount)}` : undefined,
+          branch: "data",
+          severity: "success",
+          physicalEmitter: a2uiEmitter(source),
+          evidenceKind: a2uiEvidenceKind(source),
+          data: a2uiStepData(source, { traceStep: "template_contracts_loaded" }),
+        }),
+      ];
+    }
 
   if (status === "matcher") {
     const mode = textValue(source.data.mode);
-    if (mode === "planning") {
+    if (mode === "planning" || mode === "template_selection") {
       if (eventSeen(existingEvents, "state:matcher_request")) return [];
       return [
         newFlowEvent(source, 0, {
@@ -527,13 +527,50 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
           phase: "matcher",
           from: "a2ui",
           to: "llm",
-          label: "AI Surface Planner",
+          label: "템플릿 판단 요청",
           detail: matcherDetail(source),
           branch: "data",
           severity: "info",
           physicalEmitter: a2uiEmitter(source),
           evidenceKind: a2uiEvidenceKind(source),
-          data: a2uiStepData(source, { traceStep: "ai_surface_plan_request" }),
+          data: a2uiStepData(source, { traceStep: "template_selection_request" }),
+        }),
+      ];
+    }
+
+    if (mode === "slot_mapping") {
+      if (eventSeen(existingEvents, "state:slot_mapping_request")) return [];
+      return [
+        newFlowEvent(source, 0, {
+          event: "state:slot_mapping_request",
+          phase: "matcher",
+          from: "a2ui",
+          to: "llm",
+          label: "슬롯 생성 요청",
+          detail: matcherDetail(source),
+          branch: "data",
+          severity: "info",
+          physicalEmitter: a2uiEmitter(source),
+          evidenceKind: a2uiEvidenceKind(source),
+          data: a2uiStepData(source, { traceStep: "slot_mapping_request" }),
+        }),
+      ];
+    }
+
+    if (mode === "slot_mapping_ready") {
+      return [
+        newFlowEvent(source, 0, {
+          event: "state:slot_mapping_plan",
+          phase: "matcher",
+          from: "llm",
+          to: "a2ui",
+          label: "슬롯 생성 결과 반환",
+          detail: matcherDetail(source),
+          branch: "data",
+          severity: "info",
+          physicalEmitter: a2uiEmitter(source),
+          evidenceKind: a2uiEvidenceKind(source),
+          data: a2uiStepData(source, { traceStep: "slot_mapping_plan" }),
         }),
       ];
     }
@@ -545,49 +582,49 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "matcher",
         from: "llm",
         to: "a2ui",
-        label: "Return surface plan",
-	        detail: matcherDetail(source),
-	        branch: "data",
-	        severity: "info",
-	        physicalEmitter: a2uiEmitter(source),
-	        evidenceKind: a2uiEvidenceKind(source),
-	        data: a2uiStepData(source, { traceStep: "ai_surface_plan" }),
-	      }),
-	    ];
-	    if (mode === "render_surface" && !isLiveA2UIProgress(source)) {
-	      if (!eventSeen(existingEvents, "state:plan_validation")) {
-	        events.push(newFlowEvent(source, events.length, {
-	          event: "state:plan_validation",
-	          phase: "matcher",
-	          from: "a2ui",
+        label: "판단 결과 반환",
+        detail: matcherDetail(source),
+        branch: "data",
+        severity: "info",
+        physicalEmitter: a2uiEmitter(source),
+        evidenceKind: a2uiEvidenceKind(source),
+        data: a2uiStepData(source, { traceStep: "template_selection" }),
+      }),
+    ];
+    if (mode === "render_surface" && !isLiveA2UIProgress(source)) {
+      if (!eventSeen(existingEvents, "state:plan_validation")) {
+        events.push(newFlowEvent(source, events.length, {
+          event: "state:plan_validation",
+          phase: "matcher",
+          from: "a2ui",
           to: "a2ui",
-          label: "Validate AI plan",
+          label: "슬롯 검증",
           detail: "validator accepted returned plan",
           branch: "data",
-	          severity: "success",
-	          physicalEmitter: "main-agent",
-	          evidenceKind: "trace_derived",
-	          data: traceDerivedData(source, { traceStep: "plan_validation" }),
-	        }));
-	      }
-	      if (!eventSeen(existingEvents, "state:mapping_applied")) {
-	        events.push(newFlowEvent(source, events.length, {
-	          event: "state:mapping_applied",
-	          phase: "matcher",
-	          from: "a2ui",
+          severity: "success",
+          physicalEmitter: "main-agent",
+          evidenceKind: "trace_derived",
+          data: traceDerivedData(source, { traceStep: "plan_validation" }),
+        }));
+      }
+      if (!eventSeen(existingEvents, "state:mapping_applied")) {
+        events.push(newFlowEvent(source, events.length, {
+          event: "state:mapping_applied",
+          phase: "matcher",
+          from: "a2ui",
           to: "a2ui",
-          label: "Apply field/slot mapping",
+          label: "데이터 / 슬롯 맵핑",
           detail: typeof mappingCount(source) === "number" ? `mappings=${mappingCount(source)}` : matcherDetail(source),
           branch: "data",
-	          severity: "success",
-	          physicalEmitter: "main-agent",
-	          evidenceKind: "trace_derived",
-	          data: traceDerivedData(source, { traceStep: "mapping_applied" }),
-	        }));
-	      }
-	    }
-	    return events;
-	  }
+          severity: "success",
+          physicalEmitter: "main-agent",
+          evidenceKind: "trace_derived",
+          data: traceDerivedData(source, { traceStep: "mapping_applied" }),
+        }));
+      }
+    }
+    return events;
+  }
 
   if (status === "plan_validation") {
     const validation = recordValue(source.data.validation);
@@ -598,7 +635,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "matcher",
         from: "a2ui",
         to: "a2ui",
-        label: "Validate AI plan",
+        label: "슬롯 검증",
         detail: shortText(source.data.detail) ?? (ok ? "validator accepted returned plan" : "validator rejected returned plan"),
         branch: "data",
         severity: ok ? "success" : "warning",
@@ -617,7 +654,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         phase: "matcher",
         from: "a2ui",
         to: "a2ui",
-        label: "Apply field/slot mapping",
+        label: "데이터 / 슬롯 맵핑",
         detail: typeof count === "number" ? `mappings=${count}` : shortText(source.data.detail),
         branch: "data",
         severity: "success",
@@ -634,7 +671,7 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
       phase: "planning",
       from: "a2ui",
       to: "a2ui",
-      label: label || "Runtime state",
+      label: label || "런타임 상태",
       severity: "info",
       physicalEmitter: "main-agent",
       data: source.data,
@@ -656,7 +693,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
         phase: "surface",
         from: "main_agent",
         to: "chat",
-        label: "Return SurfaceEnvelope",
+        label: "A2UI 화면 반환",
         detail: surfaceDetail(source),
         branch: "matched",
         severity: "success",
@@ -676,7 +713,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
           phase: "general_chat",
           from: "llm",
           to: "main_agent",
-          label: "Text answer",
+          label: "텍스트 답변 생성",
           detail: shortText(source.data.text ?? source.data.delta),
           branch,
           severity: "success",
@@ -688,7 +725,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
           phase: "general_chat",
           from: "main_agent",
           to: "chat",
-          label: "Stream to chat",
+          label: "채팅으로 전송",
           detail: shortText(source.data.text ?? source.data.delta),
           branch,
           severity: "success",
@@ -703,7 +740,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
         phase: isMatchedSummary ? "surface" : "text_fallback",
         from: "main_agent",
         to: "chat",
-        label: isMatchedSummary ? "Return text summary" : "Return fallback text",
+        label: isMatchedSummary ? "텍스트 요약 반환" : "대체 텍스트 반환",
         detail: shortText(source.data.text ?? source.data.delta),
         branch,
         severity: branch === "no_template" ? "warning" : "success",
@@ -720,7 +757,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
         phase: "error",
         from: "main_agent",
         to: "chat",
-        label: "Runtime error",
+        label: "런타임 오류",
         detail: [shortText(source.data.message), shortText(source.data.details)].filter(Boolean).join(" | "),
         branch: "error",
         severity: "error",
@@ -738,7 +775,7 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
         phase: "done",
         from: branch === "error" ? "main_agent" : undefined,
         to: branch === "error" ? "chat" : undefined,
-        label: branch === "matched" ? "Completed with surface" : branch === "error" ? "Completed with error" : "Completed with text",
+        label: branch === "matched" ? "화면 응답 완료" : branch === "error" ? "오류로 완료" : "텍스트 응답 완료",
         detail: doneDetail(source),
         branch,
         severity: branch === "error" ? "error" : branch === "matched" ? "success" : "info",

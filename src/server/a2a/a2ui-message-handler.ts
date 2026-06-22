@@ -364,12 +364,12 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string, onProgre
   let dataIntegrity = buildDataIntegrity(rawData, sourceTool);
 
   try {
-	    const plan = await planA2UISurfaceWithAI({
-	      query,
-	      apiId,
-	      rawData,
-	      onProgress,
-	    });
+      const plan = await planA2UISurfaceWithAI({
+        query,
+        apiId,
+        rawData,
+        onProgress,
+      });
     sourceTool = withPlanningMetadata(sourceTool, apiId, plan.trace);
     dataIntegrity = buildDataIntegrity(rawData, sourceTool);
 
@@ -404,7 +404,8 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string, onProgre
         trace: [
           "source:raw-business-api",
           "planner:source-preview",
-          "planner:ai_surface_plan",
+          "planner:template_selection",
+          "planner:slot_mapping",
           `planner:score:${plan.score}`,
           `planner:selected:${plan.templateId}`,
           ...(plan.candidates.filter((candidate) => candidate.rejected).map((candidate) => `candidate-rejected:${candidate.templateId}:${candidate.rejectionReason}`)),

@@ -94,6 +94,10 @@ export type AiSurfacePlanDemoTrace = {
   sourceArrayPath?: string;
   sourceFieldPaths: string[];
   candidateEvaluations: A2UICandidateTrace[];
+  templateSelection?: Record<string, unknown>;
+  slotMapping?: Record<string, unknown>;
+  fieldMappings?: Record<string, unknown>[];
+  slotMappings?: Record<string, unknown>[];
   validation: {
     ok: boolean;
     errors: string[];
@@ -696,17 +700,63 @@ function planDisplayData(source: unknown, scenario: DataBoundaryScenario, select
     });
   const displayData = { items, total: extracted.rowCount, page: extracted.page ?? 1, pageSize: extracted.pageSize ?? items.length };
   const displayFingerprint = fingerprint(displayData);
+  const fieldMappings = Array.from(new Map(
+    rules
+      .filter((rule) => rule.sourceField !== "(default)")
+      .map((rule) => [
+        `${rule.targetField}:${rule.sourceField}`,
+        {
+          targetField: rule.targetField,
+          sourcePath: `${extracted.arrayPath ?? "items"}[].${rule.sourceField}`,
+          transform: rule.transform.replace(/^ai_/, ""),
+          reason: "demo AI slot mapper inferred this field binding",
+        },
+      ]),
+  ).values());
+  const slotForTarget = (targetField: string) => {
+    if (targetField === "name") return "items[].title";
+    if (["isOnline", "isRunning", "hasAlarm", "needsInspection", "isReserved"].includes(targetField)) return "items[].statusFlags";
+    if (/^(telemetry_|metric_)/i.test(targetField)) return "items[].metrics";
+    return undefined;
+  };
+  const slotMappings = fieldMappings
+    .map((mapping) => {
+      const slot = slotForTarget(String(mapping.targetField));
+      return slot
+        ? {
+            templateId: selectedTemplateId,
+            slot,
+            sourcePath: mapping.sourcePath,
+            targetField: mapping.targetField,
+            transform: mapping.transform,
+            reason: "demo AI slot mapper bound this field to the selected template slot",
+          }
+        : undefined;
+    })
+    .filter((mapping): mapping is NonNullable<typeof mapping> => Boolean(mapping));
   return {
     displayData,
     trace: {
       applied: rules.length > 0,
       strategy: "ai_surface_planner",
-      promptVersion: "2026-06-21.a2ui-surface-plan.v1",
+      promptVersion: "2026-06-22.a2ui-two-stage-surface-plan.v1",
       model: "mock-a2ui-surface-planner",
       selectedTemplateId,
       sourceArrayPath: extracted.arrayPath ?? "items",
       sourceFieldPaths,
       candidateEvaluations: candidates,
+      templateSelection: {
+        selectedTemplateId,
+        reason: "Demo selector chose the template from source profile and registered template contract.",
+        candidateNotes: candidates,
+      },
+      slotMapping: {
+        fieldMappings,
+        slotMappings,
+        reason: "Demo mapper generated slot bindings for the selected template.",
+      },
+      fieldMappings,
+      slotMappings,
       validation: {
         ok: true,
         errors: [],
@@ -1045,7 +1095,7 @@ export function buildDataBoundaryScenarioTrace(id: DataBoundaryScenarioId): Data
     meta: {
       registryVersion: 2,
       decisionReason: renderPlan.reason,
-      trace: ["source:fingerprint", "planner:source-preview", "planner:ai_surface_plan", `planner:score:${score}`, "binding:renderer-payload"],
+      trace: ["source:fingerprint", "planner:source-preview", "planner:template_selection", "planner:slot_mapping", `planner:score:${score}`, "binding:renderer-payload"],
       strategy: "ai_surface_planner",
       score,
       candidates: renderPlan.candidates,
@@ -1135,7 +1185,21 @@ function eventData(trace: DataBoundaryScenarioTrace, step: string): Record<strin
       score: trace.renderPlan.score,
       candidates: trace.renderPlan.candidates,
       candidateCount: trace.renderPlan.candidates?.length,
-      mapping: trace.renderPlan.mapping,
+      templateSelection: trace.aiSurfacePlanTrace.templateSelection,
+      aiSurfacePlanTrace: trace.aiSurfacePlanTrace,
+    };
+  }
+  if (step === "slot_mapping") {
+    return {
+      mode: "slot_mapping_ready",
+      templateId: trace.templateContract.componentId,
+      strategy: trace.renderPlan.strategy,
+      score: trace.renderPlan.score,
+      fieldMappingCount: trace.aiSurfacePlanTrace.fieldMappings?.length ?? trace.aiSurfacePlanTrace.rules.length,
+      slotMappingCount: trace.aiSurfacePlanTrace.slotMappings?.length ?? trace.mappingComparison.length,
+      slotMapping: trace.aiSurfacePlanTrace.slotMapping,
+      fieldMappings: trace.aiSurfacePlanTrace.fieldMappings ?? trace.aiSurfacePlanTrace.rules,
+      slotMappings: trace.aiSurfacePlanTrace.slotMappings,
       fieldMappingComparison: trace.mappingComparison,
       aiSurfacePlanTrace: trace.aiSurfacePlanTrace,
     };
@@ -1149,7 +1213,8 @@ function eventData(trace: DataBoundaryScenarioTrace, step: string): Record<strin
   }
   if (step === "mapping_applied") {
     return {
-      fieldMappings: trace.aiSurfacePlanTrace.rules,
+      fieldMappings: trace.aiSurfacePlanTrace.fieldMappings ?? trace.aiSurfacePlanTrace.rules,
+      slotMappings: trace.aiSurfacePlanTrace.slotMappings,
       beforeRows: trace.aiSurfacePlanTrace.beforeRows,
       afterRows: trace.aiSurfacePlanTrace.afterRows,
     };
@@ -1176,24 +1241,26 @@ export function dataBoundaryFlowEvents(trace: DataBoundaryScenarioTrace): AgentF
     physicalEmitter: "main-agent" as const,
   };
   return [
-    { ...base, id: `${turnId}-request`, event: "request_start", phase: "request", from: "chat", to: "next", label: "POST /api/chat", detail: trace.query },
-    { ...base, id: `${turnId}-bridge`, event: "response_open", phase: "bridge", from: "next", to: "main_agent", label: "Open /chat/stream", detail: "registry=v2" },
-    { ...base, id: `${turnId}-planning`, event: "state:planning", phase: "planning", from: "main_agent", to: "main_agent", label: "Plan chat turn", detail: "장비 요청 해석" },
-    { ...base, id: `${turnId}-intent`, event: "state:intent", phase: "intent", from: "main_agent", to: "llm", label: "Classify as data task", detail: `apiId=${trace.apiId}`, branch: "data" },
-    { ...base, id: `${turnId}-intent-result`, event: "state:intent_result", phase: "intent", from: "llm", to: "main_agent", label: "Return selected business intent", detail: `apiId=${trace.apiId}`, branch: "data" },
-    { ...base, id: `${turnId}-tool-selected`, event: "state:business_tool_selected", phase: "intent", from: "main_agent", to: "main_agent", label: "Choose business API tool", detail: trace.businessToolName, branch: "data" },
-    { ...base, id: `${turnId}-tool-call`, event: "state:business_tool_call", phase: "data_loaded", from: "main_agent", to: "business_db", label: "Call business API tool", detail: `${trace.businessToolName} -> ${trace.apiRoute}`, branch: "data" },
-    { ...base, id: `${turnId}-tool-result`, event: "state:business_tool_result", phase: "data_loaded", from: "business_db", to: "main_agent", label: "Business tool result", detail: `rows=${trace.sourceFingerprint.rowCount} | hash=${trace.sourceFingerprint.dataHash}`, branch: "data", data: eventData(trace, "business_tool_result") },
-    { ...base, id: `${turnId}-a2ui-call`, event: "state:a2ui_tool_call", phase: "registry_loaded", from: "main_agent", to: "a2ui", label: "POST /api/a2a/message:send", detail: "raw data payload", branch: "data", data: { a2uiRenderPayload: trace.a2uiRenderPayload } },
-    { ...base, id: `${turnId}-profile`, event: "state:source_preview", phase: "profile", from: "a2ui", to: "a2ui", label: "Build source preview", detail: `preview=${trace.sampleDataPreview.sampleSize}/${trace.sampleDataPreview.rowCount}`, branch: "data", data: eventData(trace, "source_preview") },
-    { ...base, id: `${turnId}-registry`, event: "state:template_contracts", phase: "registry_loaded", from: "a2ui", to: "registry", label: "Load template contracts", detail: trace.expectedTemplateId, branch: "data" },
-    { ...base, id: `${turnId}-registry-loaded`, event: "state:registry_loaded", phase: "registry_loaded", from: "registry", to: "a2ui", label: "Template contracts loaded", detail: `templates=${trace.renderPlan.candidates?.length ?? 0}`, branch: "data" },
-    { ...base, id: `${turnId}-planner-request`, event: "state:matcher_request", phase: "matcher", from: "a2ui", to: "llm", label: "AI Surface Planner", detail: `candidates=${trace.renderPlan.candidates?.length ?? 0}`, branch: "data" },
-    { ...base, id: `${turnId}-planner`, event: "state:ai_surface_plan", phase: "matcher", from: "llm", to: "a2ui", label: "Return surface plan", detail: `template=${trace.templateContract.componentId} | score=${trace.renderPlan.score}`, branch: "data", data: eventData(trace, "ai_surface_plan") },
-    { ...base, id: `${turnId}-validation`, event: "state:plan_validation", phase: "matcher", from: "a2ui", to: "a2ui", label: "Validate AI plan", detail: `ok=${trace.aiSurfacePlanTrace.validation.ok}`, branch: "data", data: eventData(trace, "plan_validation") },
-    { ...base, id: `${turnId}-mapping`, event: "state:mapping_applied", phase: "matcher", from: "a2ui", to: "a2ui", label: "Apply field/slot mapping", detail: `mappings=${trace.renderPlan.mapping?.mappings.length ?? 0}`, branch: "data", data: eventData(trace, "mapping_applied") },
-    { ...base, id: `${turnId}-result`, event: "state:a2ui_tool_result", phase: "matcher", from: "a2ui", to: "main_agent", label: "Return trace + render decision", detail: `integrity=${trace.integrity.matched}`, branch: "data", data: eventData(trace, "a2ui_tool_result") },
-    { ...base, id: `${turnId}-text`, event: "text", phase: "surface", from: "main_agent", to: "chat", label: "Return text summary", detail: "등록된 A2UI 템플릿으로 정리했습니다.", branch: "matched" },
-    { ...base, id: `${turnId}-surface`, event: "surface", phase: "surface", from: "main_agent", to: "chat", label: "Return SurfaceEnvelope", detail: trace.templateContract.componentId, branch: "matched", data: { surface: trace.surfaceEnvelope } },
+    { ...base, id: `${turnId}-request`, event: "request_start", phase: "request", from: "chat", to: "next", label: "채팅 요청 수신", detail: trace.query },
+    { ...base, id: `${turnId}-bridge`, event: "response_open", phase: "bridge", from: "next", to: "main_agent", label: "채팅 스트림 열기", detail: "registry=v2" },
+    { ...base, id: `${turnId}-planning`, event: "state:planning", phase: "planning", from: "main_agent", to: "main_agent", label: "대화 처리 계획", detail: "장비 요청 해석" },
+    { ...base, id: `${turnId}-intent`, event: "state:intent", phase: "intent", from: "main_agent", to: "llm", label: "API 데이터 호출 판단", detail: `apiId=${trace.apiId}`, branch: "data" },
+    { ...base, id: `${turnId}-intent-result`, event: "state:intent_result", phase: "intent", from: "llm", to: "main_agent", label: "API 데이터 호출 여부반환", detail: `apiId=${trace.apiId}`, branch: "data" },
+    { ...base, id: `${turnId}-tool-selected`, event: "state:business_tool_selected", phase: "intent", from: "main_agent", to: "main_agent", label: "업무 API 도구 선택", detail: trace.businessToolName, branch: "data" },
+    { ...base, id: `${turnId}-tool-call`, event: "state:business_tool_call", phase: "data_loaded", from: "main_agent", to: "business_db", label: "업무 API 도구 호출", detail: `${trace.businessToolName} -> ${trace.apiRoute}`, branch: "data" },
+    { ...base, id: `${turnId}-tool-result`, event: "state:business_tool_result", phase: "data_loaded", from: "business_db", to: "main_agent", label: "업무 API 결과 반환", detail: `rows=${trace.sourceFingerprint.rowCount} | hash=${trace.sourceFingerprint.dataHash}`, branch: "data", data: eventData(trace, "business_tool_result") },
+    { ...base, id: `${turnId}-a2ui-call`, event: "state:a2ui_tool_call", phase: "registry_loaded", from: "main_agent", to: "a2ui", label: "A2A 렌더 요청 전송", detail: "raw data payload", branch: "data", data: { a2uiRenderPayload: trace.a2uiRenderPayload } },
+    { ...base, id: `${turnId}-profile`, event: "state:source_preview", phase: "profile", from: "a2ui", to: "a2ui", label: "A2UI 원천 미리보기 생성", detail: `preview=${trace.sampleDataPreview.sampleSize}/${trace.sampleDataPreview.rowCount}`, branch: "data", data: eventData(trace, "source_preview") },
+    { ...base, id: `${turnId}-registry`, event: "state:template_contracts", phase: "registry_loaded", from: "a2ui", to: "registry", label: "템플릿 계약 로드", detail: trace.expectedTemplateId, branch: "data" },
+    { ...base, id: `${turnId}-registry-loaded`, event: "state:registry_loaded", phase: "registry_loaded", from: "registry", to: "a2ui", label: "템플릿 계약 로드 완료", detail: `templates=${trace.renderPlan.candidates?.length ?? 0}`, branch: "data" },
+    { ...base, id: `${turnId}-planner-request`, event: "state:matcher_request", phase: "matcher", from: "a2ui", to: "llm", label: "템플릿 판단 요청", detail: `candidates=${trace.renderPlan.candidates?.length ?? 0}`, branch: "data" },
+    { ...base, id: `${turnId}-planner`, event: "state:ai_surface_plan", phase: "matcher", from: "llm", to: "a2ui", label: "판단 결과 반환", detail: `template=${trace.templateContract.componentId} | score=${trace.renderPlan.score}`, branch: "data", data: eventData(trace, "ai_surface_plan") },
+    { ...base, id: `${turnId}-slot-request`, event: "state:slot_mapping_request", phase: "matcher", from: "a2ui", to: "llm", label: "슬롯 생성 요청", detail: trace.templateContract.componentId, branch: "data", data: { mode: "slot_mapping", templateId: trace.templateContract.componentId, templateSelection: trace.aiSurfacePlanTrace.templateSelection } },
+    { ...base, id: `${turnId}-slot-plan`, event: "state:slot_mapping_plan", phase: "matcher", from: "llm", to: "a2ui", label: "슬롯 생성 결과 반환", detail: `slots=${trace.aiSurfacePlanTrace.slotMappings?.length ?? trace.mappingComparison.length}`, branch: "data", data: eventData(trace, "slot_mapping") },
+    { ...base, id: `${turnId}-validation`, event: "state:plan_validation", phase: "matcher", from: "a2ui", to: "a2ui", label: "슬롯 검증", detail: `ok=${trace.aiSurfacePlanTrace.validation.ok}`, branch: "data", data: eventData(trace, "plan_validation") },
+    { ...base, id: `${turnId}-mapping`, event: "state:mapping_applied", phase: "matcher", from: "a2ui", to: "a2ui", label: "데이터 / 슬롯 맵핑", detail: `mappings=${trace.renderPlan.mapping?.mappings.length ?? 0}`, branch: "data", data: eventData(trace, "mapping_applied") },
+    { ...base, id: `${turnId}-result`, event: "state:a2ui_tool_result", phase: "matcher", from: "a2ui", to: "main_agent", label: "트레이스/렌더 결정 반환", detail: `integrity=${trace.integrity.matched}`, branch: "data", data: eventData(trace, "a2ui_tool_result") },
+    { ...base, id: `${turnId}-text`, event: "text", phase: "surface", from: "main_agent", to: "chat", label: "텍스트 요약 반환", detail: "등록된 A2UI 템플릿으로 정리했습니다.", branch: "matched" },
+    { ...base, id: `${turnId}-surface`, event: "surface", phase: "surface", from: "main_agent", to: "chat", label: "A2UI 화면 반환", detail: trace.templateContract.componentId, branch: "matched", data: { surface: trace.surfaceEnvelope } },
   ];
 }

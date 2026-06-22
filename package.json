@@ -11,6 +11,7 @@
     "main-agent:dev": "node scripts/main-agent-dev.mjs",
     "main-agent:test": "node scripts/main-agent-test.mjs",
     "e2e:data-boundary": "node scripts/e2e-a2ui-data-boundary.mjs",
+    "e2e:sequence": "node scripts/e2e-a2ui-sequence.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
