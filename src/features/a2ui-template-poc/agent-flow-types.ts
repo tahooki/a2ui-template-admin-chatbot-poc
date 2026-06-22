@@ -5,7 +5,6 @@ export type AgentFlowActor =
   | "a2ui"
   | "llm"
   | "business_db"
-  | "a2ui_render_tool"
   | "registry";
 
 export type AgentFlowPhase =

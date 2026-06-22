@@ -1713,6 +1713,11 @@
   transform: none;
 }
 
+.sequencePacketRailBusy::after {
+  animation-duration: 1.05s, 1.05s;
+  animation-iteration-count: infinite, infinite;
+}
+
 .sequencePacketRail_data::after {
   background: #2563eb;
 }

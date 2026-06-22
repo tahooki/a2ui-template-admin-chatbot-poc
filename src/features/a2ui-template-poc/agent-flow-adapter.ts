@@ -386,48 +386,22 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
   }
 
   if (status === "a2ui_tool_selected") {
-    return [
-      newFlowEvent(source, 0, {
-        event: "state:a2ui_tool_selected",
-        phase: "registry_loaded",
-        from: "main_agent",
-        to: "main_agent",
-        label: "Choose a2ui_render tool",
-        detail: renderToolDetail(source) || label,
-        branch: "data",
-        severity: "info",
-        physicalEmitter: "main-agent",
-        data: source.data,
-      }),
-    ];
+    return [];
   }
 
   if (status === "a2ui_tool_call") {
     return [
       newFlowEvent(source, 0, {
-        event: "state:a2ui_tool_call",
+        event: "transport:a2a_send",
         phase: "registry_loaded",
         from: "main_agent",
-        to: "a2ui_render_tool",
-        label: "Invoke a2ui_render boundary",
-        detail: renderToolDetail(source) || label,
+        to: "a2ui",
+        label: "POST /api/a2a/message:send",
+        detail: renderToolDetail(source) || "raw business result render request",
         branch: "data",
         severity: "info",
         physicalEmitter: "main-agent",
         evidenceKind: "observed",
-        data: source.data,
-      }),
-      newFlowEvent(source, 1, {
-        event: "transport:a2a_send",
-        phase: "registry_loaded",
-        from: "a2ui_render_tool",
-        to: "a2ui",
-        label: "POST /api/a2a/message:send",
-        detail: "raw business result render request",
-        branch: "data",
-        severity: "info",
-        physicalEmitter: "main-agent",
-        evidenceKind: "inferred_transport",
         data: source.data,
       }),
     ];
@@ -442,21 +416,8 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         event: "transport:a2a_result",
         phase: "matcher",
         from: "a2ui",
-        to: "a2ui_render_tool",
-        label: isNoTemplate ? "Return trace + no-template result" : "Return trace + surface artifact",
-        detail,
-        branch: "data",
-        severity: isNoTemplate ? "warning" : "success",
-        physicalEmitter: "main-agent",
-        evidenceKind: "inferred_transport",
-        data: source.data,
-      }),
-      newFlowEvent(source, 1, {
-        event: "state:a2ui_tool_result",
-        phase: "matcher",
-        from: "a2ui_render_tool",
         to: "main_agent",
-        label: "Return A2UIRenderToolResult",
+        label: isNoTemplate ? "Return trace + no-template result" : "Return trace + surface artifact",
         detail,
         branch: "data",
         severity: isNoTemplate ? "warning" : "success",
@@ -556,15 +517,35 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
 	    ];
 	  }
 
-	  if (status === "matcher") {
-    if (!isLiveA2UIProgress(source) && eventSeen(existingEvents, "state:matcher")) return [];
-	    const events = [
+  if (status === "matcher") {
+    const mode = textValue(source.data.mode);
+    if (mode === "planning") {
+      if (eventSeen(existingEvents, "state:matcher_request")) return [];
+      return [
+        newFlowEvent(source, 0, {
+          event: "state:matcher_request",
+          phase: "matcher",
+          from: "a2ui",
+          to: "llm",
+          label: "AI Surface Planner",
+          detail: matcherDetail(source),
+          branch: "data",
+          severity: "info",
+          physicalEmitter: a2uiEmitter(source),
+          evidenceKind: a2uiEvidenceKind(source),
+          data: a2uiStepData(source, { traceStep: "ai_surface_plan_request" }),
+        }),
+      ];
+    }
+
+    if (!isLiveA2UIProgress(source) && eventSeen(existingEvents, "state:ai_surface_plan")) return [];
+    const events = [
       newFlowEvent(source, 0, {
-        event: "state:matcher",
+        event: "state:ai_surface_plan",
         phase: "matcher",
-        from: "a2ui",
+        from: "llm",
         to: "a2ui",
-        label: "AI Surface Planner",
+        label: "Return surface plan",
 	        detail: matcherDetail(source),
 	        branch: "data",
 	        severity: "info",
@@ -573,7 +554,6 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
 	        data: a2uiStepData(source, { traceStep: "ai_surface_plan" }),
 	      }),
 	    ];
-	    const mode = textValue(source.data.mode);
 	    if (mode === "render_surface" && !isLiveA2UIProgress(source)) {
 	      if (!eventSeen(existingEvents, "state:plan_validation")) {
 	        events.push(newFlowEvent(source, events.length, {

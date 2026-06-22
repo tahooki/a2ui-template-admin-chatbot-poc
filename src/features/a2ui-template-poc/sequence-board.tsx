@@ -77,10 +77,9 @@ const lanes: ActorLane[] = [
   { id: "chat", label: "Chat UI" },
   { id: "next", label: "Next /api/chat" },
   { id: "main_agent", label: "Main Agent" },
-  { id: "llm", label: "LLM" },
   { id: "business_db", label: "Business DB/API" },
-  { id: "a2ui_render_tool", label: "Python render boundary" },
   { id: "a2ui", label: "A2UI Agent" },
+  { id: "llm", label: "LLM" },
   { id: "registry", label: "A2UI Registry" },
 ];
 
@@ -166,23 +165,13 @@ const steps: SequenceStep[] = buildSequenceSteps([
     branch: "data",
   },
   {
-    id: "a2ui-tool-call",
-    phase: "registry_loaded",
-    events: ["state:a2ui_tool_selected", "state:a2ui_tool_call"],
-    from: "main_agent",
-    to: "a2ui_render_tool",
-    label: "Invoke a2ui_render boundary",
-    branch: "data",
-  },
-  {
     id: "a2a-send",
     phase: "registry_loaded",
-    events: ["transport:a2a_send"],
-    from: "a2ui_render_tool",
+    events: ["state:a2ui_tool_call", "transport:a2a_send"],
+    from: "main_agent",
     to: "a2ui",
     label: "POST /api/a2a/message:send",
     branch: "data",
-    a2uiSubstep: true,
   },
   {
     id: "a2ui-source-preview",
@@ -212,29 +201,19 @@ const steps: SequenceStep[] = buildSequenceSteps([
     label: "Template contracts loaded",
     branch: "data",
   },
-  { id: "matcher", phase: "matcher", events: ["state:ai_surface_plan", "state:matcher"], from: "a2ui", to: "a2ui", label: "AI Surface Planner", branch: "data", a2uiSubstep: true },
+  { id: "matcher", phase: "matcher", events: ["state:matcher_request"], from: "a2ui", to: "llm", label: "AI Surface Planner", branch: "data", a2uiSubstep: true },
+  { id: "matcher-result", phase: "matcher", events: ["state:ai_surface_plan"], from: "llm", to: "a2ui", label: "Return surface plan", branch: "data", a2uiSubstep: true },
   { id: "plan-validation", phase: "matcher", events: ["state:plan_validation"], from: "a2ui", to: "a2ui", label: "Validate AI plan", branch: "data", a2uiSubstep: true },
   { id: "mapping-applied", phase: "matcher", events: ["state:mapping_applied"], from: "a2ui", to: "a2ui", label: "Apply field/slot mapping", branch: "data", a2uiSubstep: true },
   {
     id: "a2a-result",
     phase: "matcher",
-    events: ["transport:a2a_result"],
+    events: ["transport:a2a_result", "state:a2ui_tool_result"],
     from: "a2ui",
-    to: "a2ui_render_tool",
+    to: "main_agent",
     label: "Return trace + render decision",
     branch: "data",
     a2uiSubstep: true,
-  },
-  {
-    id: "a2ui-tool-result",
-    phase: "matcher",
-    events: ["state:a2ui_tool_result"],
-    from: "a2ui_render_tool",
-    to: "main_agent",
-    label: "Return A2UIRenderToolResult",
-    branch: "data",
-    a2uiSubstep: true,
-    gapBefore: "selfLoop",
   },
   {
     id: "fallback-text",
@@ -287,7 +266,7 @@ function branchBlockFromSpec(spec: BranchBlockSpec): BranchBlock {
 }
 
 const branchBlockSpecs: BranchBlockSpec[] = [
-  { id: "data", label: "A2UI render path", firstStepId: "business-tool-call", lastStepId: "a2ui-tool-result" },
+  { id: "data", label: "A2UI render path", firstStepId: "business-tool-call", lastStepId: "a2a-result" },
   { id: "no_template", label: "Text fallback output", firstStepId: "fallback-text", lastStepId: "fallback-text" },
   { id: "matched", label: "Selected A2UI output", firstStepId: "surface", lastStepId: "surface" },
 ];
@@ -522,6 +501,10 @@ function packetStepForActiveEvent(active: AgentFlowEvent | undefined, events: Ag
   const doneStep = stepForDoneEvent(active, visibleSteps);
   if (!active || !doneStep) return undefined;
   return events.findLast((event) => event.id !== active.id && event.turnId === active.turnId && eventMatchesStep(doneStep, event)) ? doneStep : undefined;
+}
+
+function isBusyProgressEvent(event?: AgentFlowEvent) {
+  return Boolean(event?.event === "state:matcher_request" && event.data?.mode === "planning");
 }
 
 function cameraStateForScroll(target: string, left: number, top: number, zoom: number, mode: CameraState["mode"]): CameraState {
@@ -1051,6 +1034,7 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
   const completed = useMemo(() => completedStepSet(events, visibleSteps), [events, visibleSteps]);
   const activeStep = visibleSteps.find((step) => eventMatchesStep(step, active));
   const packetSteps = packetReplay ? visibleSteps.filter((step) => step.id === packetReplay.stepId) : [];
+  const busyPacketStep = isBusyProgressEvent(active) ? activeStep : undefined;
   const focusStep = activeStep ?? stepForDoneEvent(active, visibleSteps);
   const visibleEvidenceLabels = useMemo(() => evidenceLabels(dataBoundaryTrace, events), [dataBoundaryTrace, events]);
   const evidenceModalLabel = visibleEvidenceLabels.find((label) => label.id === evidenceModalId);
@@ -1333,8 +1317,19 @@ export function SequenceBoard({ events, actorLabels, showA2UISubsteps = true, da
             })}
 
             {packetSteps.map((step) => (
-              <span className={packetRailClass(step)} key={`${step.id}-packet`} style={packetRailStyle(step)} />
+              <span
+                className={`${packetRailClass(step)} ${busyPacketStep?.id === step.id ? styles.sequencePacketRailBusy : ""}`}
+                key={`${step.id}-packet`}
+                style={packetRailStyle(step)}
+              />
             ))}
+            {busyPacketStep && !packetSteps.some((step) => step.id === busyPacketStep.id) ? (
+              <span
+                className={`${packetRailClass(busyPacketStep)} ${styles.sequencePacketRailBusy}`}
+                key={`${busyPacketStep.id}-busy-packet`}
+                style={packetRailStyle(busyPacketStep)}
+              />
+            ) : null}
           </div>
         </div>
       </div>
