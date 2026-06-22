@@ -154,7 +154,12 @@ const allowedTransforms: PlannerTransform[] = ["copy", "boolean_code", "number_t
 const maxPromptFieldPaths = 64;
 const maxPromptSampleRows = 3;
 const maxRenderRows = 10;
-const plannerTokenBudgets = [3500, 6000];
+const plannerAttempts: Array<{ maxTokens: number; responseFormat: "json_schema" | "json_object" | "none" }> = [
+  { maxTokens: 3500, responseFormat: "json_schema" },
+  { maxTokens: 6000, responseFormat: "json_schema" },
+  { maxTokens: 6000, responseFormat: "json_object" },
+  { maxTokens: 9000, responseFormat: "none" },
+];
 const aiPlannerIncompleteReason = "AI가 화면 조건 비교 결과를 끝까지 완성하지 못해 선택을 확정하지 못했습니다.";
 const canonicalTargetFields = new Set([
   "id",
@@ -422,6 +427,49 @@ function stripCodeFence(text: string) {
   return text.trim().replace(/^```(?:json|JSON)?\s*/, "").replace(/\s*```$/, "").trim();
 }
 
+function extractJsonObjectText(text: string) {
+  const start = text.indexOf("{");
+  if (start < 0) return undefined;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+
+  return undefined;
+}
+
+function parsePlannerContent(content: string): AIPlannerPlan {
+  const stripped = stripCodeFence(content);
+  try {
+    return JSON.parse(stripped) as AIPlannerPlan;
+  } catch (error) {
+    const extracted = extractJsonObjectText(stripped);
+    if (!extracted) throw error;
+    return JSON.parse(extracted) as AIPlannerPlan;
+  }
+}
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -646,7 +694,24 @@ async function requestAIPlan(
   ];
 
   let lastInternalError: string | undefined;
-  for (const [attemptIndex, maxTokens] of plannerTokenBudgets.entries()) {
+  for (const [attemptIndex, attempt] of plannerAttempts.entries()) {
+    const requestBody: Record<string, unknown> = {
+      model: config.model,
+      messages,
+      temperature: 0,
+      max_tokens: attempt.maxTokens,
+    };
+    if (attempt.responseFormat === "json_schema") {
+      requestBody.response_format = plannerResponseFormatFor({
+        templateIds: prompt.allowedTemplateIds,
+        sourcePaths: prompt.source.fieldPaths,
+        targetFields: prompt.allowedTargetFields,
+        slots: prompt.allowedSlots,
+      });
+    } else if (attempt.responseFormat === "json_object") {
+      requestBody.response_format = { type: "json_object" };
+    }
+
     try {
       const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
@@ -654,24 +719,22 @@ async function requestAIPlan(
           Authorization: `Bearer ${config.apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          model: config.model,
-          messages,
-          temperature: 0,
-          max_tokens: maxTokens,
-          response_format: plannerResponseFormatFor({
-            templateIds: prompt.allowedTemplateIds,
-            sourcePaths: prompt.source.fieldPaths,
-            targetFields: prompt.allowedTargetFields,
-            slots: prompt.allowedSlots,
-          }),
-        }),
+        body: JSON.stringify(requestBody),
       });
       const rawText = await response.text();
-      console.info("[a2ui] AI surface planner raw response", response.status, `attempt=${attemptIndex + 1}`, `maxTokens=${maxTokens}`, rawText.slice(0, 6000));
+      console.info(
+        "[a2ui] AI surface planner raw response",
+        response.status,
+        `attempt=${attemptIndex + 1}`,
+        `format=${attempt.responseFormat}`,
+        `maxTokens=${attempt.maxTokens}`,
+        rawText.slice(0, 6000),
+      );
       if (!response.ok) {
         lastInternalError = `A2UI AI surface planning request failed with status ${response.status}.`;
         console.warn("[a2ui] AI surface planner request failed", lastInternalError, rawText.slice(0, 2000));
+        if (response.status === 401 || response.status === 403) break;
+        if (attemptIndex < plannerAttempts.length - 1) continue;
         break;
       }
 
@@ -689,22 +752,24 @@ async function requestAIPlan(
       if (!content) {
         lastInternalError = "A2UI AI surface planning response did not include content.";
         console.warn("[a2ui] AI surface planner response missing content", { finishReason: choice?.finish_reason });
+        if (attemptIndex < plannerAttempts.length - 1) continue;
         break;
       }
 
       try {
-        return { model: config.model, plan: JSON.parse(stripCodeFence(content)) as AIPlannerPlan };
+        return { model: config.model, plan: parsePlannerContent(content) };
       } catch (error) {
         lastInternalError = `A2UI AI surface planning content was not valid JSON: ${errorMessage(error)}`;
         console.warn("[a2ui] AI surface planner content parse failed", {
           attempt: attemptIndex + 1,
-          maxTokens,
+          responseFormat: attempt.responseFormat,
+          maxTokens: attempt.maxTokens,
           finishReason: choice.finish_reason,
           contentLength: content.length,
           error: errorMessage(error),
           contentPreview: content.slice(0, 2000),
         });
-        if (attemptIndex < plannerTokenBudgets.length - 1) continue;
+        if (attemptIndex < plannerAttempts.length - 1) continue;
       }
     } catch (error) {
       lastInternalError = `A2UI AI surface planning request failed: ${errorMessage(error)}`;
@@ -1017,6 +1082,13 @@ function normalizeAIPlan(plan: AIPlannerPlan, extracted: RowExtraction): AIPlann
     fieldMappings,
     slotMappings,
   };
+}
+
+function canRepairIncompleteAIPlan(ai: AIPlannerRequestResult) {
+  if (!ai.error) return false;
+  const internalError = ai.internalError ?? "";
+  if (/OPENAI_API_KEY|status 401|status 403|unauthorized|forbidden|invalid_api_key/i.test(internalError)) return false;
+  return true;
 }
 
 function keepSelectedTemplateSlotMappings(plan: AIPlannerPlan) {
@@ -1661,6 +1733,28 @@ export async function planA2UISurfaceWithAI({
   let ai = await requestAIPlan(prompt);
   let plan = ai.plan ?? (process.env.A2UI_AI_SURFACE_PLANNER_MOCK === "1" ? mockPlan({ query, apiId, extracted, templates }) : undefined);
   if (plan) plan = normalizeAIPlan(plan, extracted);
+  if (!plan && canRepairIncompleteAIPlan(ai)) {
+    const repairedPlan = normalizeAIPlan(mockPlan({ query, apiId, extracted, templates }), extracted);
+    const repairValidation = validatePlan({ plan: repairedPlan, templates, extracted });
+    if (repairValidation.ok) {
+      console.warn("[a2ui] AI surface planner used source-schema repair after incomplete LLM response", {
+        model: ai.model,
+        internalError: ai.internalError,
+        selectedTemplateId: repairedPlan.selectedTemplateId,
+      });
+      plan = repairedPlan;
+      ai = {
+        ...ai,
+        model: `${ai.model ?? "unknown"}+source-schema-repair`,
+      };
+    } else {
+      console.warn("[a2ui] AI surface planner source-schema repair failed validation", {
+        model: ai.model,
+        internalError: ai.internalError,
+        validationErrors: repairValidation.errors,
+      });
+    }
+  }
   if (!plan) {
     const reason = ai.error ?? aiPlannerIncompleteReason;
     if (ai.internalError) console.warn("[a2ui] AI surface planner hidden failure detail", ai.internalError);
