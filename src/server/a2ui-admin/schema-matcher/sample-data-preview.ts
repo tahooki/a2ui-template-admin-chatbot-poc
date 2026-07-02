@@ -1,4 +1,5 @@
 import type { DerivedSchemaShape } from "./derived-schema-types";
+import { preprocessUnknownApiResponse, rowsFromObservedSource } from "./unknown-api-response-preprocessor";
 
 export type SampleDataPreview = {
   sourceId: string;
@@ -17,10 +18,6 @@ const sensitiveKeyPattern = /(secret|token|password|authorization|cookie|phone|e
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
-}
-
-function numberFrom(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function setPath(value: unknown, path: string, nextValue: unknown): unknown {
@@ -45,49 +42,19 @@ function rowsFromData(data: unknown): {
   primaryArrayPath?: string;
   rowCount: number;
 } {
-  if (Array.isArray(data)) {
-    const objectRows = data.filter((item) => Boolean(item && typeof item === "object" && !Array.isArray(item)));
+  const observedSource = preprocessUnknownApiResponse({ rawData: data });
+  const selected = observedSource.selectedDataset;
+  if (selected) {
+    const rawRows = selected.kind === "single_object" ? rowsFromObservedSource(data, observedSource) : (selected.rawPath === "$" ? data : selected.rawPath.split(".").reduce<unknown>((current, key) => {
+      const record = asRecord(current);
+      return record ? record[key] : undefined;
+    }, data));
+    const rows = Array.isArray(rawRows) ? rawRows : rowsFromObservedSource(data, observedSource);
     return {
-      rows: data,
-      shape: objectRows.length === data.length ? "array<object>" : "array<primitive>",
-      rowCount: data.length,
-    };
-  }
-
-  if (data && typeof data === "object") {
-    const record = data as Record<string, unknown>;
-    const candidates: Array<{ path: string; parent: Record<string, unknown>; key: string }> = [
-      { path: "items", parent: record, key: "items" },
-      { path: "rows", parent: record, key: "rows" },
-    ];
-    for (const parentKey of ["result", "data", "payload"]) {
-      const parent = asRecord(record[parentKey]);
-      if (!parent) continue;
-      for (const key of ["items", "rows", "list"]) {
-        candidates.push({ path: `${parentKey}.${key}`, parent, key });
-      }
-    }
-
-    for (const candidate of candidates) {
-      if (!Array.isArray(candidate.parent[candidate.key])) continue;
-      const rows = candidate.parent[candidate.key] as unknown[];
-      return {
-        rows,
-        shape: "array<object>",
-        primaryArrayPath: candidate.path,
-        rowCount:
-          numberFrom(candidate.parent.total) ??
-          numberFrom(candidate.parent.totalCount) ??
-          numberFrom(record.total) ??
-          numberFrom(record.totalCount) ??
-          rows.length,
-      };
-    }
-
-    return {
-      rows: [record],
-      shape: "object",
-      rowCount: 1,
+      rows,
+      shape: selected.kind === "single_object" ? "object" : selected.itemType === "object" ? "array<object>" : "array<primitive>",
+      primaryArrayPath: selected.kind === "nested_array" ? selected.plannerPath : undefined,
+      rowCount: selected.rowCount,
     };
   }
 

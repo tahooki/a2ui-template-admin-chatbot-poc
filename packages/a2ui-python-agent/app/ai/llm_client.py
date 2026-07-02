@@ -15,6 +15,11 @@ EquipmentApiId = Literal[
     "equipment-status",
     "equipment-status-wide-columns",
     "equipment-status-large-rows",
+    "work-items",
+    "resources",
+    "status-checks",
+    "summary",
+    "hierarchy",
 ]
 
 EQUIPMENT_API_IDS: tuple[EquipmentApiId, ...] = (
@@ -22,6 +27,25 @@ EQUIPMENT_API_IDS: tuple[EquipmentApiId, ...] = (
     "equipment-status",
     "equipment-status-wide-columns",
     "equipment-status-large-rows",
+    "work-items",
+    "resources",
+    "status-checks",
+    "summary",
+    "hierarchy",
+)
+
+API_ID_RESPONSE_HINT = "|".join([*EQUIPMENT_API_IDS, "null"])
+
+EXPLICIT_API_ALIASES: tuple[tuple[EquipmentApiId, tuple[str, ...]], ...] = (
+    ("equipment-catalog", ("equipment-catalog", "장비 카탈로그 api", "장비 목록 api")),
+    ("equipment-status-wide-columns", ("equipment-status-wide-columns", "컬럼 많은 장비 상태 api", "wide columns api")),
+    ("equipment-status-large-rows", ("equipment-status-large-rows", "데이터 많은 장비 상태 api", "large rows api")),
+    ("equipment-status", ("equipment-status api", "장비 상태 api")),
+    ("work-items", ("work-items", "work items", "작업 항목 api", "워크 아이템 api")),
+    ("resources", ("resources api", "resource api", "리소스 api")),
+    ("status-checks", ("status-checks", "status checks", "상태 체크 api")),
+    ("summary", ("summary api", "요약 api", "지표 api")),
+    ("hierarchy", ("hierarchy api", "계층 api", "트리 api")),
 )
 
 
@@ -136,6 +160,14 @@ def _compact_error_text(value: str, limit: int = 700) -> str:
 def _compact_log_text(value: str, limit: int = 5000) -> str:
     compacted = " ".join(value.split())
     return compacted[:limit]
+
+
+def _explicit_api_id_from_message(message: str) -> EquipmentApiId | None:
+    normalized = re.sub(r"\s+", " ", message.strip().lower())
+    for api_id, aliases in EXPLICIT_API_ALIASES:
+        if any(alias in normalized for alias in aliases):
+            return api_id
+    return None
 
 
 async def _chat_completion(
@@ -263,6 +295,14 @@ async def classify_equipment_intent_with_llm(
     message: str,
     history: list[dict[str, Any]] | None = None,
 ) -> EquipmentIntentClassification | None:
+    explicit_api_id = _explicit_api_id_from_message(message)
+    if explicit_api_id:
+        return {
+            "api_id": explicit_api_id,
+            "confidence": 1.0,
+            "reason": "explicit_api_name",
+        }
+
     content = await _chat_completion(
         [
             {
@@ -274,7 +314,12 @@ async def classify_equipment_intent_with_llm(
                     "online/running/alarm/inspection/reservation booleans, or operational state. "
                     "Use equipment-status-wide-columns when the user asks for a wide-column or many-column status test. "
                     "Use equipment-status-large-rows when the user asks for a large-data, many-row, or high-row-count status test. "
-                    "For greetings, small talk, unclear requests, or non-equipment requests, return apiId as null."
+                    "Use work-items for work item, task, progress, queue, timeline, priority, assignee, or due-date demo data. "
+                    "Use resources for resource, card, image, media, document, or dataset demo data. "
+                    "Use status-checks for status check, health check, boolean flag, matrix, or state table demo data. "
+                    "Use summary for KPI, metric, numeric summary, statistics, or stat card demo data. "
+                    "Use hierarchy for hierarchy, tree, structure, parent-child, or children demo data. "
+                    "For greetings, small talk, unclear requests, or unrelated requests, return apiId as null."
                 ),
             },
             {
@@ -282,12 +327,11 @@ async def classify_equipment_intent_with_llm(
                 "content": (
                     f"Recent history: {_compact_json((history or [])[-6:], 2000)}\n"
                     f"User message: {message}\n"
-                    'Respond as {"apiId":"equipment-catalog|equipment-status|equipment-status-wide-columns|equipment-status-large-rows|null","confidence":0.0,"reason":"short"}'
+                    f'Respond as {{"apiId":"{API_ID_RESPONSE_HINT}","confidence":0.0,"reason":"short"}}'
                 ),
             },
         ],
         stage="intent_classification",
-        response_format={"type": "json_object"},
         max_tokens=220,
     )
 

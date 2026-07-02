@@ -40,6 +40,60 @@ function slotForRole(role: A2UIRole, surfaceConfig: A2UIComponentSurfaceConfig):
     };
   }
 
+  if (role === "progress") {
+    return {
+      slot: "items[].progress",
+      acceptsTypes: ["number"],
+      acceptsRoles: ["progress", "metric"],
+      required: true,
+    };
+  }
+
+  if (role === "priority") {
+    return {
+      slot: "items[].priority",
+      acceptsTypes: ["string", "number"],
+      acceptsRoles: ["priority", "status"],
+      required: true,
+    };
+  }
+
+  if (role === "assignee") {
+    return {
+      slot: "items[].assignee",
+      acceptsTypes: ["string"],
+      acceptsRoles: ["assignee", "actor", "label"],
+      required: true,
+    };
+  }
+
+  if (role === "dueAt") {
+    return {
+      slot: "items[].dueAt",
+      acceptsTypes: ["date", "datetime", "string"],
+      acceptsRoles: ["dueAt", "time", "updatedAt"],
+      required: true,
+    };
+  }
+
+  if (role === "children") {
+    return {
+      slot: "nodes[].children",
+      acceptsTypes: ["array"],
+      acceptsRoles: ["children"],
+      required: true,
+    };
+  }
+
+  if (role === "parentId") {
+    return {
+      slot: "nodes[].parentId",
+      acceptsTypes: ["string", "number"],
+      acceptsRoles: ["parentId"],
+      required: true,
+    };
+  }
+
   if (role === "content" || role === "description") {
     return {
       slot: "cards[].description",
@@ -63,6 +117,13 @@ function capabilityHints(schemaSpec: A2UIComponentSchemaSpec) {
     hasBooleans: schemaSpec.requiredRoles.includes("booleanFlag") || Boolean(schemaSpec.minBooleanFields),
     hasStatus: schemaSpec.requiredRoles.includes("status") || schemaSpec.requiredRoles.includes("booleanFlag"),
     hasCategories: schemaSpec.requiredRoles.includes("category"),
+    hasProgress: schemaSpec.requiredRoles.includes("progress"),
+    hasPriority: schemaSpec.requiredRoles.includes("priority"),
+    hasAssignee: schemaSpec.requiredRoles.includes("assignee"),
+    hasDueDate: schemaSpec.requiredRoles.includes("dueAt"),
+    hasTree: schemaSpec.requiredRoles.includes("children") || schemaSpec.requiredRoles.includes("parentId"),
+    hasDelta: schemaSpec.requiredRoles.includes("delta"),
+    hasUnits: schemaSpec.requiredRoles.includes("unit"),
   };
 }
 

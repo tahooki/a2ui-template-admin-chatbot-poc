@@ -785,6 +785,7 @@ function comparisonDataEvidenceView(trace: DataBoundaryScenarioTrace | undefined
         sourceRowCount: trace.aiSurfacePlanTrace.sourceRowCount,
         sourceFieldPaths: trace.aiSurfacePlanTrace.sourceFieldPaths,
         sourceSampleRows: trace.aiSurfacePlanTrace.sourceSampleRows,
+        observedSource: trace.aiSurfacePlanTrace.observedSource,
       })
     : cleanJsonValue({
         comparisonDataRequestEvent: eventPayload(requestEvent),
@@ -868,6 +869,7 @@ function templateComparisonEvidenceView(trace: DataBoundaryScenarioTrace | undef
           sourceArrayPath: trace.aiSurfacePlanTrace.sourceArrayPath,
           sourceRowCount: trace.aiSurfacePlanTrace.sourceRowCount,
           sourceFieldPaths: trace.aiSurfacePlanTrace.sourceFieldPaths,
+          observedSource: trace.aiSurfacePlanTrace.observedSource,
           beforeRows: trace.aiSurfacePlanTrace.beforeRows,
         },
       })
@@ -933,6 +935,7 @@ function slotGenerationEvidenceView(trace: DataBoundaryScenarioTrace | undefined
           sourceArrayPath: trace.aiSurfacePlanTrace.sourceArrayPath,
           sourceFieldPaths: trace.aiSurfacePlanTrace.sourceFieldPaths,
           sampleRows: trace.aiSurfacePlanTrace.sourceSampleRows?.slice?.(0, 1),
+          observedSource: trace.aiSurfacePlanTrace.observedSource,
         },
         templateContract: trace.templateContract,
       })

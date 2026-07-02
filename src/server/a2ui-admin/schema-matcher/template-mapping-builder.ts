@@ -12,7 +12,7 @@ import { canonicalPath, normalizeText, rendererPath } from "./path-utils";
 
 function fieldMatchesSlot(field: DerivedSchemaField, slot: A2UITemplateSlot) {
   const typeMatch = slot.acceptsTypes.includes(field.type);
-  const roleMatch = slot.acceptsRoles.some((role) => field.roles.includes(role));
+  const roleMatch = /columns|fields/i.test(slot.slot) || slot.acceptsRoles.some((role) => field.roles.includes(role));
   const formatMatch = !slot.acceptsFormats?.length || (field.format ? slot.acceptsFormats.includes(field.format) : false);
   return typeMatch && roleMatch && formatMatch;
 }
@@ -129,8 +129,26 @@ export function fieldMappingFromDecision({
     rendererPath(firstFieldByRoles(derivedSchema, ["image"], roleHints(template, "image"), query)?.path ?? "");
   const mappedBooleanFlags = sourcesForSlot(mapping, (slot) => /status|boolean|flag/i.test(slot));
   const mappedMetrics = sourcesForSlot(mapping, (slot) => /metric/i.test(slot));
+  const mappedFields = sourcesForSlot(mapping, (slot) => /columns|fields/i.test(slot));
+  const progress = sourceForSlot(mapping, (slot) => /progress/i.test(slot)) || template.surfaceConfig.progressBinding;
+  const status = sourceForSlot(mapping, (slot) => /status/i.test(slot)) || template.surfaceConfig.statusBindings?.[0];
+  const category = sourceForSlot(mapping, (slot) => /category/i.test(slot)) || template.surfaceConfig.categoryBinding;
+  const updatedAt = sourceForSlot(mapping, (slot) => /updatedAt/i.test(slot)) || template.surfaceConfig.timeBinding;
+  const time = sourceForSlot(mapping, (slot) => /time/i.test(slot)) || template.surfaceConfig.timeBinding;
+  const priority = sourceForSlot(mapping, (slot) => /priority/i.test(slot)) || template.surfaceConfig.priorityBinding;
+  const assignee = sourceForSlot(mapping, (slot) => /assignee|actor/i.test(slot)) || template.surfaceConfig.assigneeBinding;
+  const dueAt = sourceForSlot(mapping, (slot) => /dueAt/i.test(slot)) || template.surfaceConfig.dueAtBinding;
+  const parentId = sourceForSlot(mapping, (slot) => /parentId/i.test(slot)) || template.surfaceConfig.parentIdBinding;
+  const children = sourceForSlot(mapping, (slot) => /children/i.test(slot)) || template.surfaceConfig.childrenBinding;
+  const delta = sourceForSlot(mapping, (slot) => /delta/i.test(slot)) || template.surfaceConfig.deltaBinding;
+  const unit = sourceForSlot(mapping, (slot) => /unit/i.test(slot)) || template.surfaceConfig.unitBinding;
+  const value = sourceForSlot(mapping, (slot) => /value/i.test(slot)) || template.surfaceConfig.valueBinding || mappedMetrics[0];
   let booleanFlags = mappedBooleanFlags;
-  if (booleanFlags.length === 0 && template.surfaceConfig.viewType === "statusBooleanList" && template.surfaceConfig.statusBindings?.length) {
+  if (
+    booleanFlags.length === 0 &&
+    (template.surfaceConfig.viewType === "statusBooleanList" || template.surfaceConfig.viewType === "matrix.statusMatrix") &&
+    template.surfaceConfig.statusBindings?.length
+  ) {
     booleanFlags = template.surfaceConfig.statusBindings;
   }
   if (booleanFlags.length === 0) {
@@ -139,7 +157,11 @@ export function fieldMappingFromDecision({
       .map((field) => rendererPath(field.path));
   }
   let metrics = mappedMetrics;
-  if (metrics.length === 0 && template.surfaceConfig.viewType === "telemetryStatusTable" && template.surfaceConfig.metricBindings?.length) {
+  if (
+    metrics.length === 0 &&
+    (template.surfaceConfig.viewType === "telemetryStatusTable" || template.surfaceConfig.viewType === "metric.statCards" || template.surfaceConfig.viewType === "matrix.table") &&
+    template.surfaceConfig.metricBindings?.length
+  ) {
     metrics = template.surfaceConfig.metricBindings;
   }
   if (metrics.length === 0) {
@@ -154,6 +176,20 @@ export function fieldMappingFromDecision({
     image: image || undefined,
     booleanFlags,
     metrics,
+    fields: mappedFields.length ? mappedFields : template.surfaceConfig.fieldBindings,
+    status,
+    category,
+    updatedAt,
+    time,
+    progress,
+    priority,
+    assignee,
+    dueAt,
+    parentId,
+    children,
+    delta,
+    unit,
+    value,
   };
 }
 

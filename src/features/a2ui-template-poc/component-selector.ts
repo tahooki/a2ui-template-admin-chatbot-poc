@@ -6,7 +6,21 @@ import type {
   FieldMapping,
 } from "./template-types";
 
-const roleOrder: A2UIRole[] = ["title", "content", "description", "image", "booleanFlag", "status"];
+const roleOrder: A2UIRole[] = [
+  "title",
+  "content",
+  "description",
+  "image",
+  "booleanFlag",
+  "status",
+  "metric",
+  "progress",
+  "time",
+  "priority",
+  "assignee",
+  "parentId",
+  "children",
+];
 
 function normalize(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9가-힣]/gi, "");
@@ -33,17 +47,25 @@ function buildMapping(template: A2UITemplateRegistration, profile: A2UIDataProfi
     fieldForRole(profile, "description", hints.description);
   const image = fieldForRole(profile, "image", hints.image);
   const booleanFlags =
-    template.surfaceConfig.statusBindings?.length && template.surfaceConfig.viewType === "statusBooleanList"
+    template.surfaceConfig.statusBindings?.length &&
+    (template.surfaceConfig.viewType === "statusBooleanList" || template.surfaceConfig.viewType === "matrix.statusMatrix")
       ? template.surfaceConfig.statusBindings
       : profile.fields
           .filter((field) => field.type === "boolean" || field.roleCandidates.includes("booleanFlag"))
           .map((field) => field.path);
   const metrics =
-    template.surfaceConfig.metricBindings?.length && template.surfaceConfig.viewType === "telemetryStatusTable"
+    template.surfaceConfig.metricBindings?.length &&
+    (template.surfaceConfig.viewType === "telemetryStatusTable" || template.surfaceConfig.viewType === "metric.statCards")
       ? template.surfaceConfig.metricBindings
       : profile.fields
           .filter((field) => field.type === "number" || field.roleCandidates.includes("metric"))
           .map((field) => field.path);
+  const fields = template.surfaceConfig.fieldBindings?.length
+    ? template.surfaceConfig.fieldBindings
+    : profile.fields
+        .filter((field) => field.path !== title?.path && field.type !== "unknown")
+        .slice(0, 6)
+        .map((field) => field.path);
 
   return {
     title: template.surfaceConfig.titleBinding || title?.path,
@@ -51,6 +73,20 @@ function buildMapping(template: A2UITemplateRegistration, profile: A2UIDataProfi
     image: template.surfaceConfig.imageBinding || image?.path,
     booleanFlags,
     metrics,
+    fields,
+    status: template.surfaceConfig.statusBindings?.[0],
+    category: template.surfaceConfig.categoryBinding,
+    updatedAt: template.surfaceConfig.timeBinding,
+    time: template.surfaceConfig.timeBinding,
+    progress: template.surfaceConfig.progressBinding,
+    priority: template.surfaceConfig.priorityBinding,
+    assignee: template.surfaceConfig.assigneeBinding,
+    dueAt: template.surfaceConfig.dueAtBinding,
+    parentId: template.surfaceConfig.parentIdBinding,
+    children: template.surfaceConfig.childrenBinding,
+    delta: template.surfaceConfig.deltaBinding,
+    unit: template.surfaceConfig.unitBinding,
+    value: template.surfaceConfig.valueBinding,
   };
 }
 
@@ -60,6 +96,18 @@ function hasRequiredRoles(template: A2UITemplateRegistration, profile: A2UIDataP
     if (role === "booleanFlag") return profile.booleanFieldCount >= (template.schemaSpec.minBooleanFields ?? 1);
     return Boolean(fieldForRole(profile, role, hints[role]));
   });
+}
+
+function viewTypeBonus(template: A2UITemplateRegistration, profile: A2UIDataProfile) {
+  const viewType = template.surfaceConfig.viewType;
+  if ((viewType === "imageCardList" || viewType === "collection.cardGrid") && profile.hasImageField) return 18;
+  if (viewType === "metric.progressList" && profile.fields.some((field) => field.roleCandidates.includes("progress"))) return 22;
+  if (viewType === "metric.statCards" && profile.fields.some((field) => field.type === "number" || field.roleCandidates.includes("metric"))) return 18;
+  if (viewType === "time.timeline" && profile.fields.some((field) => field.roleCandidates.includes("time"))) return 18;
+  if (viewType === "relation.tree" && profile.fields.some((field) => field.roleCandidates.includes("children") || field.roleCandidates.includes("parentId"))) return 18;
+  if (viewType === "telemetryStatusTable" && profile.fields.some((field) => field.type === "number" || field.roleCandidates.includes("metric"))) return 18;
+  if ((viewType === "statusBooleanList" || viewType === "matrix.statusMatrix") && profile.booleanFieldCount > 0) return 16;
+  return 0;
 }
 
 export function selectA2UIComponent({
@@ -91,14 +139,7 @@ export function selectA2UIComponent({
       const intentScore = queryMatches(query, template.schemaSpec.intentKeywords) * 12;
       const guideScore = queryMatches(query, template.selectionGuide.split(/[,\s]+/).filter(Boolean)) * 2;
       const specificity = template.schemaSpec.requiredRoles.length * 8;
-      const viewBonus =
-        template.surfaceConfig.viewType === "imageCardList" && profile.hasImageField
-          ? 18
-          : template.surfaceConfig.viewType === "telemetryStatusTable" && profile.fields.some((field) => field.type === "number" || field.roleCandidates.includes("metric"))
-            ? 18
-          : template.surfaceConfig.viewType === "statusBooleanList" && profile.booleanFieldCount > 0
-            ? 16
-            : 0;
+      const viewBonus = viewTypeBonus(template, profile);
 
       return {
         template,

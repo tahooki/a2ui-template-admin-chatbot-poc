@@ -32,39 +32,63 @@ def _nested_total(data: dict[str, Any], container_key: str | None = None) -> int
     return None
 
 
-def data_row_count(data: Any) -> int:
+def _array_candidates(data: Any) -> list[tuple[tuple[str, ...], list[Any], dict[str, Any] | None]]:
     if isinstance(data, list):
-        return len(data)
+        return [((), data, None)]
+
+    candidates: list[tuple[tuple[str, ...], list[Any], dict[str, Any] | None]] = []
+
+    def visit(value: Any, path: tuple[str, ...], parent: dict[str, Any] | None) -> None:
+        if isinstance(value, list):
+            candidates.append((path, value, parent))
+            return
+        if not isinstance(value, dict):
+            return
+        path_text = ".".join(path)
+        if path and any(token in path_text.lower() for token in ("metadata", "debug", "error", "warning", "log")):
+            return
+        for key, child in value.items():
+            visit(child, (*path, key), value)
+
     if isinstance(data, dict):
-        items = data.get("items")
-        if isinstance(items, list):
-            total = data.get("total")
-            return total if isinstance(total, int) else len(items)
-        rows = data.get("rows")
-        if isinstance(rows, list):
-            total = _nested_total(data)
-            return total if isinstance(total, int) else len(rows)
-        result_rows = _nested_list(data, "result", "rows")
-        if isinstance(result_rows, list):
-            total = _nested_total(data, "result")
-            return total if isinstance(total, int) else len(result_rows)
+        visit(data, (), None)
+    return candidates
+
+
+def _candidate_score(path: tuple[str, ...], rows: list[Any]) -> float:
+    object_count = sum(1 for row in rows if isinstance(row, dict))
+    object_ratio = object_count / len(rows) if rows else 0
+    path_hint = 0.12 if path and path[-1].lower() in ("items", "rows", "list", "data", "result", "payload") else 0
+    return max(0, min(1, min(0.22, len(rows) / 50) + object_ratio * 0.5 + path_hint - min(0.08, len(path) * 0.01)))
+
+
+def _selected_array_candidate(data: Any) -> tuple[tuple[str, ...], list[Any], dict[str, Any] | None] | None:
+    candidates = _array_candidates(data)
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda candidate: _candidate_score(candidate[0], candidate[1]), reverse=True)[0]
+
+
+def data_row_count(data: Any) -> int:
+    candidate = _selected_array_candidate(data)
+    if candidate:
+        _, rows, parent = candidate
+        total = _nested_total(parent or {})
+        return total if isinstance(total, int) else len(rows)
+    if isinstance(data, dict):
         return 1
     return 0
 
 
 def data_shape(data: Any) -> str:
-    if isinstance(data, list):
-        return "array<object>" if all(isinstance(item, dict) for item in data) else "array"
+    candidate = _selected_array_candidate(data)
+    if candidate:
+        path, rows, _ = candidate
+        item_shape = "array<object>" if all(isinstance(item, dict) for item in rows) else "array"
+        if not path:
+            return item_shape
+        return f"object{{{'.'.join(path)}:{item_shape}}}"
     if isinstance(data, dict):
-        items = data.get("items")
-        if isinstance(items, list):
-            return "object{items:array<object>}" if all(isinstance(item, dict) for item in items) else "object{items:array}"
-        rows = data.get("rows")
-        if isinstance(rows, list):
-            return "object{rows:array<object>}" if all(isinstance(item, dict) for item in rows) else "object{rows:array}"
-        result_rows = _nested_list(data, "result", "rows")
-        if isinstance(result_rows, list):
-            return "object{result.rows:array<object>}" if all(isinstance(item, dict) for item in result_rows) else "object{result.rows:array}"
         return "object"
     return type(data).__name__
 

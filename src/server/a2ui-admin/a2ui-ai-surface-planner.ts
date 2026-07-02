@@ -12,11 +12,21 @@ import type {
   FieldMapping,
 } from "@/features/a2ui-template-poc/template-types";
 import type { EquipmentApiId } from "./a2ui-runtime";
+import { a2uiApiDefinition, a2uiApiTitle, presentationIntentForQuery } from "./api-registry";
 import { readTemplateCatalog } from "./catalog-store";
 import { buildDerivedSchema } from "./schema-matcher/derived-schema-builder";
 import type { DerivedSchema } from "./schema-matcher/derived-schema-types";
 import { buildSampleDataPreview } from "./schema-matcher/sample-data-preview";
 import { normalizeTemplateInputSchema } from "./schema-matcher/template-input-schema-adapter";
+import {
+  type ObservedSource,
+  fieldForSourcePath,
+  getValueAtRowPath,
+  observedSourceFieldPaths,
+  preprocessUnknownApiResponse,
+  rowsFromObservedSource,
+  shapeFromObservedSource,
+} from "./schema-matcher/unknown-api-response-preprocessor";
 
 type DataRecord = Record<string, unknown>;
 type PlannerTransform = "copy" | "boolean_code" | "number_to_boolean" | "default_false";
@@ -77,6 +87,15 @@ type ComparisonFieldRole =
   | "image"
   | "description"
   | "category"
+  | "progress"
+  | "priority"
+  | "assignee"
+  | "dueAt"
+  | "actor"
+  | "parentId"
+  | "children"
+  | "delta"
+  | "unit"
   | "unknown";
 
 type ComparisonFieldProfile = {
@@ -133,6 +152,7 @@ type RowExtraction = {
   arrayPath?: string;
   page?: number;
   pageSize?: number;
+  observedSource?: ObservedSource;
 };
 
 type ValidationResult = {
@@ -191,6 +211,14 @@ export type A2UISurfacePlanTrace = {
   sourceArrayPath?: string;
   sourceFieldPaths: string[];
   sourceSampleRows: DataRecord[];
+  observedSource?: {
+    selectedDatasetPath?: string;
+    sourceFieldCount: number;
+    sourceFieldPaths: string[];
+    sampleRows: Record<string, unknown>[];
+    warnings: string[];
+    truncated: boolean;
+  };
   sourceRowCount: number;
   renderRowCount?: number;
   sourceDataHash: string;
@@ -266,22 +294,36 @@ const inspectionSourceKeys = ["needsInspection", "inspReqYn", "insp_req_yn", "in
 const reservedSourceKeys = ["isReserved", "reservedFlag", "reserved_flag", "reserveFlag", "reserve_flag", "reservedYn", "reserved_yn", "reserveYn", "reserve_yn"];
 const updatedAtSourceKeys = ["updatedAt", "updated_at", "lastDtm", "last_dtm", "lastSignalAt", "last_signal_at", "timestamp", "time"];
 const locationSourceKeys = ["location", "site", "site_nm", "plantZone", "plant_zone", "zone"];
-const statusTargetFields = ["isOnline", "isRunning", "hasAlarm", "needsInspection", "isReserved"];
 const metricLikePattern = /^(telemetry_|metric_)|sensor|measure|measurement|reading|temperature|temp|pressure|rpm|speed|vibration|current|voltage|power|load|rate|score|value/i;
 const nonMetricLikePattern = /alarm|alrm|count|cnt|total|status|state|flag|yn$|code$|id$|name|title/i;
 const canonicalTargetFields = new Set([
   "id",
   "name",
+  "title",
+  "content",
   "isOnline",
   "isRunning",
   "hasAlarm",
   "needsInspection",
   "isReserved",
+  "status",
   "updatedAt",
+  "time",
   "location",
   "imageUrl",
+  "image",
   "description",
   "category",
+  "progress",
+  "priority",
+  "assignee",
+  "actor",
+  "dueAt",
+  "parentId",
+  "children",
+  "value",
+  "delta",
+  "unit",
 ]);
 const defaultTrueValues = ["Y", "YES", "TRUE", "1", "ON", "ONLINE", "RUN", "RUNNING", "ACTIVE", "OK"];
 const defaultFalseValues = ["N", "NO", "FALSE", "0", "OFF", "OFFLINE", "STOP", "STOPPED", "INACTIVE", "NG"];
@@ -469,15 +511,6 @@ function asRecord(value: unknown): DataRecord | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as DataRecord) : undefined;
 }
 
-function objectRows(value: unknown): DataRecord[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  return value.filter((item): item is DataRecord => Boolean(asRecord(item)));
-}
-
-function numberFrom(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
 function stableStringify(value: unknown): string {
   if (value === undefined) return "null";
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
@@ -515,71 +548,48 @@ function dataShape(value: unknown): string {
   return "object";
 }
 
-function firstArrayCandidate(record: DataRecord): RowExtraction | undefined {
-  const candidates: Array<{ path: string; parent: DataRecord; key: string }> = [
-    { path: "items", parent: record, key: "items" },
-    { path: "rows", parent: record, key: "rows" },
-  ];
-
-  for (const parentKey of ["result", "data", "payload"]) {
-    const parent = asRecord(record[parentKey]);
-    if (!parent) continue;
-    for (const key of ["items", "rows", "list"]) {
-      candidates.push({ path: `${parentKey}.${key}`, parent, key });
-    }
-  }
-
-  for (const candidate of candidates) {
-    const rows = objectRows(candidate.parent[candidate.key]);
-    if (!rows) continue;
-    return {
-      rows,
-      rowCount:
-        numberFrom(candidate.parent.total) ??
-        numberFrom(candidate.parent.totalCount) ??
-        numberFrom(record.total) ??
-        numberFrom(record.totalCount) ??
-        rows.length,
-      arrayPath: candidate.path,
-      page: numberFrom(candidate.parent.page) ?? numberFrom(candidate.parent.pageNo) ?? numberFrom(record.page) ?? numberFrom(record.pageNo),
-      pageSize:
-        numberFrom(candidate.parent.pageSize) ??
-        numberFrom(candidate.parent.rowsPerPage) ??
-        numberFrom(record.pageSize) ??
-        numberFrom(record.rowsPerPage),
-    };
-  }
-
-  return undefined;
-}
-
 function extractRows(data: unknown): RowExtraction | undefined {
-  const rows = objectRows(data);
-  if (rows) return { rows, rowCount: rows.length };
-
-  const record = asRecord(data);
-  if (!record) return undefined;
-
-  const extracted = firstArrayCandidate(record);
-  if (extracted) return extracted;
-
+  const observedSource = preprocessUnknownApiResponse({ rawData: data });
+  const selected = observedSource.selectedDataset;
+  if (!selected) return undefined;
+  const rows = rowsFromObservedSource(data, observedSource);
   return {
-    rows: [record],
-    rowCount: 1,
+    rows,
+    rowCount: selected.rowCount,
+    arrayPath: selected.plannerPath,
+    page: selected.page,
+    pageSize: selected.pageSize,
+    observedSource,
   };
 }
 
-function fieldPaths(rows: DataRecord[], arrayPath = "items") {
+function fieldPaths(rows: DataRecord[], arrayPath = "items", observedSource?: ObservedSource) {
+  if (observedSource?.fields.length) return observedSourceFieldPaths(observedSource);
   const keys = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).sort();
   return keys.map((key) => `${arrayPath}[].${key}`);
 }
 
-function promptFieldPaths(paths: string[], rows: DataRecord[]) {
+function sourcePathsForExtraction(extracted: RowExtraction) {
+  return fieldPaths(extracted.rows, extracted.arrayPath ?? "items", extracted.observedSource);
+}
+
+function valueForSourcePath(row: DataRecord, path: string, extracted?: RowExtraction) {
+  const field = extracted?.observedSource ? fieldForSourcePath(extracted.observedSource, path) : undefined;
+  if (field) return getValueAtRowPath(row, field.rowPath);
+  const key = sourceKey(path);
+  return key ? row[key] : undefined;
+}
+
+function typeForSourcePath(row: DataRecord, path: string, extracted?: RowExtraction) {
+  return fieldType(valueForSourcePath(row, path, extracted));
+}
+
+function promptFieldPaths(paths: string[], rows: DataRecord[], extracted?: RowExtraction) {
   const firstRow = rows[0] ?? {};
   return paths
     .map((path, index) => {
       const key = sourceKey(path) ?? "";
-      const sourceValue = firstRow[key];
+      const sourceValue = valueForSourcePath(firstRow, path, extracted);
       const isIdentityOrStatus =
         keyMatchesAny(key, [
           ...idSourceKeys,
@@ -645,19 +655,31 @@ function rolesForKey(key: string, type: A2UIDerivedFieldType): A2UIRole[] {
   if (/location|zone|site|plant/i.test(key)) roles.push("location");
   if (/updatedAt|last|dtm|date|time|signal/i.test(key) || type === "date" || type === "datetime") roles.push("updatedAt", "time");
   if (type === "number" && (isMetricLikeKey(key) || /amount|size/i.test(key))) roles.push("metric");
+  if (type === "number" && /progress|percent|percentage|completion|completeRate|completionRate|doneRatio|done_rate/i.test(key)) roles.push("progress", "metric");
+  if (/priority|severity|urgency|rank/i.test(key)) roles.push("priority");
+  if (/assignee|owner|manager|담당|담당자|responsible|operator/i.test(key)) roles.push("assignee");
+  if (/due|deadline|targetDate|target_at|dueAt|due_at/i.test(key)) roles.push("dueAt", "time");
+  if (/actor|author|createdBy|created_by|user|requester/i.test(key)) roles.push("actor");
+  if (/^(parentId|parent_id|parent|pid)$/i.test(key)) roles.push("parentId");
+  if (/children|childNodes|nodes/i.test(key)) roles.push("children");
+  if (/delta|change|diff|variance|growth/i.test(key)) roles.push("delta", "metric");
+  if (/unit|currency|uom/i.test(key)) roles.push("unit");
   return Array.from(new Set(roles));
 }
 
-function sourceFieldSummaries(rows: DataRecord[], paths: string[]) {
+function sourceFieldSummaries(rows: DataRecord[], paths: string[], extracted?: RowExtraction) {
   return paths.map((path) => {
-    const key = sourceKey(path) ?? path;
-    const examples = rows.slice(0, 5).map((row) => row[key]).filter((value) => value !== undefined);
+    const observedField = extracted?.observedSource ? fieldForSourcePath(extracted.observedSource, path) : undefined;
+    const key = observedField?.key ?? sourceKey(path) ?? path;
+    const examples = rows.slice(0, 5).map((row) => valueForSourcePath(row, path, extracted)).filter((value) => value !== undefined);
     const type = fieldType(examples.find((value) => value !== null));
     return {
       path,
+      rowPath: observedField?.rowPath,
       key,
       type,
       roles: rolesForKey(key, type),
+      completeness: observedField?.completeness,
       examples,
     };
   });
@@ -685,18 +707,18 @@ function comparisonDataSourcePaths(comparisonData: ComparisonDataResult | undefi
   ]);
 }
 
-function promptPathsForComparison(paths: string[], rows: DataRecord[], comparisonData?: ComparisonDataResult) {
+function promptPathsForComparison(paths: string[], rows: DataRecord[], comparisonData?: ComparisonDataResult, extracted?: RowExtraction) {
   const validPaths = new Set(paths);
   const aiPaths = comparisonDataSourcePaths(comparisonData).filter((path) => validPaths.has(path));
-  return orderedUnique([...aiPaths, ...promptFieldPaths(paths, rows)]).slice(0, maxPromptFieldPaths);
+  return orderedUnique([...aiPaths, ...promptFieldPaths(paths, rows, extracted)]).slice(0, maxPromptFieldPaths);
 }
 
-function projectRowsForPrompt(rows: DataRecord[], paths: string[], limit: number) {
-  const keys = Array.from(new Set(paths.map((path) => sourceKey(path)).filter((key): key is string => Boolean(key))));
+function projectRowsForPrompt(rows: DataRecord[], paths: string[], limit: number, extracted?: RowExtraction) {
   return rows.slice(0, limit).map((row) => {
     const projected: DataRecord = {};
-    for (const key of keys) {
-      if (row[key] !== undefined) projected[key] = row[key];
+    for (const path of paths) {
+      const value = valueForSourcePath(row, path, extracted);
+      if (value !== undefined) projected[path] = value;
     }
     return projected;
   });
@@ -772,10 +794,7 @@ function openAIConfig() {
 }
 
 function apiTitle(apiId: EquipmentApiId) {
-  if (apiId === "equipment-catalog") return "장비 카탈로그 API";
-  if (apiId === "equipment-status-wide-columns") return "컬럼 많은 장비 상태 API";
-  if (apiId === "equipment-status-large-rows") return "데이터 많은 장비 상태 API";
-  return "장비 상태 API";
+  return a2uiApiTitle(apiId);
 }
 
 async function emitProgress(onProgress: A2UISurfacePlanProgressHandler | undefined, progress: A2UISurfacePlanProgress) {
@@ -796,8 +815,20 @@ function templatePromptSummary(template: A2UITemplateRegistration) {
       titleBinding: normalized.surfaceConfig.titleBinding,
       statusBindings: normalized.surfaceConfig.statusBindings,
       metricBindings: normalized.surfaceConfig.metricBindings,
+      fieldBindings: normalized.surfaceConfig.fieldBindings,
       imageBinding: normalized.surfaceConfig.imageBinding,
       contentBinding: normalized.surfaceConfig.contentBinding,
+      categoryBinding: normalized.surfaceConfig.categoryBinding,
+      timeBinding: normalized.surfaceConfig.timeBinding,
+      progressBinding: normalized.surfaceConfig.progressBinding,
+      priorityBinding: normalized.surfaceConfig.priorityBinding,
+      assigneeBinding: normalized.surfaceConfig.assigneeBinding,
+      dueAtBinding: normalized.surfaceConfig.dueAtBinding,
+      parentIdBinding: normalized.surfaceConfig.parentIdBinding,
+      childrenBinding: normalized.surfaceConfig.childrenBinding,
+      deltaBinding: normalized.surfaceConfig.deltaBinding,
+      unitBinding: normalized.surfaceConfig.unitBinding,
+      valueBinding: normalized.surfaceConfig.valueBinding,
       maxItems: normalized.surfaceConfig.maxItems,
     },
   };
@@ -818,14 +849,16 @@ function buildPrompt({
   templates: A2UITemplateRegistration[];
   comparisonData?: ComparisonDataResult;
 }) {
-  const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
-  const promptPaths = promptPathsForComparison(paths, extracted.rows, comparisonData);
+  const paths = sourcePathsForExtraction(extracted);
+  const promptPaths = promptPathsForComparison(paths, extracted.rows, comparisonData, extracted);
   const metricTargetFields = promptPaths
     .map((path) => sourceKey(path))
     .filter((key): key is string => Boolean(key && /^(telemetry_|metric_)/i.test(key)));
   const targetFields = [...canonicalTargetFields, ...metricTargetFields];
   const registeredTemplates = templates.filter((template) => template.status === "registered").map(normalizeTemplateInputSchema);
   const templateIds = registeredTemplates.map((template) => template.componentId);
+  const apiDefinition = a2uiApiDefinition(apiId);
+  const presentationIntent = presentationIntentForQuery(query);
   const allowedSlots = Array.from(new Set(registeredTemplates.flatMap((template) => [
     ...(template.inputSchema?.requiredSlots ?? []).map((slot) => slot.slot),
     ...(template.inputSchema?.optionalSlots ?? []).map((slot) => slot.slot),
@@ -837,16 +870,23 @@ function buildPrompt({
       "Return exactly the top-level JSON object described by outputJsonShape. Do not return a nested mappings object. Do not include markdown.",
     userQuery: query,
     apiId,
+    api: {
+      title: apiDefinition.title,
+      endpoint: apiDefinition.endpoint,
+      description: apiDefinition.description,
+      preferredSurfaces: apiDefinition.preferredSurfaces,
+    },
+    presentationIntent,
     allowedTemplateIds: templateIds,
     source: {
-      shape: dataShape(rawData),
+      shape: extracted.observedSource ? shapeFromObservedSource(extracted.observedSource) : dataShape(rawData),
       detectedPrimaryArrayPath: extracted.arrayPath ?? "items",
       rowCount: extracted.rowCount,
       fieldPathCount: paths.length,
       omittedFieldPathCount: Math.max(0, paths.length - promptPaths.length),
       fieldPaths: promptPaths,
-      fields: sourceFieldSummaries(extracted.rows, promptPaths),
-      sampleRows: projectRowsForPrompt(extracted.rows, promptPaths, maxPromptSampleRows),
+      fields: sourceFieldSummaries(extracted.rows, promptPaths, extracted),
+      sampleRows: projectRowsForPrompt(extracted.rows, promptPaths, maxPromptSampleRows, extracted),
       comparisonData,
     },
     templates: registeredTemplates.map(templatePromptSummary),
@@ -884,13 +924,15 @@ function buildPrompt({
         },
       ],
       templateSelectionRules: [
-        "For apiId=equipment-catalog, render only with equipment.imageCardList. If equipment.imageCardList is not registered, no status or telemetry template is compatible with the catalog list.",
-        "For apiId=equipment-catalog and registered equipment.imageCardList, select equipment.imageCardList when image/title fields can fill card slots.",
-        "equipment.telemetryStatusTable is for wide telemetry/status APIs with at least 3 concrete telemetry_* or metric_* numeric source fields.",
-        "Many rows alone does not mean telemetry. Do not select equipment.telemetryStatusTable unless the source has at least 3 telemetry_* or metric_* source fields.",
-        "Alarm/count fields such as alarmTotalCnt, alarm_count, alrmCnt, count, or cnt are status evidence for hasAlarm unless there are separate telemetry_* or metric_* fields. Do not use alarm count alone to justify telemetryStatusTable.",
-        "For apiId=equipment-status-large-rows, select equipment.telemetryStatusTable when the large-row source includes at least 3 concrete telemetry_* or metric_* fields. If it does not, select a registered statusBooleanList template only if one is registered.",
-        "For apiId=equipment-status-wide-columns, prefer equipment.telemetryStatusTable when the telemetry_* columns can fill metric slots.",
+        "The active registry uses generic design-system surfaces. Do not select deprecated equipment.* templates unless they are explicitly present in allowedTemplateIds.",
+        "Select collection.cardGrid for image/title/card-like rows.",
+        "Select matrix.statusMatrix when multiple boolean status flags can fill items[].statusFlags.",
+        "Select metric.progressList when each row has a concrete progress/percent/completion numeric field.",
+        "Select metric.statCards for small summary objects with numeric KPI fields.",
+        "Select time.timeline when event-like rows have timestamps.",
+        "Select process.queue when status is combined with priority, assignee, or due date metadata.",
+        "Select relation.tree when children or parentId fields indicate hierarchy.",
+        "Use matrix.table for general scalar row/column comparison, and collection.list for simple title/description collections.",
       ],
       metricRule:
         "For metric source fields, use targetField equal to the concrete source key, such as telemetry_000. Metrics slots must be backed by telemetry_* or metric_* numeric source fields. Do not map canonical boolean/status targets such as hasAlarm, isOnline, isRunning, needsInspection, or isReserved to items[].metrics. Do not use wildcard target fields. For repeated metric slots, return at most 4 concrete metric mappings.",
@@ -955,8 +997,8 @@ function buildComparisonDataPrompt({
   rawData: unknown;
   extracted: RowExtraction;
 }) {
-  const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
-  const promptPaths = promptFieldPaths(paths, extracted.rows);
+  const paths = sourcePathsForExtraction(extracted);
+  const promptPaths = promptFieldPaths(paths, extracted.rows, extracted);
   return {
     promptVersion,
     task: "Create an AI comparison data profile from unknown raw API data. Do not choose templates and do not create slot mappings.",
@@ -965,16 +1007,18 @@ function buildComparisonDataPrompt({
     userQuery: query,
     apiId,
     observedSource: {
-      shape: dataShape(rawData),
+      shape: extracted.observedSource ? shapeFromObservedSource(extracted.observedSource) : dataShape(rawData),
       detectedPrimaryArrayPath: extracted.arrayPath ?? "items",
       rowCount: extracted.rowCount,
       fieldPathCount: paths.length,
       omittedFieldPathCount: Math.max(0, paths.length - promptPaths.length),
       fieldPaths: promptPaths,
-      fields: sourceFieldSummaries(extracted.rows, promptPaths),
-      sampleRows: projectRowsForPrompt(extracted.rows, promptPaths, maxPromptSampleRows),
+      fields: sourceFieldSummaries(extracted.rows, promptPaths, extracted),
+      sampleRows: projectRowsForPrompt(extracted.rows, promptPaths, maxPromptSampleRows, extracted),
+      datasetCandidates: extracted.observedSource?.datasetCandidates,
+      warnings: extracted.observedSource?.warnings,
     },
-    allowedRoles: ["identifier", "title", "status", "metric", "timestamp", "location", "image", "description", "category", "unknown"],
+    allowedRoles: ["identifier", "title", "status", "metric", "timestamp", "location", "image", "description", "category", "progress", "priority", "assignee", "dueAt", "actor", "parentId", "children", "delta", "unit", "unknown"],
     outputJsonShape: {
       primaryArrayPath: "detected primary array path",
       entityName: "short noun for each row, for example equipment, sensor, alarm, order",
@@ -986,7 +1030,7 @@ function buildComparisonDataPrompt({
           sourceKey: "last key of sourcePath",
           label: "human readable Korean label",
           type: "string | number | boolean | date | datetime | object | array | unknown",
-          role: "identifier | title | status | metric | timestamp | location | image | description | category | unknown",
+          role: "identifier | title | status | metric | timestamp | location | image | description | category | progress | priority | assignee | dueAt | actor | parentId | children | delta | unit | unknown",
           targetHint: "canonical field hint such as name, isOnline, isRunning, hasAlarm, updatedAt, or the concrete metric key",
           confidence: "number 0..1",
           reason: "short reason",
@@ -1013,6 +1057,8 @@ function buildTemplateSelectionPrompt(args: Parameters<typeof buildPrompt>[0]) {
       ...base.targetFieldRules,
       renderRule: "Do not create mappings in this step. Mapping happens in the next slot-generation step after the template is selected.",
       candidateRule: "candidateNotes may explain why templates were selected or rejected, but selectedTemplateId and reason are the source of truth.",
+      presentationIntentRule:
+        "If presentationIntent.requestedSurfaces is non-empty and the requested registered surface can fill its required slots from source fields, choose the first compatible requested surface even when other data signals are also strong. If the requested surface is incompatible, choose the closest compatible surface and explain the repair.",
     },
     outputJsonShape: {
       selectedTemplateId: "registered template id",
@@ -1357,7 +1403,7 @@ function requestTemplateSelection(
     stage: "template_selection",
     prompt,
     systemPrompt:
-      "You are the A2UI template selector. Choose exactly one registered A2UI template for the AI comparison data profile and user query. Return JSON only. The only required decision fields are selectedTemplateId and reason. Do not create fieldMappings, slotMappings, render payloads, or legacy mappings. Use source.comparisonData, source.fieldPaths, and source.sampleRows as evidence for template choice. Many rows alone is not a template reason; choose based on data meaning and template contract. Telemetry templates require real metric fields from source.comparisonData.metricCandidates or fieldProfiles role=metric. Candidate scores are optional explanation aids, not validation requirements.",
+      "You are the A2UI template selector. Choose exactly one registered A2UI design-system surface for the AI comparison data profile, API definition, presentationIntent, and user query. Return JSON only. The only required decision fields are selectedTemplateId and reason. Do not create fieldMappings, slotMappings, render payloads, or legacy mappings. Use source.comparisonData, source.fieldPaths, and source.sampleRows as evidence for template choice. Many rows alone is not a template reason; choose based on data meaning and template contract. If presentationIntent.requestedSurfaces contains a compatible registered surface, honor that explicit display request before default data-shape preferences. If the requested surface is incompatible with the observed fields, choose the closest compatible surface and say why. Prefer generic surfaces such as collection.cardGrid, matrix.statusMatrix, metric.progressList, metric.statCards, time.timeline, process.queue, relation.tree, matrix.table, and collection.list when their required slots fit. Candidate scores are optional explanation aids, not validation requirements.",
     responseFormatFor: () => templateSelectionResponseFormatFor({ templateIds: prompt.allowedTemplateIds }),
     correction: correction
       ? {
@@ -1378,7 +1424,7 @@ function requestSlotMapping(
     stage: "slot_mapping",
     prompt,
     systemPrompt:
-      "You are the A2UI slot mapper. A template has already been selected. Create fieldMappings and slotMappings only for selectedTemplateId. Do not compare templates and do not change selectedTemplateId. Use source.comparisonData to understand field meaning, but use only source.fieldPaths as sourcePath values. Do not invent source fields. Do not use wildcard paths. slotMappings do not need templateId because the A2UI server will attach selectedTemplateId; if templateId is included, it must equal selectedTemplateId. Fill required slots from the selected template inputSchema. If both online/operation fields and running fields exist, map operation/online fields to isOnline and running fields to isRunning. Alarm/count fields normally map to hasAlarm, not metric slots. Metric slots should use concrete numeric metric source paths from comparisonData metric candidates or role=metric fieldProfiles.",
+      "You are the A2UI slot mapper. A template has already been selected. Create fieldMappings and slotMappings only for selectedTemplateId. Do not compare templates and do not change selectedTemplateId. Use source.comparisonData to understand field meaning, but use only source.fieldPaths as sourcePath values. Do not invent source fields. Do not use wildcard paths. slotMappings do not need templateId because the A2UI server will attach selectedTemplateId; if templateId is included, it must equal selectedTemplateId. Fill required slots from the selected template inputSchema. For progress slots use concrete progress/percent/completion fields. For table columns, map concrete scalar fields. For tree slots, map children or parentId only when they exist. Metric slots should use concrete numeric metric source paths from comparisonData metric candidates or role=metric fieldProfiles.",
     responseFormatFor: () => slotMappingResponseFormatFor({
       templateId,
       sourcePaths: prompt.source.fieldPaths,
@@ -1402,11 +1448,11 @@ function pathForKey(paths: string[], keys: string[]) {
   });
 }
 
-function metricSourcePaths(paths: string[], rows: DataRecord[]) {
+function metricSourcePaths(paths: string[], rows: DataRecord[], extracted?: RowExtraction) {
   const firstRow = rows[0] ?? {};
   return paths.filter((path) => {
     const key = sourceKey(path);
-    return Boolean(key && fieldType(firstRow[key]) === "number" && isMetricLikeKey(key));
+    return Boolean(key && typeForSourcePath(firstRow, path, extracted) === "number" && isMetricLikeKey(key));
   });
 }
 
@@ -1435,127 +1481,174 @@ function mockPlan({
   templates: A2UITemplateRegistration[];
   selectedTemplateId?: string;
 }): AIPlannerPlan {
-  const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
-  const registeredTemplateIds = new Set(templates.filter((template) => template.status === "registered").map((template) => template.componentId));
-  const telemetryMetricPaths = metricSourcePaths(paths, extracted.rows);
-  const querySaysWide = /계측|텔레메트리|telemetry|metric|진단|wide|컬럼\s*(많|다|큰)/i.test(query);
-  const canRenderTelemetry = telemetryMetricPaths.length >= 3 && registeredTemplateIds.has("equipment.telemetryStatusTable");
-  const statusTemplateId = templates.find((template) => template.status === "registered" && template.surfaceConfig.viewType === "statusBooleanList")?.componentId;
-  const selectedTemplateId = selectedTemplateIdOverride ?? (
-    apiId === "equipment-catalog"
-      ? "equipment.imageCardList"
-      : canRenderTelemetry && (querySaysWide || telemetryMetricPaths.length >= 3)
-        ? "equipment.telemetryStatusTable"
-        : statusTemplateId ?? "equipment.statusBooleanList"
-  );
+  const paths = sourcePathsForExtraction(extracted);
+  const summaries = sourceFieldSummaries(extracted.rows, paths, extracted);
+  const registeredTemplates = templates.filter((template) => template.status === "registered");
+  const registeredIds = new Set(registeredTemplates.map((template) => template.componentId));
+  const firstRow = extracted.rows[0] ?? {};
+  const hasTemplate = (templateId: string) => registeredIds.has(templateId);
+  const firstExisting = (ids: string[]) => ids.find(hasTemplate) ?? registeredTemplates[0]?.componentId ?? "";
+  const pathByRole = (role: A2UIRole) => summaries.find((field) => field.roles.includes(role))?.path;
+  const pathsByRole = (role: A2UIRole) => summaries.filter((field) => field.roles.includes(role)).map((field) => field.path);
+  const pathByKeys = (keys: string[]) => pathForKey(paths, keys);
+  const scalarPaths = summaries
+    .filter((field) => field.type !== "object" && field.type !== "array" && field.type !== "unknown")
+    .map((field) => field.path);
+  const titlePath = pathByRole("title") ?? pathByRole("label") ?? scalarPaths.find((path) => typeForSourcePath(firstRow, path, extracted) === "string") ?? scalarPaths[0];
+  const descriptionPath = pathByRole("description") ?? pathByRole("content") ?? pathByKeys(["description", "summary", "content"]);
+  const imagePath = pathByRole("image") ?? pathByKeys(["imageUrl", "thumbnailUrl", "photoUrl", "image"]);
+  const categoryPath = pathByRole("category") ?? pathByKeys(["category", "type"]);
+  const timePath = pathByRole("time") ?? pathByRole("updatedAt") ?? pathByKeys([...updatedAtSourceKeys, "createdAt", "occurredAt", "eventTime"]);
+  const progressPath = pathByRole("progress") ?? pathByKeys(["progress", "percent", "percentage", "completionRate", "doneRatio", "completionPercent"]);
+  const priorityPath = pathByRole("priority") ?? pathByKeys(["priority", "severity", "urgency", "rank"]);
+  const assigneePath = pathByRole("assignee") ?? pathByKeys(["assignee", "owner", "manager", "operator"]);
+  const actorPath = pathByRole("actor") ?? pathByKeys(["actor", "author", "createdBy", "created_by", "user", "requester"]);
+  const dueAtPath = pathByRole("dueAt") ?? pathByKeys(["dueAt", "due_at", "deadline", "targetDate"]);
+  const parentIdPath = pathByRole("parentId") ?? pathByKeys(["parentId", "parent_id", "parent"]);
+  const childrenPath = pathByRole("children") ?? pathByKeys(["children", "nodes"]);
+  const idPath = pathByRole("id") ?? pathByKeys(idSourceKeys);
+  const metricPaths = pathsByRole("metric").filter((path) => typeForSourcePath(firstRow, path, extracted) === "number");
+  const booleanStatusPaths = orderedUnique([
+    ...pathsByRole("booleanFlag"),
+    ...summaries.filter((field) => field.type === "boolean").map((field) => field.path),
+  ]).slice(0, 5);
+  const statusCodePaths = pathsByRole("status")
+    .filter((path) => !booleanStatusPaths.includes(path))
+    .filter((path) => typeForSourcePath(firstRow, path, extracted) !== "number");
+  const statusFlagPaths = orderedUnique([...booleanStatusPaths, ...statusCodePaths]).slice(0, 5);
+  const statusPath = pathByRole("status") ?? statusFlagPaths[0] ?? pathByKeys(["status", "state", "stage", "phase"]);
+  const isSingleObject = extracted.observedSource?.selectedDataset?.kind === "single_object";
+  const queryText = query.toLowerCase();
+  const presentationIntent = presentationIntentForQuery(query);
+  const queueIntentRequested = presentationIntent.requestedSurfaces.includes("process.queue") || /queue|대기열|처리\s*큐|처리순서|우선순위/.test(queryText);
+  const numericScalarPaths = scalarPaths.filter((path) => typeForSourcePath(firstRow, path, extracted) === "number");
+  const isArrayLike = !isSingleObject;
+  const compatibleIntentSurfaces = presentationIntent.requestedSurfaces.filter((templateId) => {
+    if (!hasTemplate(templateId)) return false;
+    if (templateId === "collection.list") return Boolean(isArrayLike && titlePath);
+    if (templateId === "collection.cardGrid") return Boolean(isArrayLike && titlePath);
+    if (templateId === "record.detail") return Boolean(isSingleObject || extracted.rowCount === 1 || (isArrayLike && titlePath));
+    if (templateId === "matrix.table") return Boolean(isArrayLike && titlePath && scalarPaths.length >= 3);
+    if (templateId === "matrix.statusMatrix") return Boolean(isArrayLike && titlePath && statusFlagPaths.length >= 2);
+    if (templateId === "metric.statCards") return Boolean(metricPaths.length || numericScalarPaths.length);
+    if (templateId === "metric.progressList") return Boolean(isArrayLike && titlePath && progressPath);
+    if (templateId === "time.timeline") return Boolean(isArrayLike && titlePath && timePath);
+    if (templateId === "process.queue") return Boolean(isArrayLike && titlePath && statusPath && (priorityPath || assigneePath || queueIntentRequested));
+    if (templateId === "relation.tree") return Boolean(titlePath && (childrenPath || parentIdPath));
+    return false;
+  });
 
-  const titlePath = pathForKey(paths, titleSourceKeys);
-  const idPath = pathForKey(paths, idSourceKeys);
-  const locationPath = pathForKey(paths, locationSourceKeys);
-  const updatedAtPath = pathForKey(paths, updatedAtSourceKeys);
-  const onlinePath = pathForKey(paths, onlineSourceKeys);
-  const runningPath = pathForKey(paths, runningSourceKeys);
-  const alarmPath = pathForKey(paths, alarmSourceKeys);
-  const inspectionPath = pathForKey(paths, inspectionSourceKeys);
-  const reservedPath = pathForKey(paths, reservedSourceKeys);
-  const imagePath = pathForKey(paths, ["imageUrl", "thumbnailUrl", "photoUrl"]);
-  const descriptionPath = pathForKey(paths, ["description", "summary", "content"]);
-  const categoryPath = pathForKey(paths, ["category", "type"]);
+  const selectedTemplateId = selectedTemplateIdOverride ?? firstExisting([
+    ...compatibleIntentSurfaces,
+    ...(childrenPath || parentIdPath || /트리|tree|계층|hierarchy|구조/.test(queryText) ? ["relation.tree"] : []),
+    ...(progressPath ? ["metric.progressList"] : []),
+    ...(timePath && /타임라인|timeline|이력|history|event|활동|시간순/.test(queryText) ? ["time.timeline"] : []),
+    ...(statusPath && (priorityPath || assigneePath || queueIntentRequested) ? ["process.queue"] : []),
+    ...(statusFlagPaths.length >= 2 && metricPaths.length < 3 ? ["matrix.statusMatrix"] : []),
+    ...(scalarPaths.length >= 8 || /테이블|table|표|컬럼/.test(queryText) ? ["matrix.table"] : []),
+    ...(imagePath || apiId === "equipment-catalog" ? ["collection.cardGrid"] : []),
+    ...(isSingleObject && metricPaths.length ? ["metric.statCards"] : []),
+    ...((isSingleObject || /상세|detail|프로필|단일|객체/.test(queryText)) ? ["record.detail"] : []),
+    "collection.list",
+  ]);
 
-  const fieldMappings = [
-    mapping("id", idPath, "copy", "identifier field"),
-    mapping("name", titlePath, "copy", "human-readable title field"),
-    mapping("isOnline", onlinePath, onlinePath?.includes("isOnline") ? "copy" : "boolean_code", "online status field"),
-    mapping("isRunning", runningPath, runningPath?.includes("isRunning") ? "copy" : "boolean_code", "running status field"),
-    mapping("hasAlarm", alarmPath, alarmPath?.includes("hasAlarm") ? "copy" : "number_to_boolean", "alarm field"),
-    mapping("needsInspection", inspectionPath, inspectionPath?.includes("needsInspection") ? "copy" : "boolean_code", "inspection status field"),
-    mapping("isReserved", reservedPath, reservedPath?.includes("isReserved") || reservedPath?.includes("reserved_flag") ? "copy" : "boolean_code", "reservation status field"),
-    mapping("updatedAt", updatedAtPath, "copy", "last update time field"),
-    mapping("location", locationPath, "copy", "location field"),
-    mapping("imageUrl", imagePath, "copy", "image field"),
-    mapping("description", descriptionPath, "copy", "description field"),
-    mapping("category", categoryPath, "copy", "category field"),
-    ...telemetryMetricPaths
-      .slice(0, 6)
-      .map((path) => mapping(sourceKey(path) ?? path, path, "copy", "telemetry metric field")),
-  ].filter((item): item is PlannerFieldMapping => Boolean(item));
+  const fieldMappings: PlannerFieldMapping[] = [];
+  const slotMappings: PlannerSlotMapping[] = [];
+  const addMapping = (targetField: string, sourcePath: string | undefined, transform: PlannerTransform = "copy", reason = "generic source field") => {
+    const item = mapping(targetField, sourcePath, transform, reason);
+    if (item && !fieldMappings.some((existing) => existing.targetField === item.targetField && existing.sourcePath === item.sourcePath)) fieldMappings.push(item);
+    return item;
+  };
+  const addSlot = (slot: string, sourcePath: string | undefined, targetField: string, transform: PlannerTransform = "copy", reason = "generic slot mapping") => {
+    if (!sourcePath) return;
+    addMapping(targetField, sourcePath, transform, reason);
+    slotMappings.push({ templateId: selectedTemplateId, slot, sourcePath, targetField, transform, reason });
+  };
+  const targetForPath = (sourcePath: string | undefined, fallback: string) => sourceKey(sourcePath) ?? fallback;
 
-  const statusSlotMappings = fieldMappings
-    .filter((item) => statusTargetFields.includes(item.targetField) && item.sourcePath)
-    .map((item) => ({
-      templateId: selectedTemplateId,
-      slot: "items[].statusFlags",
-      sourcePath: item.sourcePath,
-      targetField: item.targetField,
-      transform: item.transform,
-      reason: item.reason,
-    }));
-  const metricSlotMappings = fieldMappings
-    .filter((item) => isMetricLikeKey(item.targetField) && item.sourcePath)
-    .slice(0, 4)
-    .map((item) => ({
-      templateId: selectedTemplateId,
-      slot: "items[].metrics",
-      sourcePath: item.sourcePath,
-      targetField: item.targetField,
-      transform: item.transform,
-      reason: item.reason,
-    }));
-  const slotMappings: PlannerSlotMapping[] =
-    selectedTemplateId === "equipment.imageCardList"
-      ? [
-          { templateId: selectedTemplateId, slot: "cards[].title", sourcePath: titlePath, targetField: "name", transform: "copy" as const },
-          { templateId: selectedTemplateId, slot: "cards[].imageUrl", sourcePath: imagePath, targetField: "imageUrl", transform: "copy" as const },
-          { templateId: selectedTemplateId, slot: "cards[].description", sourcePath: descriptionPath, targetField: "description", transform: "copy" as const },
-        ].filter((item) => item.sourcePath)
-      : [
-          { templateId: selectedTemplateId, slot: "items[].title", sourcePath: titlePath, targetField: "name", transform: "copy" as const },
-          ...statusSlotMappings,
-          ...(selectedTemplateId === "equipment.telemetryStatusTable" ? metricSlotMappings : []),
-        ].filter((item) => item.sourcePath);
+  if (selectedTemplateId === "collection.cardGrid") {
+    addSlot("cards[].title", titlePath, "title", "copy", "card title");
+    addSlot("cards[].image", imagePath, "image", "copy", "card image");
+    addSlot("cards[].description", descriptionPath, "description", "copy", "card description");
+    addSlot("cards[].category", categoryPath, "category", "copy", "card category");
+    addSlot("cards[].status", statusPath, targetForPath(statusPath, "status"), "copy", "card status");
+  } else if (selectedTemplateId === "record.detail") {
+    addSlot("record.title", titlePath, "title", "copy", "record title");
+    addSlot("record.description", descriptionPath, "description", "copy", "record description");
+    addSlot("record.status", statusPath, targetForPath(statusPath, "status"), "copy", "record status");
+    scalarPaths.filter((path) => path !== titlePath && path !== descriptionPath).slice(0, 6).forEach((path) => addSlot("record.fields", path, targetForPath(path, "value"), "copy", "record field"));
+  } else if (selectedTemplateId === "matrix.table") {
+    addSlot("items[].title", titlePath, "title", "copy", "table title");
+    scalarPaths.filter((path) => path !== titlePath).slice(0, 7).forEach((path) => addSlot("items[].columns", path, targetForPath(path, "value"), "copy", "table column"));
+  } else if (selectedTemplateId === "matrix.statusMatrix") {
+    addSlot("items[].title", titlePath, "title", "copy", "status row title");
+    statusFlagPaths.forEach((path) => addSlot("items[].statusFlags", path, targetForPath(path, "status"), "copy", "status flag"));
+    addSlot("items[].category", categoryPath, "category", "copy", "status category");
+  } else if (selectedTemplateId === "metric.statCards") {
+    const metricSlotPaths = metricPaths.length ? metricPaths : scalarPaths.filter((path) => typeForSourcePath(firstRow, path, extracted) === "number");
+    metricSlotPaths.slice(0, 4).forEach((path) => addSlot("metrics[].value", path, targetForPath(path, "value"), "copy", "stat value"));
+    addSlot("metrics[].label", titlePath ?? categoryPath, "title", "copy", "stat label");
+    addSlot("metrics[].delta", pathByRole("delta"), "delta", "copy", "stat delta");
+    addSlot("metrics[].unit", pathByRole("unit"), "unit", "copy", "stat unit");
+    addSlot("metrics[].status", statusPath, targetForPath(statusPath, "status"), "copy", "stat status");
+  } else if (selectedTemplateId === "metric.progressList") {
+    addSlot("items[].title", titlePath, "title", "copy", "progress title");
+    addSlot("items[].progress", progressPath, "progress", "copy", "progress value");
+    addSlot("items[].description", descriptionPath, "description", "copy", "progress description");
+    addSlot("items[].status", statusPath, targetForPath(statusPath, "status"), "copy", "progress status");
+    addSlot("items[].updatedAt", timePath, "updatedAt", "copy", "progress update time");
+  } else if (selectedTemplateId === "time.timeline") {
+    addSlot("items[].time", timePath, "time", "copy", "event time");
+    addSlot("items[].title", titlePath ?? descriptionPath, "title", "copy", "event title");
+    addSlot("items[].description", descriptionPath, "description", "copy", "event description");
+    addSlot("items[].actor", actorPath ?? assigneePath, actorPath ? "actor" : "assignee", "copy", "event actor");
+    addSlot("items[].status", statusPath, targetForPath(statusPath, "status"), "copy", "event status");
+  } else if (selectedTemplateId === "process.queue") {
+    addSlot("items[].title", titlePath, "title", "copy", "queue title");
+    addSlot("items[].status", statusPath, targetForPath(statusPath, "status"), "copy", "queue status");
+    addSlot("items[].priority", priorityPath, "priority", "copy", "queue priority");
+    addSlot("items[].assignee", assigneePath ?? actorPath, assigneePath ? "assignee" : "actor", "copy", "queue owner");
+    addSlot("items[].dueAt", dueAtPath, "dueAt", "copy", "queue due date");
+    addSlot("items[].description", descriptionPath, "description", "copy", "queue description");
+  } else if (selectedTemplateId === "relation.tree") {
+    addSlot("nodes[].title", titlePath, "title", "copy", "tree node title");
+    addSlot("nodes[].children", childrenPath, "children", "copy", "tree children");
+    addSlot("nodes[].id", idPath, "id", "copy", "tree id");
+    addSlot("nodes[].parentId", parentIdPath, "parentId", "copy", "tree parent id");
+    addSlot("nodes[].description", descriptionPath, "description", "copy", "tree description");
+    addSlot("nodes[].status", statusPath, targetForPath(statusPath, "status"), "copy", "tree status");
+  } else {
+    addSlot("items[].title", titlePath, "title", "copy", "list title");
+    addSlot("items[].description", descriptionPath, "description", "copy", "list description");
+    addSlot("items[].category", categoryPath, "category", "copy", "list category");
+    addSlot("items[].status", statusPath, targetForPath(statusPath, "status"), "copy", "list status");
+    addSlot("items[].updatedAt", timePath, "updatedAt", "copy", "list update time");
+  }
 
-  const candidateEvaluations = templates
-    .filter((template) => template.status === "registered")
-    .map((template) => {
-      const isSelected = template.componentId === selectedTemplateId;
-      const missingMetrics = template.componentId === "equipment.telemetryStatusTable" && metricSlotMappings.length < 3;
-      const missingStatus = template.surfaceConfig.viewType !== "imageCardList" && statusSlotMappings.length < 2;
-      const missingImage = template.surfaceConfig.viewType === "imageCardList" && !imagePath;
-      return {
-        templateId: template.componentId,
-        decision: isSelected ? "select" as const : "reject" as const,
-        score: isSelected ? 0.91 : template.surfaceConfig.viewType === "statusBooleanList" ? 0.76 : 0.42,
-        schemaFit: isSelected ? 0.92 : 0.72,
-        queryFit: isSelected ? 0.9 : 0.64,
-        semanticFit: isSelected ? 0.91 : 0.66,
-        renderFit: isSelected ? 0.9 : 0.68,
-        reason: isSelected
-          ? "Required slots can be filled and the template best matches the query/data semantics."
-          : missingMetrics
-            ? "Metric slot cannot be filled with enough concrete numeric fields."
-            : missingStatus
-              ? "Status slot cannot be filled with enough status fields."
-              : missingImage
-                ? "Image slot cannot be filled."
-                : "A different registered template better preserves the source data semantics.",
-        missingRequiredSlots: [
-          ...(missingMetrics ? ["items[].metrics"] : []),
-          ...(missingStatus ? ["items[].statusFlags"] : []),
-          ...(missingImage ? ["cards[].imageUrl"] : []),
-        ],
-        risks: isSelected ? [] : ["lower semantic fit"],
-      };
-    });
+  const selectedTemplate = registeredTemplates.find((template) => template.componentId === selectedTemplateId);
+  const selectedTitle = selectedTemplate?.title ?? selectedTemplateId;
+  const candidateEvaluations = registeredTemplates.map((template) => {
+    const isSelected = template.componentId === selectedTemplateId;
+    return {
+      templateId: template.componentId,
+      decision: isSelected ? "select" as const : "reject" as const,
+      score: isSelected ? 0.91 : 0.34,
+      schemaFit: isSelected ? 0.9 : 0.42,
+      queryFit: isSelected ? 0.86 : 0.32,
+      semanticFit: isSelected ? 0.9 : 0.36,
+      renderFit: isSelected ? 0.88 : 0.35,
+      reason: isSelected
+        ? `${selectedTitle} surface가 관찰된 데이터 구조와 가장 잘 맞습니다.`
+        : "선택된 surface보다 데이터 구조 적합도가 낮습니다.",
+      missingRequiredSlots: [],
+      risks: isSelected ? [] : ["lower_surface_fit"],
+    };
+  });
 
   return {
     selectedTemplateId,
     confidence: 0.91,
-    reason:
-      selectedTemplateId === "equipment.telemetryStatusTable"
-        ? "상태 필드와 numeric telemetry 필드가 모두 있어 컬럼 많은 계측 상태 테이블이 가장 적합합니다."
-        : selectedTemplateId === "equipment.imageCardList"
-          ? "이미지와 설명 필드가 있어 장비 이미지 카드가 가장 적합합니다."
-          : "장비명과 여러 상태 필드가 있어 상태 목록 템플릿이 가장 적합합니다.",
+    reason: `${selectedTitle} surface가 API 데이터 구조를 가장 적게 손실하며 보여줍니다.`,
     primaryArrayPath: extracted.arrayPath ?? "items",
     fieldMappings,
     slotMappings,
@@ -1625,7 +1718,16 @@ function isAllowedTargetField(mappingItem: PlannerFieldMapping, sourceValue: unk
   if (canonicalTargetFields.has(mappingItem.targetField)) return true;
   const sourceFieldType = fieldType(sourceValue);
   const key = sourceKey(mappingItem.sourcePath);
-  return Boolean(key && mappingItem.targetField === key && (sourceFieldType === "number" || rolesForKey(key, sourceFieldType).includes("metric")));
+  return Boolean(
+    key &&
+    mappingItem.targetField === key &&
+    (
+      sourceFieldType === "number" ||
+      sourceFieldType === "boolean" ||
+      sourceFieldType === "string" ||
+      rolesForKey(key, sourceFieldType).some((role) => ["metric", "status", "booleanFlag", "progress"].includes(role))
+    ),
+  );
 }
 
 function isValidSourcePath(sourcePath: string | undefined, validSourcePaths: Set<string>) {
@@ -1644,17 +1746,27 @@ function sourcePathForTarget(targetField: string | undefined, paths: string[], s
   if (!normalized) return undefined;
   if (/^(telemetry_|metric_)/i.test(normalized)) return findSourcePathByKeys(paths, [normalized]);
   if (normalized === "id") return findSourcePathByKeys(paths, idSourceKeys);
-  if (normalized === "name") return findSourcePathByKeys(paths, titleSourceKeys);
+  if (normalized === "name" || normalized === "title") return findSourcePathByKeys(paths, titleSourceKeys);
   if (normalized === "isOnline") return findSourcePathByKeys(paths, onlineSourceKeys);
   if (normalized === "isRunning") return findSourcePathByKeys(paths, runningSourceKeys);
   if (normalized === "hasAlarm") return findSourcePathByKeys(paths, alarmSourceKeys);
   if (normalized === "needsInspection") return findSourcePathByKeys(paths, inspectionSourceKeys);
   if (normalized === "isReserved") return findSourcePathByKeys(paths, reservedSourceKeys);
-  if (normalized === "updatedAt") return findSourcePathByKeys(paths, updatedAtSourceKeys);
+  if (normalized === "updatedAt" || normalized === "time") return findSourcePathByKeys(paths, updatedAtSourceKeys);
   if (normalized === "location") return findSourcePathByKeys(paths, locationSourceKeys);
-  if (normalized === "imageUrl") return findSourcePathByKeys(paths, ["imageUrl", "thumbnailUrl", "photoUrl"]);
-  if (normalized === "description") return findSourcePathByKeys(paths, ["description", "summary", "content"]);
+  if (normalized === "imageUrl" || normalized === "image") return findSourcePathByKeys(paths, ["imageUrl", "thumbnailUrl", "photoUrl", "image"]);
+  if (normalized === "description" || normalized === "content") return findSourcePathByKeys(paths, ["description", "summary", "content"]);
   if (normalized === "category") return findSourcePathByKeys(paths, ["category", "type"]);
+  if (normalized === "status") return findSourcePathByKeys(paths, ["status", "state", "stage", "phase"]);
+  if (normalized === "progress") return findSourcePathByKeys(paths, ["progress", "percent", "percentage", "completionRate", "doneRatio", "completionPercent"]);
+  if (normalized === "priority") return findSourcePathByKeys(paths, ["priority", "severity", "urgency", "rank"]);
+  if (normalized === "assignee") return findSourcePathByKeys(paths, ["assignee", "owner", "manager", "operator"]);
+  if (normalized === "actor") return findSourcePathByKeys(paths, ["actor", "author", "createdBy", "created_by", "user", "requester"]);
+  if (normalized === "dueAt") return findSourcePathByKeys(paths, ["dueAt", "due_at", "deadline", "targetDate"]);
+  if (normalized === "parentId") return findSourcePathByKeys(paths, ["parentId", "parent_id", "parent"]);
+  if (normalized === "children") return findSourcePathByKeys(paths, ["children", "nodes", "items"]);
+  if (normalized === "delta") return findSourcePathByKeys(paths, ["delta", "change", "diff", "growth"]);
+  if (normalized === "unit") return findSourcePathByKeys(paths, ["unit", "currency", "uom"]);
   return undefined;
 }
 
@@ -1679,13 +1791,22 @@ function normalizeTargetFieldValue(targetField: string | undefined, sourcePath?:
   if (isMetricLikeKey(key)) return key;
 
   const fieldHint = `${slot ?? ""} ${key} ${sourcePathKey ?? ""}`;
-  if (/title|label|name|equipmentName|equipment_name|eqpNm|eqp_nm|assetDisplayName|assetName|asset_nm|asset_name/i.test(fieldHint)) return "name";
+  if (/title|label|name|equipmentName|equipment_name|eqpNm|eqp_nm|assetDisplayName|assetName|asset_nm|asset_name/i.test(fieldHint)) return "title";
   if (/^id$|Id$|_id$|assetId|eqp_id/i.test(fieldHint)) return "id";
-  if (/image|photo|thumbnail/i.test(fieldHint)) return "imageUrl";
+  if (/image|photo|thumbnail/i.test(fieldHint)) return "image";
   if (/description|content|summary/i.test(fieldHint)) return "description";
   if (/category|type/i.test(fieldHint)) return "category";
   if (/location|zone|site|plant/i.test(fieldHint)) return "location";
   if (/updatedAt|last|dtm|date|time|signal/i.test(fieldHint)) return "updatedAt";
+  if (/progress|percent|percentage|completion|doneRatio/i.test(fieldHint)) return "progress";
+  if (/priority|severity|urgency|rank/i.test(fieldHint)) return "priority";
+  if (/assignee|owner|manager|operator|담당/i.test(fieldHint)) return "assignee";
+  if (/due|deadline|targetDate/i.test(fieldHint)) return "dueAt";
+  if (/actor|author|createdBy|requester|user/i.test(fieldHint)) return "actor";
+  if (/parentId|parent_id|parent/i.test(fieldHint)) return "parentId";
+  if (/children|nodes/i.test(fieldHint)) return "children";
+  if (/delta|change|diff|growth/i.test(fieldHint)) return "delta";
+  if (/unit|currency|uom/i.test(fieldHint)) return "unit";
   if (/running|runYn|runStateYn|running_code/i.test(fieldHint)) return "isRunning";
   if (/online|opYn|operation_yn|operStateCd|oper/i.test(fieldHint)) return "isOnline";
   if (/alarm|alrm/i.test(fieldHint)) return "hasAlarm";
@@ -1709,13 +1830,12 @@ function normalizeTransformForTarget(mappingItem: PlannerFieldMapping, sourceVal
 }
 
 function normalizeAIPlan(plan: AIPlannerPlan, extracted: RowExtraction): AIPlannerPlan {
-  const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
+  const paths = sourcePathsForExtraction(extracted);
   const firstRow = extracted.rows[0] ?? {};
 
   const fieldMappings = (plan.fieldMappings ?? []).map((item) => {
     const sourcePath = normalizeSourcePath(item.sourcePath, paths, item.targetField);
     const targetField = normalizeTargetFieldValue(item.targetField, sourcePath);
-    const sourceValueKey = sourceKey(sourcePath);
     const normalizedItem = {
       ...item,
       sourcePath,
@@ -1723,7 +1843,7 @@ function normalizeAIPlan(plan: AIPlannerPlan, extracted: RowExtraction): AIPlann
     };
     return {
       ...normalizedItem,
-      transform: normalizeTransformForTarget(normalizedItem, sourceValueKey ? firstRow[sourceValueKey] : undefined),
+      transform: normalizeTransformForTarget(normalizedItem, sourcePath ? valueForSourcePath(firstRow, sourcePath, extracted) : undefined),
     };
   });
 
@@ -1746,7 +1866,7 @@ function normalizeAIPlan(plan: AIPlannerPlan, extracted: RowExtraction): AIPlann
 function canRepairIncompleteAIResult(ai: Pick<PlannerJsonRequestResult<unknown>, "error" | "internalError">) {
   if (!ai.error) return false;
   const internalError = ai.internalError ?? "";
-  if (/OPENAI_API_KEY|status 401|status 403|unauthorized|forbidden|invalid_api_key/i.test(internalError)) return false;
+  if (/status 401|status 403|unauthorized|forbidden|invalid_api_key/i.test(internalError)) return false;
   return true;
 }
 
@@ -1786,7 +1906,7 @@ function normalizeComparisonRole(value: unknown): ComparisonFieldRole {
 
 function normalizeComparisonData(comparisonData: ComparisonDataResult | undefined, extracted: RowExtraction): ComparisonDataResult | undefined {
   if (!comparisonData || typeof comparisonData !== "object") return undefined;
-  const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
+  const paths = sourcePathsForExtraction(extracted);
   const validPaths = new Set(paths);
   const firstRow = extracted.rows[0] ?? {};
   const normalizePathList = (value: unknown) => stringArray(value).filter((path) => validPaths.has(path));
@@ -1794,8 +1914,9 @@ function normalizeComparisonData(comparisonData: ComparisonDataResult | undefine
   for (const field of Array.isArray(comparisonData.fieldProfiles) ? comparisonData.fieldProfiles : []) {
     const sourcePath = typeof field.sourcePath === "string" && validPaths.has(field.sourcePath) ? field.sourcePath : undefined;
     if (!sourcePath) continue;
-    const key = sourceKey(sourcePath) ?? sourcePath;
-    const sourceValue = firstRow[key];
+    const observedField = extracted.observedSource ? fieldForSourcePath(extracted.observedSource, sourcePath) : undefined;
+    const key = observedField?.key ?? sourceKey(sourcePath) ?? sourcePath;
+    const sourceValue = valueForSourcePath(firstRow, sourcePath, extracted);
     fieldProfiles.push({
       ...field,
       sourcePath,
@@ -1808,7 +1929,7 @@ function normalizeComparisonData(comparisonData: ComparisonDataResult | undefine
       confidence: scoreValue(field.confidence, 0.7),
       exampleValues: Array.isArray(field.exampleValues)
         ? field.exampleValues.slice(0, 5)
-        : extracted.rows.slice(0, maxPromptSampleRows).map((row) => row[key]).filter((value) => value !== undefined),
+        : extracted.rows.slice(0, maxPromptSampleRows).map((row) => valueForSourcePath(row, sourcePath, extracted)).filter((value) => value !== undefined),
       reason: typeof field.reason === "string" && field.reason.trim() ? field.reason : "AI가 source sample을 보고 필드 의미를 추정했습니다.",
     });
   }
@@ -1830,9 +1951,9 @@ function normalizeComparisonData(comparisonData: ComparisonDataResult | undefine
 }
 
 function fallbackComparisonData({ rawData, extracted }: { rawData: unknown; extracted: RowExtraction }): ComparisonDataResult {
-  const paths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
-  const promptPaths = promptFieldPaths(paths, extracted.rows);
-  const fields = sourceFieldSummaries(extracted.rows, promptPaths);
+  const paths = sourcePathsForExtraction(extracted);
+  const promptPaths = promptFieldPaths(paths, extracted.rows, extracted);
+  const fields = sourceFieldSummaries(extracted.rows, promptPaths, extracted);
   const fieldProfiles = fields.map((field) => {
     const roles = field.roles;
     const role = roles.includes("title")
@@ -1888,7 +2009,7 @@ function validateComparisonData({
   extracted: RowExtraction;
 }): ValidationResult {
   const errors: string[] = [];
-  const sourcePaths = new Set(fieldPaths(extracted.rows, extracted.arrayPath ?? "items"));
+  const sourcePaths = new Set(sourcePathsForExtraction(extracted));
   if (!comparisonData) {
     errors.push("AI comparison data did not return an object.");
     return { ok: false, errors };
@@ -1906,7 +2027,7 @@ function validateComparisonData({
   return { ok: errors.length === 0, errors };
 }
 
-function metricSourcePathsForPlanning(paths: string[], rows: DataRecord[], comparisonData?: ComparisonDataResult) {
+function metricSourcePathsForPlanning(paths: string[], rows: DataRecord[], comparisonData?: ComparisonDataResult, extracted?: RowExtraction) {
   const firstRow = rows[0] ?? {};
   const validPaths = new Set(paths);
   const aiMetricPaths = [
@@ -1915,8 +2036,8 @@ function metricSourcePathsForPlanning(paths: string[], rows: DataRecord[], compa
       .filter((field) => field.role === "metric" || /metric|measure|telemetry|sensor|수치|계측/i.test(`${field.targetHint ?? ""} ${field.reason ?? ""}`))
       .map((field) => field.sourcePath)
       .filter((path): path is string => Boolean(path))),
-  ].filter((path) => validPaths.has(path) && fieldType(firstRow[sourceKey(path) ?? ""]) === "number");
-  return orderedUnique([...aiMetricPaths, ...metricSourcePaths(paths, rows)]);
+  ].filter((path) => validPaths.has(path) && typeForSourcePath(firstRow, path, extracted) === "number");
+  return orderedUnique([...aiMetricPaths, ...metricSourcePaths(paths, rows, extracted)]);
 }
 
 function candidateNoteFor(selection: TemplateSelectionResult, templateId: string) {
@@ -1957,12 +2078,10 @@ function candidateEvaluationsFromSelection(selection: TemplateSelectionResult, t
 function validateTemplateSelection({
   selection,
   templates,
-  apiId,
   telemetryMetricPathCount,
 }: {
   selection: TemplateSelectionResult | undefined;
   templates: A2UITemplateRegistration[];
-  apiId: EquipmentApiId;
   telemetryMetricPathCount: number;
 }): ValidationResult {
   const errors: string[] = [];
@@ -1972,10 +2091,7 @@ function validateTemplateSelection({
   if (!selectedTemplateId) errors.push("AI template selection did not include selectedTemplateId.");
   else if (!registeredIds.has(selectedTemplateId)) errors.push(`Selected template is not registered: ${selectedTemplateId}`);
   if (!selection?.reason || !selection.reason.trim()) errors.push("AI template selection did not include reason.");
-  if (apiId === "equipment-catalog" && selectedTemplateId && selectedTemplateId !== "equipment.imageCardList") {
-    errors.push(`equipment-catalog must select equipment.imageCardList, got ${selectedTemplateId}.`);
-  }
-  if (selectedTemplateId === "equipment.telemetryStatusTable" && telemetryMetricPathCount < 3) {
+  if ((selectedTemplateId === "equipment.telemetryStatusTable") && telemetryMetricPathCount < 3) {
     errors.push(`Telemetry template requires at least 3 telemetry/metric source fields before slot mapping, got ${telemetryMetricPathCount}.`);
   }
 
@@ -2057,7 +2173,8 @@ function validatePlan({
   const registeredTemplates = templates.filter((template) => template.status === "registered").map(normalizeTemplateInputSchema);
   const selectedTemplate = registeredTemplates.find((template) => template.componentId === plan.selectedTemplateId);
   const registeredTemplateIds = new Set(registeredTemplates.map((template) => template.componentId));
-  const sourcePaths = new Set(fieldPaths(extracted.rows, extracted.arrayPath ?? "items"));
+  const sourcePathList = sourcePathsForExtraction(extracted);
+  const sourcePaths = new Set(sourcePathList);
   const mappings = Array.isArray(plan.fieldMappings) ? plan.fieldMappings : [];
   const slotMappings = Array.isArray(plan.slotMappings) ? plan.slotMappings : [];
   const candidateEvaluations = Array.isArray(plan.candidateEvaluations) ? plan.candidateEvaluations : [];
@@ -2071,8 +2188,7 @@ function validatePlan({
     if (!item.targetField) errors.push("fieldMappings item is missing targetField.");
     if (!allowedTransforms.includes(item.transform)) errors.push(`Unsupported transform: ${item.transform}`);
     if (hasWildcardPath(item.sourcePath)) errors.push(`Wildcard sourcePath is not allowed: ${item.sourcePath}`);
-    const key = sourceKey(item.sourcePath);
-    if (item.targetField && !isAllowedTargetField(item, key ? firstRow[key] : undefined)) {
+    if (item.targetField && !isAllowedTargetField(item, item.sourcePath ? valueForSourcePath(firstRow, item.sourcePath, extracted) : undefined)) {
       errors.push(`Unsupported targetField: ${item.targetField}`);
     }
     if (item.transform !== "default_false" && (!item.sourcePath || !sourcePaths.has(item.sourcePath))) {
@@ -2114,8 +2230,7 @@ function validatePlan({
         errors.push(`slotMappings source is not backed by fieldMappings: ${item.sourcePath ?? item.targetField ?? "(empty)"}`);
         continue;
       }
-      const key = sourceKey(item.sourcePath ?? mappingItem.sourcePath);
-      const mappedType = targetTypeFromMapping(mappingItem, key ? firstRow[key] : undefined);
+      const mappedType = targetTypeFromMapping(mappingItem, valueForSourcePath(firstRow, item.sourcePath ?? mappingItem.sourcePath ?? "", extracted));
       if (!slot.acceptsTypes.includes(mappedType)) {
         errors.push(`Slot ${item.slot} does not accept mapped type ${mappedType} from ${item.sourcePath ?? item.targetField}`);
       }
@@ -2130,7 +2245,7 @@ function validatePlan({
     }
 
     if (selectedTemplate.componentId === "equipment.telemetryStatusTable") {
-      const telemetryMetricPaths = new Set(metricSourcePathsForPlanning(fieldPaths(extracted.rows, extracted.arrayPath ?? "items"), extracted.rows, comparisonData));
+      const telemetryMetricPaths = new Set(metricSourcePathsForPlanning(sourcePathList, extracted.rows, comparisonData, extracted));
       const telemetryMetricCount = slotMappings.filter((item) => item.slot === "items[].metrics" && Boolean(item.sourcePath && telemetryMetricPaths.has(item.sourcePath))).length;
       if (telemetryMetricCount < 3) {
         errors.push(`Telemetry template requires at least 3 concrete metric slot mappings from AI comparison data, got ${telemetryMetricCount}.`);
@@ -2212,9 +2327,12 @@ function timestampFromValue(value: unknown) {
   return Number.isFinite(timestamp) ? timestamp : undefined;
 }
 
-function latestTimestampForRow(row: DataRecord, preferredKey?: string) {
+function latestTimestampForRow(row: DataRecord, preferredSourcePath?: string, extracted?: RowExtraction) {
+  if (preferredSourcePath) {
+    const preferredTimestamp = timestampFromValue(valueForSourcePath(row, preferredSourcePath, extracted));
+    if (preferredTimestamp !== undefined) return preferredTimestamp;
+  }
   const keys = [
-    preferredKey,
     "updatedAt",
     "lastUpdatedAt",
     "lastDtm",
@@ -2236,11 +2354,10 @@ function displayRowsForPlan(plan: AIPlannerPlan, extracted: RowExtraction) {
   const updatedAtSourcePath =
     plan.fieldMappings?.find((item) => item.targetField === "updatedAt" && item.sourcePath)?.sourcePath ??
     plan.slotMappings?.find((item) => /updatedAt|time/i.test(item.slot) && item.sourcePath)?.sourcePath;
-  const preferredKey = sourceKey(updatedAtSourcePath);
   const rowsWithIndex = extracted.rows.map((row, index) => ({
     row,
     index,
-    timestamp: latestTimestampForRow(row, preferredKey),
+    timestamp: latestTimestampForRow(row, updatedAtSourcePath, extracted),
   }));
 
   if (rowsWithIndex.some((item) => item.timestamp !== undefined)) {
@@ -2261,8 +2378,7 @@ function applyPlan(plan: AIPlannerPlan, extracted: RowExtraction): EquipmentApiR
   const items = displayRows.map((row) => {
     const next: DataRecord = {};
     for (const item of mappings) {
-      const key = sourceKey(item.sourcePath);
-      const sourceValue = item.transform === "default_false" ? null : key ? row[key] : undefined;
+      const sourceValue = item.transform === "default_false" ? null : item.sourcePath ? valueForSourcePath(row, item.sourcePath, extracted) : undefined;
       const normalizedValue = applyTransform(item, sourceValue);
       if (normalizedValue === undefined || normalizedValue === null) continue;
       next[item.targetField] = normalizedValue;
@@ -2287,12 +2403,30 @@ function fieldMappingFromSlots(template: A2UITemplateRegistration, plan: AIPlann
   const title = slotMappings.find((item) => /title/i.test(item.slot))?.targetField;
   const content = slotMappings.find((item) => /description|content/i.test(item.slot))?.targetField;
   const image = slotMappings.find((item) => /image/i.test(item.slot))?.targetField;
+  const status = slotMappings.find((item) => /status$/i.test(item.slot) || /status/i.test(item.slot))?.targetField;
+  const category = slotMappings.find((item) => /category/i.test(item.slot))?.targetField;
+  const updatedAt = slotMappings.find((item) => /updatedAt/i.test(item.slot))?.targetField;
+  const time = slotMappings.find((item) => /\.time|time$/i.test(item.slot))?.targetField;
+  const progress = slotMappings.find((item) => /progress/i.test(item.slot))?.targetField;
+  const priority = slotMappings.find((item) => /priority/i.test(item.slot))?.targetField;
+  const assignee = slotMappings.find((item) => /assignee/i.test(item.slot))?.targetField;
+  const actor = slotMappings.find((item) => /actor/i.test(item.slot))?.targetField;
+  const dueAt = slotMappings.find((item) => /dueAt/i.test(item.slot))?.targetField;
+  const parentId = slotMappings.find((item) => /parentId/i.test(item.slot))?.targetField;
+  const children = slotMappings.find((item) => /children/i.test(item.slot))?.targetField;
+  const delta = slotMappings.find((item) => /delta/i.test(item.slot))?.targetField;
+  const unit = slotMappings.find((item) => /unit/i.test(item.slot))?.targetField;
+  const value = slotMappings.find((item) => /value/i.test(item.slot))?.targetField;
   const booleanFlags = slotMappings
     .filter((item) => /status|boolean|flag/i.test(item.slot))
     .map((item) => renderPath(item.targetField))
     .filter((item): item is string => Boolean(item));
   const metrics = slotMappings
     .filter((item) => /metric/i.test(item.slot))
+    .map((item) => renderPath(item.targetField))
+    .filter((item): item is string => Boolean(item));
+  const fields = slotMappings
+    .filter((item) => /columns|fields/i.test(item.slot))
     .map((item) => renderPath(item.targetField))
     .filter((item): item is string => Boolean(item));
 
@@ -2302,6 +2436,20 @@ function fieldMappingFromSlots(template: A2UITemplateRegistration, plan: AIPlann
     image: renderPath(image) ?? template.surfaceConfig.imageBinding,
     booleanFlags: booleanFlags.length ? booleanFlags : template.surfaceConfig.statusBindings,
     metrics: metrics.length ? metrics : template.surfaceConfig.metricBindings,
+    fields: fields.length ? fields : template.surfaceConfig.fieldBindings,
+    status: renderPath(status) ?? template.surfaceConfig.statusBindings?.[0],
+    category: renderPath(category) ?? template.surfaceConfig.categoryBinding,
+    updatedAt: renderPath(updatedAt) ?? template.surfaceConfig.timeBinding,
+    time: renderPath(time) ?? template.surfaceConfig.timeBinding,
+    progress: renderPath(progress) ?? template.surfaceConfig.progressBinding,
+    priority: renderPath(priority) ?? template.surfaceConfig.priorityBinding,
+    assignee: renderPath(assignee ?? actor) ?? template.surfaceConfig.assigneeBinding,
+    dueAt: renderPath(dueAt) ?? template.surfaceConfig.dueAtBinding,
+    parentId: renderPath(parentId) ?? template.surfaceConfig.parentIdBinding,
+    children: renderPath(children) ?? template.surfaceConfig.childrenBinding,
+    delta: renderPath(delta) ?? template.surfaceConfig.deltaBinding,
+    unit: renderPath(unit) ?? template.surfaceConfig.unitBinding,
+    value: renderPath(value) ?? template.surfaceConfig.valueBinding,
   };
 }
 
@@ -2387,6 +2535,8 @@ function buildTrace({
   templateSelection?: TemplateSelectionResult;
   slotMapping?: SlotMappingResult;
 }): A2UISurfacePlanTrace {
+  const sourceFieldPaths = sourcePathsForExtraction(extracted);
+  const observedSource = extracted.observedSource;
   return {
     promptVersion,
     model,
@@ -2401,10 +2551,20 @@ function buildTrace({
     slotMappings: plan.slotMappings ?? [],
     candidateEvaluations: plan.candidateEvaluations ?? [],
     validation,
-    sourceShape: dataShape(rawData),
+    sourceShape: observedSource ? shapeFromObservedSource(observedSource) : dataShape(rawData),
     sourceArrayPath: extracted.arrayPath,
-    sourceFieldPaths: fieldPaths(extracted.rows, extracted.arrayPath ?? "items"),
-    sourceSampleRows: extracted.rows.slice(0, maxPromptSampleRows),
+    sourceFieldPaths,
+    sourceSampleRows: observedSource?.sampleRows ?? extracted.rows.slice(0, maxPromptSampleRows),
+    observedSource: observedSource
+      ? {
+          selectedDatasetPath: observedSource.selectedDataset?.plannerPath,
+          sourceFieldCount: observedSource.fields.length,
+          sourceFieldPaths: sourceFieldPaths.slice(0, maxPromptFieldPaths),
+          sampleRows: observedSource.sampleRows,
+          warnings: observedSource.warnings,
+          truncated: observedSource.truncated,
+        }
+      : undefined,
     sourceRowCount: extracted.rowCount,
     renderRowCount: data?.total,
     sourceDataHash: dataHash(rawData),
@@ -2444,7 +2604,7 @@ export async function planA2UISurfaceWithAI({
     };
   }
 
-  const extractedFieldPaths = fieldPaths(extracted.rows, extracted.arrayPath ?? "items");
+  const extractedFieldPaths = sourcePathsForExtraction(extracted);
 
   await emitProgress(onProgress, {
     status: "profile",
@@ -2454,11 +2614,13 @@ export async function planA2UISurfaceWithAI({
       rowCount: extracted.rowCount,
       previewRowCount: extracted.rowCount,
       previewSampleSize: extracted.rows.slice(0, maxPromptSampleRows).length,
-      sourceShape: dataShape(rawData),
+      sourceShape: extracted.observedSource ? shapeFromObservedSource(extracted.observedSource) : dataShape(rawData),
       sourceArrayPath: extracted.arrayPath,
       sourceFieldCount: extractedFieldPaths.length,
       sourceFieldPaths: extractedFieldPaths.slice(0, maxPromptFieldPaths),
-      sourceSampleRows: extracted.rows.slice(0, maxPromptSampleRows),
+      sourceSampleRows: extracted.observedSource?.sampleRows ?? extracted.rows.slice(0, maxPromptSampleRows),
+      observedWarnings: extracted.observedSource?.warnings,
+      observedTruncated: extracted.observedSource?.truncated,
     },
   });
 
@@ -2471,8 +2633,13 @@ export async function planA2UISurfaceWithAI({
   const catalog = await readTemplateCatalog();
   const templates = catalog.templates.map(normalizeTemplateInputSchema);
   const registeredTemplates = templates.filter((template) => template.status === "registered");
-  const registeredImageCardTemplate = registeredTemplates.some((template) => template.componentId === "equipment.imageCardList");
-  const registeredStatusTemplate = registeredTemplates.find((template) => template.surfaceConfig.viewType === "statusBooleanList");
+  const registeredImageCardTemplate = registeredTemplates.some((template) => template.componentId === "equipment.imageCardList" || template.surfaceConfig.viewType === "collection.cardGrid");
+  const registeredStatusTemplate = registeredTemplates.find((template) =>
+    template.surfaceConfig.viewType === "statusBooleanList" ||
+    template.surfaceConfig.viewType === "matrix.statusMatrix" ||
+    template.surfaceConfig.viewType === "matrix.table" ||
+    template.surfaceConfig.viewType === "collection.list"
+  );
   const registeredTelemetryTemplate = registeredTemplates.find((template) => template.componentId === "equipment.telemetryStatusTable");
 
   await emitProgress(onProgress, {
@@ -2616,7 +2783,7 @@ export async function planA2UISurfaceWithAI({
     };
   }
 
-  const telemetryMetricPathCount = metricSourcePathsForPlanning(extractedFieldPaths, extracted.rows, comparisonData).length;
+  const telemetryMetricPathCount = metricSourcePathsForPlanning(extractedFieldPaths, extracted.rows, comparisonData, extracted).length;
   const canUseTelemetryTemplate = Boolean(registeredTelemetryTemplate && telemetryMetricPathCount >= 3);
 
   if (apiId === "equipment-catalog" && !registeredImageCardTemplate) {
@@ -2801,7 +2968,7 @@ export async function planA2UISurfaceWithAI({
   model = selectionAi.model;
   plannerAttempts = [...plannerAttempts, ...(selectionAi.attempts ?? [])];
   let selection = selectionAi.result ?? (process.env.A2UI_AI_SURFACE_PLANNER_MOCK === "1" ? mockTemplateSelection({ query, apiId, extracted, templates }) : undefined);
-  let selectionValidation = validateTemplateSelection({ selection, templates, apiId, telemetryMetricPathCount });
+  let selectionValidation = validateTemplateSelection({ selection, templates, telemetryMetricPathCount });
 
   if (!selectionValidation.ok && process.env.A2UI_AI_SURFACE_PLANNER_MOCK !== "1") {
     const retry = await requestTemplateSelection(selectionPrompt, {
@@ -2813,9 +2980,41 @@ export async function planA2UISurfaceWithAI({
     if (retry.result) {
       selectionAi = retry;
       selection = retry.result;
-      selectionValidation = validateTemplateSelection({ selection, templates, apiId, telemetryMetricPathCount });
+      selectionValidation = validateTemplateSelection({ selection, templates, telemetryMetricPathCount });
     } else if (retry.internalError) {
       selectionAi = { ...selectionAi, internalError: retry.internalError };
+    }
+  }
+
+  if ((!selection || !selectionValidation.ok) && canRepairIncompleteAIResult(selectionAi)) {
+    selection = mockTemplateSelection({ query, apiId, extracted, templates });
+    selectionValidation = validateTemplateSelection({ selection, templates, telemetryMetricPathCount });
+    if (selectionValidation.ok) {
+      model = `${model ?? "unknown"}+template-selection-repair`;
+      console.warn("[a2ui] AI template selector used source-schema repair after incomplete LLM response", {
+        selectedTemplateId: selection.selectedTemplateId,
+        internalError: selectionAi.internalError,
+      });
+    }
+  }
+
+  const presentationIntent = presentationIntentForQuery(query);
+  if (selection && selectionValidation.ok && presentationIntent.requestedSurfaces.length > 0) {
+    const intentSelection = mockTemplateSelection({ query, apiId, extracted, templates });
+    const shouldHonorIntent =
+      Boolean(intentSelection.selectedTemplateId) &&
+      presentationIntent.requestedSurfaces.includes(String(intentSelection.selectedTemplateId)) &&
+      intentSelection.selectedTemplateId !== selection.selectedTemplateId;
+    if (shouldHonorIntent) {
+      const intentValidation = validateTemplateSelection({ selection: intentSelection, templates, telemetryMetricPathCount });
+      if (intentValidation.ok) {
+        selection = {
+          ...intentSelection,
+          reason: `${intentSelection.reason} 사용자 표현 의도(${presentationIntent.sourcePhrase})를 우선 반영했습니다.`,
+        };
+        selectionValidation = intentValidation;
+        model = `${model ?? "unknown"}+presentation-intent`;
+      }
     }
   }
 

@@ -67,11 +67,44 @@ class BusinessToolsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(large.metadata["sourceRowCount"], 1000)
         self.assertEqual(large.metadata["sourceDataShape"], "object{result.rows:array<object>}")
 
+    async def test_fixture_business_tools_are_registered_and_mark_source(self) -> None:
+        seen_api_ids = []
+
+        async def fake_fetch(api_id):
+            seen_api_ids.append(api_id)
+            return {
+                "items": [{"id": f"{api_id}-1", "title": f"{api_id} item", "progress": 42}],
+                "total": 1,
+                "page": 1,
+                "pageSize": 44,
+            }
+
+        with patch("app.business_tools.fetch_equipment_data", fake_fetch):
+            work = await run_business_tool("get_work_items")
+            resources = await run_business_tool("get_resources")
+            checks = await run_business_tool("get_status_checks")
+            summary = await run_business_tool("get_summary_metrics")
+            hierarchy = await run_business_tool("get_hierarchy")
+
+        self.assertEqual(seen_api_ids, ["work-items", "resources", "status-checks", "summary", "hierarchy"])
+        self.assertEqual(work.api_id, "work-items")
+        self.assertEqual(resources.api_id, "resources")
+        self.assertEqual(checks.api_id, "status-checks")
+        self.assertEqual(summary.api_id, "summary")
+        self.assertEqual(hierarchy.api_id, "hierarchy")
+        self.assertEqual(work.metadata["sourceToolName"], "get_work_items")
+        self.assertEqual(work.metadata["sourceRowCount"], 1)
+
     def test_tool_router_is_bidirectional(self) -> None:
         self.assertEqual(business_tool_for_api("equipment-catalog"), "get_equipment_catalog")
         self.assertEqual(api_id_for_business_tool("get_equipment_status"), "equipment-status")
         self.assertEqual(business_tool_for_api("equipment-status-wide-columns"), "get_equipment_status_wide_columns")
         self.assertEqual(api_id_for_business_tool("get_equipment_status_large_rows"), "equipment-status-large-rows")
+        self.assertEqual(business_tool_for_api("work-items"), "get_work_items")
+        self.assertEqual(api_id_for_business_tool("get_resources"), "resources")
+        self.assertEqual(business_tool_for_api("status-checks"), "get_status_checks")
+        self.assertEqual(api_id_for_business_tool("get_summary_metrics"), "summary")
+        self.assertEqual(business_tool_for_api("hierarchy"), "get_hierarchy")
 
 
 if __name__ == "__main__":

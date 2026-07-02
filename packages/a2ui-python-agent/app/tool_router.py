@@ -7,6 +7,11 @@ BusinessToolName = Literal[
     "get_equipment_status",
     "get_equipment_status_wide_columns",
     "get_equipment_status_large_rows",
+    "get_work_items",
+    "get_resources",
+    "get_status_checks",
+    "get_summary_metrics",
+    "get_hierarchy",
 ]
 
 
@@ -39,6 +44,36 @@ BUSINESS_TOOLS: dict[BusinessToolName, BusinessToolDefinition] = {
     "get_equipment_status_large_rows": {
         "api_id": "equipment-status-large-rows",
         "description": "row 수가 많은 장비 상태 테스트 API",
+        "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
+        "output_shape": "object{items:array<object>,total:number,page:number,pageSize:number}",
+    },
+    "get_work_items": {
+        "api_id": "work-items",
+        "description": "진행률, 우선순위, 담당자, 기한이 있는 작업 항목 Fixture API",
+        "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
+        "output_shape": "object{items:array<object>,total:number,page:number,pageSize:number}",
+    },
+    "get_resources": {
+        "api_id": "resources",
+        "description": "이미지와 설명이 있는 리소스 Fixture API",
+        "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
+        "output_shape": "object{items:array<object>,total:number,page:number,pageSize:number}",
+    },
+    "get_status_checks": {
+        "api_id": "status-checks",
+        "description": "boolean 상태 체크 Fixture API",
+        "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
+        "output_shape": "object{items:array<object>,total:number,page:number,pageSize:number}",
+    },
+    "get_summary_metrics": {
+        "api_id": "summary",
+        "description": "숫자 지표 요약 Fixture API",
+        "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
+        "output_shape": "object{items:array<object>,total:number,page:number,pageSize:number}",
+    },
+    "get_hierarchy": {
+        "api_id": "hierarchy",
+        "description": "children 기반 계층 구조 Fixture API",
         "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
         "output_shape": "object{items:array<object>,total:number,page:number,pageSize:number}",
     },

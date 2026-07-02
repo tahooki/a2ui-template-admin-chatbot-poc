@@ -24,7 +24,7 @@ export function A2UITemplatePocPage() {
   const { templates, version, saveTemplate, resetRegistry, isLoading, error } = useTemplateRegistry();
   const [chatWidth, setChatWidth] = useState(304);
   const [chatResetKey, setChatResetKey] = useState(0);
-  const [isFlowPlaybackDelayed, setIsFlowPlaybackDelayed] = useState(true);
+  const [isFlowPlaybackDelayed, setIsFlowPlaybackDelayed] = useState(false);
   const [flowEvents, setFlowEvents] = useState<AgentFlowEvent[]>([]);
   const [selectedBoundaryScenario, setSelectedBoundaryScenario] = useState<DataBoundaryScenarioId>("status");
   const draggingRef = useRef(false);

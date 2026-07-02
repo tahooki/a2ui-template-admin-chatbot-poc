@@ -14,6 +14,22 @@ def _value_at_path(data: Any, path: tuple[str, ...]) -> Any:
     return current
 
 
+def _row_value_at_path(row: dict[str, Any], path: tuple[str, ...]) -> Any:
+    current: Any = row
+    for key in path:
+        if isinstance(current, list):
+            if key == "length":
+                return len(current)
+            if key == "first":
+                current = current[0] if current else None
+                continue
+            return None
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
 def _int_at_path(data: Any, path: tuple[str, ...]) -> int | None:
     value = _value_at_path(data, path)
     return value if isinstance(value, int) else None
@@ -23,6 +39,14 @@ def _first_int_at_paths(data: Any, paths: tuple[tuple[str, ...], ...]) -> int | 
     for path in paths:
         value = _int_at_path(data, path)
         if value is not None:
+            return value
+    return None
+
+
+def _nested_total(data: dict[str, Any]) -> int | None:
+    for key in ("total", "totalCount", "count", "rowCount"):
+        value = data.get(key)
+        if isinstance(value, int):
             return value
     return None
 
@@ -38,35 +62,83 @@ def _set_path(data: dict[str, Any], path: tuple[str, ...], value: Any) -> dict[s
     return {**data, key: _set_path(child_object, path[1:], value)}
 
 
-def _rows_from_data(data: Any) -> tuple[list[Any], str, str | None, int]:
+def _array_candidates(data: Any) -> list[tuple[tuple[str, ...], list[Any], dict[str, Any] | None]]:
     if isinstance(data, list):
-        object_rows = [item for item in data if isinstance(item, dict)]
-        shape = "array<object>" if len(object_rows) == len(data) else "array<primitive>"
-        return data, shape, None, len(data)
+        return [((), data, None)]
+
+    candidates: list[tuple[tuple[str, ...], list[Any], dict[str, Any] | None]] = []
+
+    def visit(value: Any, path: tuple[str, ...], parent: dict[str, Any] | None) -> None:
+        if isinstance(value, list):
+            candidates.append((path, value, parent))
+            return
+        if not isinstance(value, dict):
+            return
+        path_text = ".".join(path)
+        if path and re.search(r"metadata|debug|errors?|warnings?|logs?", path_text, re.IGNORECASE):
+            return
+        for key, child in value.items():
+            visit(child, (*path, key), value)
 
     if isinstance(data, dict):
-        array_candidates = [
-            (("items",), (("total",),)),
-            (("rows",), (("total",), ("totalCount",), ("count",), ("rowCount",))),
-            (("result", "rows"), (("result", "totalCount"), ("result", "total"), ("total",))),
-            (("data", "rows"), (("data", "totalCount"), ("data", "total"), ("total",))),
-            (("payload", "rows"), (("payload", "totalCount"), ("payload", "total"), ("total",))),
-            (("result", "items"), (("result", "totalCount"), ("result", "total"), ("total",))),
-            (("data", "items"), (("data", "totalCount"), ("data", "total"), ("total",))),
-            (("payload", "items"), (("payload", "totalCount"), ("payload", "total"), ("total",))),
-            (("result", "list"), (("result", "totalCount"), ("result", "total"), ("total",))),
-            (("data", "list"), (("data", "totalCount"), ("data", "total"), ("total",))),
-            (("payload", "list"), (("payload", "totalCount"), ("payload", "total"), ("total",))),
-        ]
-        for array_path, total_paths in array_candidates:
-            rows = _value_at_path(data, array_path)
-            if not isinstance(rows, list):
-                continue
-            row_count = _first_int_at_paths(data, total_paths)
-            primary_array_path = ".".join(array_path)
-            if primary_array_path == "items":
-                return rows, "array<object>", primary_array_path, row_count if row_count is not None else len(rows)
+        visit(data, (), None)
+    return candidates
+
+
+def _candidate_score(path: tuple[str, ...], rows: list[Any]) -> float:
+    object_rows = [row for row in rows if isinstance(row, dict)]
+    object_ratio = len(object_rows) / len(rows) if rows else 0
+    path_hint = 0.12 if path and re.search(r"items|rows|list|data|result|payload", path[-1], re.IGNORECASE) else 0
+    leaf_count = len(_deep_field_paths(object_rows[:10])) if object_rows else 0
+    depth_penalty = min(0.08, len(path) * 0.01)
+    return max(0, min(1, min(0.22, len(rows) / 50) + object_ratio * 0.34 + min(0.24, leaf_count / 30) + path_hint - depth_penalty))
+
+
+def _collect_deep_field_paths(value: Any, prefix: tuple[str, ...], output: set[tuple[str, ...]], depth: int = 0, max_depth: int = 12) -> None:
+    if depth > max_depth:
+        return
+    if isinstance(value, list):
+        if prefix:
+            output.add((*prefix, "length"))
+            first = next((item for item in value if item is not None), None)
+            if first is not None:
+                _collect_deep_field_paths(first, (*prefix, "first"), output, depth + 1, max_depth)
+        return
+    if isinstance(value, dict):
+        if not value and prefix:
+            output.add(prefix)
+        for key, child in value.items():
+            _collect_deep_field_paths(child, (*prefix, key), output, depth + 1, max_depth)
+        return
+    if prefix:
+        output.add(prefix)
+
+
+def _deep_field_paths(rows: list[dict[str, Any]]) -> list[tuple[str, ...]]:
+    output: set[tuple[str, ...]] = set()
+    for row in rows:
+        _collect_deep_field_paths(row, (), output)
+    return sorted(output)
+
+
+def _rows_from_data(data: Any) -> tuple[list[Any], str, str | None, int]:
+    candidates = _array_candidates(data)
+    if candidates:
+        candidates.sort(key=lambda candidate: _candidate_score(candidate[0], candidate[1]), reverse=True)
+        array_path, rows, parent = candidates[0]
+        object_rows = [item for item in rows if isinstance(item, dict)]
+        item_shape = "array<object>" if len(object_rows) == len(rows) else "array<primitive>"
+        primary_array_path = ".".join(array_path) if array_path else None
+        row_count = _nested_total(parent or {}) if parent else None
+        if primary_array_path and isinstance(data, dict):
+            row_count = row_count or _first_int_at_paths(data, (("total",), ("totalCount",), ("count",), ("rowCount",)))
+        if primary_array_path == "items":
+            return rows, item_shape, primary_array_path, row_count if row_count is not None else len(rows)
+        if primary_array_path:
             return rows, f"object{{{primary_array_path}:array<object>}}", primary_array_path, row_count if row_count is not None else len(rows)
+        return rows, item_shape, None, len(rows)
+
+    if isinstance(data, dict):
         return [data], "object", None, 1
 
     return [], "unknown", None, 0
@@ -220,15 +292,21 @@ def build_derived_schema(data: Any, source_id: str = "unknown", sample_data_prev
     preview = sample_data_preview or build_sample_data_preview(data, source_id=source_id)
     rows, _, primary_array_path, _ = _rows_from_data(preview.get("data"))
     object_rows = [row for row in rows if isinstance(row, dict)]
-    keys = sorted({key for row in object_rows for key in row.keys()})
+    field_paths = _deep_field_paths(object_rows)
     fields: list[dict[str, Any]] = []
 
-    for key in keys:
-        examples = [row.get(key) for row in object_rows[:5] if key in row]
+    for field_path in field_paths:
+        key = field_path[-1]
+        path_text = ".".join(field_path)
+        examples = [
+            value
+            for value in (_row_value_at_path(row, field_path) for row in object_rows[:5])
+            if value is not None
+        ]
         field_type = _field_type(key, examples)
         field_format = _field_format(key, examples)
-        roles = _roles(key, field_type, field_format)
-        path = f"{primary_array_path}.{key}" if primary_array_path else key
+        roles = _roles(path_text, field_type, field_format)
+        path = f"{primary_array_path}.{path_text}" if primary_array_path else path_text
         fields.append(
             {
                 "path": path,

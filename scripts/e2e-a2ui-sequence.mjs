@@ -18,19 +18,24 @@ async function fetchJson(path, init) {
 
 function rows(data, label) {
   expect(data && typeof data === "object", `${label} must return an object`);
+  if (Array.isArray(data)) return data;
   if (Array.isArray(data.items)) return data.items;
   if (Array.isArray(data.result?.rows)) return data.result.rows;
-  fail(`${label} must return items[] or result.rows[]`);
+  if (Array.isArray(data.result?.payload?.body?.rows)) return data.result.payload.body.rows;
+  fail(`${label} must return items[], result.rows[], or result.payload.body.rows[]`);
 }
 
 function rowCount(data) {
   if (typeof data?.total === "number") return data.total;
   if (typeof data?.result?.totalCount === "number") return data.result.totalCount;
+  if (typeof data?.result?.payload?.body?.totalCount === "number") return data.result.payload.body.totalCount;
   return rows(data, "row count data").length;
 }
 
 function intentKey(apiId) {
-  return apiId === "equipment-catalog" ? "equipment.catalog.lookup" : "equipment.status.lookup";
+  if (apiId === "equipment-catalog") return "equipment.catalog.lookup";
+  if (apiId.startsWith("equipment-")) return "equipment.status.lookup";
+  return `a2ui.fixture.${apiId}.lookup`;
 }
 
 function a2aPayload({ query, apiId, data }) {
@@ -170,6 +175,7 @@ function assertProgressSequence({ label, events, expectedTemplateId, expectedSou
   expect(aiTrace?.validation?.ok === true, `${label} slot plan validation should pass`);
   if (expectedSourceArrayPath) {
     expect(aiTrace?.sourceArrayPath === expectedSourceArrayPath, `${label} should extract rows from ${expectedSourceArrayPath}`);
+    expect(aiTrace?.observedSource?.selectedDatasetPath === expectedSourceArrayPath, `${label} should observe dataset ${expectedSourceArrayPath}`);
   }
 
   const attemptStages = new Set((aiTrace?.plannerAttempts ?? []).map((attempt) => attempt.stage));
@@ -193,13 +199,30 @@ async function main() {
   const status = await fetchJson("/api/equipment-status");
   const wide = await fetchJson("/api/equipment-status-wide-columns");
   const large = await fetchJson("/api/equipment-status-large-rows");
+  const workItems = await fetchJson("/api/a2ui-fixtures/work-items");
+  const resources = await fetchJson("/api/a2ui-fixtures/resources");
+  const statusChecks = await fetchJson("/api/a2ui-fixtures/status-checks");
+  const summary = await fetchJson("/api/a2ui-fixtures/summary");
+  const hierarchy = await fetchJson("/api/a2ui-fixtures/hierarchy");
+  const deepNestedStatus = {
+    result: {
+      payload: {
+        body: {
+          rows: rows(status, "status API").slice(0, 3),
+          totalCount: 3,
+          pageNo: 1,
+          rowsPerPage: 3,
+        },
+      },
+    },
+  };
 
   await assertScenario({
     label: "status list sequence",
     query: "장비 상태 목록 보여줘",
     apiId: "equipment-status",
     data: status,
-    expectedTemplateId: "equipment.statusBooleanList",
+    expectedTemplateId: "matrix.statusMatrix",
     expectedSourceArrayPath: "items",
   });
 
@@ -208,7 +231,7 @@ async function main() {
     query: "컬럼이 많은 장비 상태 목록 보여줘",
     apiId: "equipment-status-wide-columns",
     data: wide,
-    expectedTemplateId: "equipment.telemetryStatusTable",
+    expectedTemplateId: "matrix.table",
     expectedSourceArrayPath: "items",
   });
 
@@ -217,8 +240,80 @@ async function main() {
     query: "데이터가 많은 장비 상태 목록 보여줘",
     apiId: "equipment-status-large-rows",
     data: large,
-    expectedTemplateId: "equipment.telemetryStatusTable",
+    expectedTemplateId: "matrix.table",
     expectedSourceArrayPath: "result.rows",
+  });
+
+  await assertScenario({
+    label: "deep nested status sequence",
+    query: "payload body rows 안에 있는 장비 상태 목록 보여줘",
+    apiId: "equipment-status",
+    data: deepNestedStatus,
+    expectedTemplateId: "matrix.statusMatrix",
+    expectedSourceArrayPath: "result.payload.body.rows",
+  });
+
+  await assertScenario({
+    label: "work items progress sequence",
+    query: "work-items API를 진행률로 보여줘",
+    apiId: "work-items",
+    data: workItems,
+    expectedTemplateId: "metric.progressList",
+    expectedSourceArrayPath: "items",
+  });
+
+  await assertScenario({
+    label: "work items table sequence",
+    query: "work-items API를 표로 보여줘",
+    apiId: "work-items",
+    data: workItems,
+    expectedTemplateId: "matrix.table",
+    expectedSourceArrayPath: "items",
+  });
+
+  await assertScenario({
+    label: "work items queue sequence",
+    query: "work-items API를 처리 큐처럼 보여줘",
+    apiId: "work-items",
+    data: workItems,
+    expectedTemplateId: "process.queue",
+    expectedSourceArrayPath: "items",
+  });
+
+  await assertScenario({
+    label: "resources card sequence",
+    query: "resources API를 카드로 보여줘",
+    apiId: "resources",
+    data: resources,
+    expectedTemplateId: "collection.cardGrid",
+    expectedSourceArrayPath: "items",
+  });
+
+  await assertScenario({
+    label: "status checks matrix sequence",
+    query: "status-checks API를 상태표로 보여줘",
+    apiId: "status-checks",
+    data: statusChecks,
+    expectedTemplateId: "matrix.statusMatrix",
+    expectedSourceArrayPath: "items",
+  });
+
+  await assertScenario({
+    label: "summary stat cards sequence",
+    query: "summary API를 숫자 카드로 보여줘",
+    apiId: "summary",
+    data: summary,
+    expectedTemplateId: "metric.statCards",
+    expectedSourceArrayPath: "items",
+  });
+
+  await assertScenario({
+    label: "hierarchy tree sequence",
+    query: "hierarchy API를 트리로 보여줘",
+    apiId: "hierarchy",
+    data: hierarchy,
+    expectedTemplateId: "relation.tree",
+    expectedSourceArrayPath: "items",
   });
 }
 

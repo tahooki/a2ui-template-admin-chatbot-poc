@@ -82,6 +82,49 @@ class DerivedSchemaTest(unittest.TestCase):
         self.assertEqual(derived["rowCount"], 1000)
         self.assertIn("result.rows.eqp_nm", field_paths)
 
+    def test_deep_wrapper_and_deep_row_fields_are_profiled(self) -> None:
+        data = {
+            "result": {
+                "payload": {
+                    "body": {
+                        "rows": [
+                            {
+                                "equipment": {
+                                    "profile": {
+                                        "displayName": "CNC 01",
+                                        "category": "CNC",
+                                    },
+                                    "site": {
+                                        "location": {
+                                            "factory": "A동",
+                                            "line": "L-01",
+                                        }
+                                    },
+                                },
+                                "runtime": {
+                                    "current": {
+                                        "status": {
+                                            "label": "가동중",
+                                        }
+                                    }
+                                },
+                            }
+                        ],
+                        "totalCount": 1,
+                    }
+                }
+            }
+        }
+
+        preview = build_sample_data_preview(data, source_id="deep-equipment-status")
+        derived = build_derived_schema(data, source_id="deep-equipment-status", sample_data_preview=preview)
+        field_paths = {field["path"] for field in derived["fields"]}
+
+        self.assertEqual(preview["primaryArrayPath"], "result.payload.body.rows")
+        self.assertEqual(preview["rowCount"], 1)
+        self.assertIn("result.payload.body.rows.equipment.profile.displayName", field_paths)
+        self.assertIn("result.payload.body.rows.runtime.current.status.label", field_paths)
+
     def test_wide_columns_build_schema_without_crashing(self) -> None:
         row = {
             "id": "eq-1",

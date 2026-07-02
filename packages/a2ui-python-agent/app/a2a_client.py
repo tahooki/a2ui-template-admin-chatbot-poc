@@ -45,7 +45,12 @@ class A2UIA2AClient:
         sample_data_preview: dict[str, Any] | None = None,
         tool_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        intent_key = "equipment.catalog.lookup" if api_id == "equipment-catalog" else "equipment.status.lookup"
+        if api_id == "equipment-catalog":
+            intent_key = "equipment.catalog.lookup"
+        elif api_id.startswith("equipment-"):
+            intent_key = "equipment.status.lookup"
+        else:
+            intent_key = f"a2ui.fixture.{api_id}.lookup"
         facts = {
             **(tool_metadata or {}),
             "apiId": api_id,

@@ -13,6 +13,15 @@ export type A2UIRole =
   | "updatedAt"
   | "time"
   | "metric"
+  | "progress"
+  | "priority"
+  | "assignee"
+  | "dueAt"
+  | "actor"
+  | "parentId"
+  | "children"
+  | "delta"
+  | "unit"
   | "version"
   | "environment"
   | "artifact"
@@ -53,6 +62,13 @@ export type A2UITemplateInputSchema = {
       hasNumericMetrics: boolean;
       hasCategories: boolean;
       hasNestedObjects: boolean;
+      hasProgress: boolean;
+      hasPriority: boolean;
+      hasAssignee: boolean;
+      hasDueDate: boolean;
+      hasTree: boolean;
+      hasDelta: boolean;
+      hasUnits: boolean;
       hasActions: boolean;
     }>;
   };
@@ -67,7 +83,21 @@ export type A2UITemplateInputSchema = {
   };
 };
 
-export type A2UIViewType = "statusBooleanList" | "simpleTextList" | "imageCardList" | "telemetryStatusTable";
+export type A2UIViewType =
+  | "collection.list"
+  | "collection.cardGrid"
+  | "record.detail"
+  | "matrix.table"
+  | "matrix.statusMatrix"
+  | "metric.statCards"
+  | "metric.progressList"
+  | "time.timeline"
+  | "process.queue"
+  | "relation.tree"
+  | "statusBooleanList"
+  | "simpleTextList"
+  | "imageCardList"
+  | "telemetryStatusTable";
 
 export type A2UIComponentSchemaSpec = {
   dataShape: "object" | "array<object>";
@@ -89,6 +119,18 @@ export type A2UIComponentSurfaceConfig = {
   imageBinding?: string;
   statusBindings?: string[];
   metricBindings?: string[];
+  fieldBindings?: string[];
+  categoryBinding?: string;
+  timeBinding?: string;
+  progressBinding?: string;
+  priorityBinding?: string;
+  assigneeBinding?: string;
+  dueAtBinding?: string;
+  parentIdBinding?: string;
+  childrenBinding?: string;
+  deltaBinding?: string;
+  unitBinding?: string;
+  valueBinding?: string;
   maxItems?: number;
 };
 
@@ -129,6 +171,20 @@ export type FieldMapping = {
   image?: string;
   booleanFlags?: string[];
   metrics?: string[];
+  fields?: string[];
+  status?: string;
+  category?: string;
+  updatedAt?: string;
+  time?: string;
+  progress?: string;
+  priority?: string;
+  assignee?: string;
+  dueAt?: string;
+  parentId?: string;
+  children?: string;
+  delta?: string;
+  unit?: string;
+  value?: string;
 };
 
 export type A2UICandidateTrace = {
@@ -207,6 +263,14 @@ export type A2UIRenderPlan = {
     sourceArrayPath?: string;
     sourceFieldPaths?: string[];
     sourceSampleRows?: unknown[];
+    observedSource?: {
+      selectedDatasetPath?: string;
+      sourceFieldCount: number;
+      sourceFieldPaths: string[];
+      sampleRows: Record<string, unknown>[];
+      warnings: string[];
+      truncated: boolean;
+    };
     sourceRowCount?: number;
     renderRowCount?: number;
     sourceDataHash?: string;

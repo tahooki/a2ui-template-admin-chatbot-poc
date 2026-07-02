@@ -13,7 +13,13 @@ type TemplateCatalogResponse = {
 function normalizeCatalog(value: TemplateCatalogResponse): TemplateCatalogResponse {
   return {
     ...value,
-    templates: value.templates.filter((template) => template.componentId !== "simpleTextList" && template.componentId !== "equipment.commonStatusTable"),
+    templates: value.templates.filter((template) => ![
+      "simpleTextList",
+      "equipment.commonStatusTable",
+      "equipment.statusBooleanList",
+      "equipment.telemetryStatusTable",
+      "equipment.imageCardList",
+    ].includes(template.componentId)),
     version: typeof value.version === "number" ? value.version : 1,
   };
 }

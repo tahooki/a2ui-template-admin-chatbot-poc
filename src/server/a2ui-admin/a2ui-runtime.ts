@@ -11,19 +11,22 @@ import type {
 } from "@/features/a2ui-template-poc/template-types";
 import { getTemplate, readTemplateCatalog } from "./catalog-store";
 import { planA2UISurfaceWithAI } from "./a2ui-ai-surface-planner";
+import {
+  type A2UIApiId,
+  a2uiApiIds,
+  a2uiApiTitle,
+  chooseA2UIApiForPrompt,
+  isA2UIApiId,
+  sourceIntentForApi,
+} from "./api-registry";
 import type { DerivedSchema } from "./schema-matcher/derived-schema-types";
 import { buildDerivedSchema, derivedSchemaFromDataProfile } from "./schema-matcher/derived-schema-builder";
 import { buildSampleDataPreview, type SampleDataPreview } from "./schema-matcher/sample-data-preview";
 import { matchA2UITemplate } from "./schema-matcher/template-schema-matcher";
 
-export const equipmentApiIds = [
-  "equipment-catalog",
-  "equipment-status",
-  "equipment-status-wide-columns",
-  "equipment-status-large-rows",
-] as const;
+export const equipmentApiIds = a2uiApiIds;
 
-export type EquipmentApiId = (typeof equipmentApiIds)[number];
+export type EquipmentApiId = A2UIApiId;
 
 export type A2UIRecommendation =
   | {
@@ -57,39 +60,20 @@ export type A2UIRecommendation =
       derivedSchema?: DerivedSchema;
     };
 
-function normalizeMatchText(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9가-힣]+/g, "");
-}
-
 export function isEquipmentApiId(value: unknown): value is EquipmentApiId {
-  return typeof value === "string" && (equipmentApiIds as readonly string[]).includes(value);
+  return isA2UIApiId(value);
 }
 
 export function isStatusEquipmentApi(apiId: EquipmentApiId) {
-  return apiId !== "equipment-catalog";
+  return sourceIntentForApi(apiId) === "equipment.status.lookup";
 }
 
 export function chooseEquipmentApiForPrompt(prompt: string): EquipmentApiId {
-  const normalized = normalizeMatchText(prompt);
-  if (
-    normalized.includes("장비목록") ||
-    normalized.includes("장비리스트") ||
-    normalized.includes("장비보여") ||
-    normalized.includes("설비") ||
-    normalized.includes("카탈로그") ||
-    normalized.includes("이미지") ||
-    normalized.includes("사진")
-  ) {
-    return "equipment-catalog";
-  }
-  return "equipment-status";
+  return chooseA2UIApiForPrompt(prompt);
 }
 
 export function equipmentApiTitle(apiId: EquipmentApiId) {
-  if (apiId === "equipment-catalog") return "장비 카탈로그 API";
-  if (apiId === "equipment-status-wide-columns") return "컬럼 많은 장비 상태 API";
-  if (apiId === "equipment-status-large-rows") return "데이터 많은 장비 상태 API";
-  return "장비 상태 API";
+  return a2uiApiTitle(apiId);
 }
 
 function templateRenderPlan({
@@ -469,7 +453,7 @@ export async function resolveTemplateData({
       renderPlan,
     },
     surfaceConfig: template.surfaceConfig,
-    sourceIntent: isStatusEquipmentApi(selectedApiId) ? "equipment.status.lookup" : "equipment.catalog.lookup",
+    sourceIntent: sourceIntentForApi(selectedApiId),
     updatedAt: new Date().toISOString(),
     meta: {
       registryVersion: catalog.version,

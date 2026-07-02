@@ -1,100 +1,10 @@
-import type { A2UIDataProfile, A2UIRole, FieldProfile } from "@/features/a2ui-template-poc/template-types";
+import type { A2UIDataProfile, FieldProfile } from "@/features/a2ui-template-poc/template-types";
 import { buildA2UIDataProfile } from "@/features/a2ui-template-poc/schema-profiler";
 import type { DerivedSchema, DerivedSchemaCapabilities, DerivedSchemaField, DerivedSchemaShape } from "./derived-schema-types";
 import type { SampleDataPreview } from "./sample-data-preview";
 import { buildSampleDataPreview } from "./sample-data-preview";
 import { canonicalPath } from "./path-utils";
-
-function firstPresent(values: unknown[]) {
-  return values.find((value) => value !== null && value !== undefined);
-}
-
-function fieldType(key: string, examples: unknown[]): DerivedSchemaField["type"] {
-  const first = firstPresent(examples);
-  if (typeof first === "boolean") return "boolean";
-  if (typeof first === "number") return "number";
-  if (Array.isArray(first)) return "array";
-  if (first && typeof first === "object") return "object";
-  if (typeof first === "string") {
-    if (/^\d{4}-\d{2}-\d{2}T/.test(first)) return "datetime";
-    if (/^\d{4}-\d{2}-\d{2}/.test(first)) return "date";
-    return "string";
-  }
-  return "unknown";
-}
-
-function fieldFormat(key: string, examples: unknown[]) {
-  const first = firstPresent(examples);
-  if (typeof first !== "string") return undefined;
-  if (/image|photo|thumbnail/i.test(key) || /\.(png|jpe?g|webp|gif|svg)$/i.test(first) || first.startsWith("/images/")) {
-    return "image-url";
-  }
-  if (/url|uri/i.test(key) || /^https?:\/\//i.test(first) || first.startsWith("/")) return "uri";
-  if (/^\d{4}-\d{2}-\d{2}T/.test(first)) return "datetime";
-  if (/^\d{4}-\d{2}-\d{2}/.test(first)) return "date";
-  return undefined;
-}
-
-function inferRoles(key: string, type: DerivedSchemaField["type"], format?: string): A2UIRole[] {
-  const roles: A2UIRole[] = [];
-  if (/^id$|Id$/.test(key)) roles.push("id");
-  if (/name|title|equipmentName/i.test(key)) roles.push("title", "label");
-  if (/description|content|summary/i.test(key)) roles.push("content", "description");
-  if (format === "image-url" || /image|photo|thumbnail/i.test(key)) roles.push("image", "uri");
-  else if (format === "uri" || /url|uri/i.test(key)) roles.push("uri");
-  if (type === "boolean") roles.push("booleanFlag", "status");
-  if (/status|state|phase/i.test(key)) roles.push("status");
-  if (/category|type/i.test(key)) roles.push("category");
-  if (/location|zone|site/i.test(key)) roles.push("location");
-  if (/updatedAt|date|time/i.test(key) || type === "date" || type === "datetime") roles.push("updatedAt", "time");
-  if (type === "number" && /count|total|rate|score|metric|amount|size/i.test(key)) roles.push("metric");
-  if (/version/i.test(key)) roles.push("version");
-  if (/environment|env/i.test(key)) roles.push("environment");
-  if (/artifact|build|release/i.test(key)) roles.push("artifact");
-  if (/action|href|link/i.test(key)) roles.push("action");
-  return Array.from(new Set(roles));
-}
-
-function rowsFromData(data: unknown, primaryArrayPath?: string): Record<string, unknown>[] {
-  if (primaryArrayPath && data && typeof data === "object" && !Array.isArray(data)) {
-    const rows = primaryArrayPath
-      .split(".")
-      .reduce<unknown>((current, key) => (current && typeof current === "object" && !Array.isArray(current) ? (current as Record<string, unknown>)[key] : undefined), data);
-    return Array.isArray(rows)
-      ? rows.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
-      : [];
-  }
-  if (Array.isArray(data)) {
-    return data.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)));
-  }
-  if (data && typeof data === "object") return [data as Record<string, unknown>];
-  return [];
-}
-
-function fieldsFromRows(rows: Record<string, unknown>[], primaryArrayPath?: string): DerivedSchemaField[] {
-  const keys = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
-  return keys.map((key) => {
-    const examples = rows.slice(0, 5).map((row) => row[key]).filter((value) => value !== undefined);
-    const type = fieldType(key, examples);
-    const format = fieldFormat(key, examples);
-    const roles = inferRoles(key, type, format);
-    const values = examples.map((value) => JSON.stringify(value));
-    const uniqueValues = new Set(values);
-    const path = primaryArrayPath ? `${primaryArrayPath}.${key}` : key;
-    return {
-      path,
-      key,
-      type,
-      role: roles[0],
-      roles,
-      format,
-      examples,
-      cardinality: uniqueValues.size,
-      uniqueRatio: examples.length ? uniqueValues.size / examples.length : undefined,
-      enumValues: uniqueValues.size > 0 && uniqueValues.size <= 8 ? Array.from(uniqueValues).map((value) => JSON.parse(value) as string) : undefined,
-    };
-  });
-}
+import { preprocessUnknownApiResponse } from "./unknown-api-response-preprocessor";
 
 function capabilities(fields: DerivedSchemaField[]): DerivedSchemaCapabilities {
   return {
@@ -105,6 +15,13 @@ function capabilities(fields: DerivedSchemaField[]): DerivedSchemaCapabilities {
     hasNumericMetrics: fields.some((field) => field.roles.includes("metric") || field.type === "number"),
     hasCategories: fields.some((field) => field.roles.includes("category")),
     hasNestedObjects: fields.some((field) => field.type === "object" || field.type === "array"),
+    hasProgress: fields.some((field) => field.roles.includes("progress")),
+    hasPriority: fields.some((field) => field.roles.includes("priority")),
+    hasAssignee: fields.some((field) => field.roles.includes("assignee")),
+    hasDueDate: fields.some((field) => field.roles.includes("dueAt")),
+    hasTree: fields.some((field) => field.roles.includes("children") || field.roles.includes("parentId")),
+    hasDelta: fields.some((field) => field.roles.includes("delta")),
+    hasUnits: fields.some((field) => field.roles.includes("unit")),
     hasActions: fields.some((field) => field.roles.includes("action")),
   };
 }
@@ -153,13 +70,33 @@ export function buildDerivedSchema(
 ): DerivedSchema {
   const preview = options.sampleDataPreview ?? buildSampleDataPreview(data, { sourceId: options.sourceId, sourceKind: "sample" });
   const previewData = preview.data ?? data;
-  const rows = rowsFromData(previewData, preview.primaryArrayPath);
-  const fields = fieldsFromRows(rows, preview.primaryArrayPath);
+  const observedSource = preprocessUnknownApiResponse({
+    rawData: previewData,
+    sourceId: options.sourceId ?? preview.sourceId,
+    sourceKind: "api_response",
+  });
+  const fields = observedSource.fields.map((field) => {
+    const type = field.type === "mixed" ? "unknown" : field.type;
+    const values = field.examples.map((value) => JSON.stringify(value));
+    const uniqueValues = new Set(values);
+    return {
+      path: field.derivedSchemaPath,
+      key: field.key,
+      type,
+      role: field.roleCandidates[0],
+      roles: field.roleCandidates,
+      format: field.format,
+      examples: field.examples,
+      cardinality: uniqueValues.size,
+      uniqueRatio: field.uniqueRatio,
+      enumValues: uniqueValues.size > 0 && uniqueValues.size <= 8 ? Array.from(uniqueValues).map((value) => JSON.parse(value) as string) : undefined,
+    };
+  });
   return {
     sourceId: options.sourceId ?? preview.sourceId,
     sourceKind: options.sourceKind ?? "api_response",
     shape: preview.shape,
-    primaryArrayPath: preview.primaryArrayPath,
+    primaryArrayPath: preview.primaryArrayPath ?? observedSource.selectedDataset?.plannerPath,
     rowCount: preview.rowCount,
     sampleSize: preview.sampleSize,
     fields,

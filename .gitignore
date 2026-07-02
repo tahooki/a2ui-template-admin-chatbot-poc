@@ -14,6 +14,8 @@
 
 # testing
 /coverage
+/test-results
+/artifacts
 
 # python
 __pycache__/

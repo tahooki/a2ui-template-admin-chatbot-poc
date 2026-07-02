@@ -24,7 +24,12 @@ function fieldMatchesType(field: DerivedSchemaField, slot: A2UITemplateSlot) {
   return slot.acceptsTypes.includes(field.type);
 }
 
+function isBroadScalarSlot(slot: A2UITemplateSlot) {
+  return /columns|fields/i.test(slot.slot);
+}
+
 function fieldMatchesRole(field: DerivedSchemaField, slot: A2UITemplateSlot) {
+  if (isBroadScalarSlot(slot)) return true;
   return slot.acceptsRoles.some((role) => field.roles.includes(role));
 }
 
@@ -100,6 +105,7 @@ function scoreCandidate(template: A2UITemplateRegistration, inputSchema: A2UITem
   const slots = slotStats(inputSchema, derivedSchema);
   const rowScore = rowCountScore(inputSchema, derivedSchema);
   const hintScore = queryHintScore(template, inputSchema, query);
+  const priorityScore = Math.max(0, Math.min(1, (inputSchema.selectionHints?.priority ?? 1) / 10));
   const breakdown = {
     shapeScore,
     capabilityScore: capabilities.score,
@@ -109,6 +115,7 @@ function scoreCandidate(template: A2UITemplateRegistration, inputSchema: A2UITem
     roleCompatibility: slots.roleCompatibility,
     rowCountSuitability: rowScore,
     intentAndQueryHint: hintScore,
+    priorityScore,
   };
   const score =
     breakdown.shapeScore * 0.15 +
@@ -118,7 +125,8 @@ function scoreCandidate(template: A2UITemplateRegistration, inputSchema: A2UITem
     breakdown.typeCompatibility * 0.1 +
     breakdown.roleCompatibility * 0.1 +
     breakdown.rowCountSuitability * 0.05 +
-    breakdown.intentAndQueryHint * 0.05;
+    breakdown.intentAndQueryHint * 0.03 +
+    breakdown.priorityScore * 0.02;
 
   const rejectionReasons: string[] = [];
   if (template.status !== "registered") rejectionReasons.push("Template is not registered");

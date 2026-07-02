@@ -10,6 +10,13 @@ export type DerivedSchemaCapabilities = {
   hasNumericMetrics: boolean;
   hasCategories: boolean;
   hasNestedObjects: boolean;
+  hasProgress: boolean;
+  hasPriority: boolean;
+  hasAssignee: boolean;
+  hasDueDate: boolean;
+  hasTree: boolean;
+  hasDelta: boolean;
+  hasUnits: boolean;
   hasActions: boolean;
 };
 

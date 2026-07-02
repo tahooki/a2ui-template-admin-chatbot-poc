@@ -25,6 +25,8 @@ import {
   chooseEquipmentApiForPrompt,
   isEquipmentApiId,
 } from "@/server/a2ui-admin/a2ui-runtime";
+import { sourceIntentForApi } from "@/server/a2ui-admin/api-registry";
+import { preprocessUnknownApiResponse, shapeFromObservedSource } from "@/server/a2ui-admin/schema-matcher/unknown-api-response-preprocessor";
 
 export type A2AStreamEvent =
   | { task: A2ATask }
@@ -103,6 +105,8 @@ function stableStringify(value: unknown): string {
 }
 
 function dataRowCount(value: unknown) {
+  const observedSource = preprocessUnknownApiResponse({ rawData: value });
+  if (observedSource.selectedDataset) return observedSource.selectedDataset.rowCount;
   if (Array.isArray(value)) return value.length;
   const record = asRecord(value);
   if (!record) return 0;
@@ -126,6 +130,8 @@ function dataRowCount(value: unknown) {
 }
 
 function dataShape(value: unknown) {
+  const observedSource = preprocessUnknownApiResponse({ rawData: value });
+  if (observedSource.selectedDataset) return shapeFromObservedSource(observedSource);
   if (Array.isArray(value)) return value.every((item) => asRecord(item)) ? "array<object>" : "array";
   const record = asRecord(value);
   if (!record) return typeof value;
@@ -396,7 +402,7 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string, onProgre
         renderPlan: plan.renderPlan,
       },
       surfaceConfig: plan.template.surfaceConfig,
-      sourceIntent: plan.apiId === "equipment-catalog" ? "equipment.catalog.lookup" : "equipment.status.lookup",
+      sourceIntent: sourceIntentForApi(plan.apiId),
       updatedAt: new Date().toISOString(),
       meta: {
         registryVersion: plan.registryVersion,

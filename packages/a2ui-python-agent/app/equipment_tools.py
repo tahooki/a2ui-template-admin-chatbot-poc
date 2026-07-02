@@ -10,21 +10,34 @@ EquipmentApiId = Literal[
     "equipment-status",
     "equipment-status-wide-columns",
     "equipment-status-large-rows",
+    "work-items",
+    "resources",
+    "status-checks",
+    "summary",
+    "hierarchy",
 ]
+
+FIXTURE_API_IDS: set[EquipmentApiId] = {"work-items", "resources", "status-checks", "summary", "hierarchy"}
 
 
 def equipment_api_title(api_id: EquipmentApiId) -> str:
-    if api_id == "equipment-catalog":
-        return "장비 카탈로그 API"
-    if api_id == "equipment-status-wide-columns":
-        return "컬럼 많은 장비 상태 API"
-    if api_id == "equipment-status-large-rows":
-        return "데이터 많은 장비 상태 API"
-    return "장비 상태 API"
+    titles: dict[EquipmentApiId, str] = {
+        "equipment-catalog": "장비 카탈로그 API",
+        "equipment-status": "장비 상태 API",
+        "equipment-status-wide-columns": "컬럼 많은 장비 상태 API",
+        "equipment-status-large-rows": "데이터 많은 장비 상태 API",
+        "work-items": "작업 항목 Fixture API",
+        "resources": "리소스 Fixture API",
+        "status-checks": "상태 체크 Fixture API",
+        "summary": "요약 지표 Fixture API",
+        "hierarchy": "계층 구조 Fixture API",
+    }
+    return titles[api_id]
 
 
 async def fetch_equipment_data(api_id: EquipmentApiId) -> dict[str, Any]:
-    url = f"{settings.next_api_base_url.rstrip('/')}/api/{api_id}"
+    route = f"a2ui-fixtures/{api_id}" if api_id in FIXTURE_API_IDS else api_id
+    url = f"{settings.next_api_base_url.rstrip('/')}/api/{route}"
     async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
         response = await client.get(url, params={"pageSize": "44"})
         response.raise_for_status()
@@ -58,13 +71,33 @@ def _role_candidates(key: str, field_type: str) -> list[str]:
         roles.append("image")
     if field_type == "boolean":
         roles.extend(["booleanFlag", "status"])
+    if re.search(r"status|state|phase", key, re.IGNORECASE):
+        roles.append("status")
     if re.search(r"category|type", key, re.IGNORECASE):
         roles.append("category")
     if re.search(r"location|zone|site", key, re.IGNORECASE):
         roles.append("location")
-    if re.search(r"updatedAt|date", key, re.IGNORECASE):
-        roles.append("updatedAt")
-    return roles
+    if re.search(r"updatedAt|date|checkedAt", key, re.IGNORECASE):
+        roles.extend(["updatedAt", "time"])
+    if re.search(r"progress|percent|ratio", key, re.IGNORECASE):
+        roles.extend(["progress", "metric"])
+    if re.search(r"priority|severity|urgency", key, re.IGNORECASE):
+        roles.append("priority")
+    if re.search(r"assignee|owner|manager|operator", key, re.IGNORECASE):
+        roles.extend(["assignee", "actor"])
+    if re.search(r"dueAt|deadline|targetDate", key, re.IGNORECASE):
+        roles.extend(["dueAt", "time"])
+    if re.search(r"children|nodes", key, re.IGNORECASE):
+        roles.append("children")
+    if re.search(r"parentId|parent_id|parent", key, re.IGNORECASE):
+        roles.append("parentId")
+    if re.search(r"delta|change|diff|growth", key, re.IGNORECASE):
+        roles.append("delta")
+    if re.search(r"unit|uom", key, re.IGNORECASE):
+        roles.append("unit")
+    if field_type == "number":
+        roles.append("metric")
+    return list(dict.fromkeys(roles))
 
 
 def _rows_from_data(data: dict[str, Any]) -> tuple[list[dict[str, Any]], str, str | None, int]:

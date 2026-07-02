@@ -51,7 +51,7 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
             }
             return A2UIResponse(
                 type="surface",
-                surface={"templateId": "equipment.statusBooleanList"},
+                surface={"templateId": "matrix.statusMatrix"},
                 source_tool={"sourceToolName": "get_equipment_status"},
                 data_integrity={"matched": True},
             )
@@ -138,7 +138,7 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
             captured["tool_metadata"] = tool_metadata
             return A2UIResponse(
                 type="surface",
-                surface={"templateId": "equipment.statusBooleanList"},
+                surface={"templateId": "matrix.statusMatrix"},
                 source_tool=tool_metadata,
                 data_integrity={"matched": True},
             )

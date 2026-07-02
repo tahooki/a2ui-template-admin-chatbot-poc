@@ -20,12 +20,12 @@ class A2AClientTest(unittest.TestCase):
                                 "mediaType": A2A_SURFACE,
                                 "data": {
                                     "kind": "a2ui.surface.response",
-                                    "surface": {"templateId": "equipment.statusBooleanList"},
+                                    "surface": {"templateId": "matrix.statusMatrix"},
                                     "decision": {
                                         "strategy": "derived_schema",
                                         "score": 0.91,
-                                        "candidates": [{"templateId": "equipment.statusBooleanList"}],
-                                        "mapping": {"templateId": "equipment.statusBooleanList"},
+                                        "candidates": [{"templateId": "matrix.statusMatrix"}],
+                                        "mapping": {"templateId": "matrix.statusMatrix"},
                                         "sourceTool": {"sourceToolName": "get_equipment_status"},
                                         "dataIntegrity": {"matched": True},
                                     },
@@ -40,7 +40,7 @@ class A2AClientTest(unittest.TestCase):
         result = extract_a2ui_result(payload)
 
         self.assertEqual(result["type"], "surface")
-        self.assertEqual(result["surface"]["templateId"], "equipment.statusBooleanList")
+        self.assertEqual(result["surface"]["templateId"], "matrix.statusMatrix")
         self.assertEqual(result["strategy"], "derived_schema")
         self.assertEqual(result["score"], 0.91)
         self.assertEqual(len(result["candidates"]), 1)
@@ -130,6 +130,20 @@ class A2AClientTest(unittest.TestCase):
         self.assertIs(facts["data"], data)
         self.assertEqual(facts["fallbackText"], "fallback")
         self.assertEqual(facts["sourceToolName"], "get_equipment_status")
+
+    def test_render_request_uses_fixture_intent_for_generic_api(self) -> None:
+        data = {"items": [{"id": "work-001", "title": "Work 1", "progress": 42}], "total": 1, "page": 1, "pageSize": 1}
+        payload = A2UIA2AClient.render_request(
+            query="work-items API를 진행률로 보여줘",
+            api_id="work-items",
+            data=data,
+            profile={"rowCount": 1},
+            fallback_text="fallback",
+        )
+
+        render_data = payload["message"]["parts"][1]["data"]
+        self.assertEqual(render_data["intentKey"], "a2ui.fixture.work-items.lookup")
+        self.assertEqual(render_data["facts"]["apiId"], "work-items")
 
 
 if __name__ == "__main__":

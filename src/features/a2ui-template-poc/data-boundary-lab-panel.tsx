@@ -89,11 +89,17 @@ export function DataBoundaryLabPanel({
   const isRouteLoading = apiTable.apiRoute !== scenario.apiRoute;
   const tableError = isRouteLoading ? undefined : apiTable.error;
   const tableData = !isRouteLoading && apiTable.data ? apiTable.data : trace.sourceData;
-  const rows = useMemo(() => tableRows(tableData), [tableData]);
-  const columns = useMemo(() => columnsForRows(rows), [rows]);
+  const observedSource = trace.aiSurfacePlanTrace.observedSource;
+  const observedRows = useMemo(
+    () => (observedSource?.sampleRows ?? []).filter((item): item is Record<string, unknown> => Boolean(record(item))),
+    [observedSource?.sampleRows],
+  );
+  const rawRows = useMemo(() => tableRows(tableData), [tableData]);
+  const rows = observedRows.length ? observedRows : rawRows;
+  const columns = useMemo(() => observedRows.length ? columnsForRows(observedRows) : columnsForRows(rawRows), [observedRows, rawRows]);
   const visibleRowLimit = selectedScenario === "large_rows" ? 80 : 24;
   const visibleRows = rows.slice(0, visibleRowLimit);
-  const totalRows = rowTotal(tableData, rows);
+  const totalRows = observedSource ? trace.aiSurfacePlanTrace.sourceRowCount : rowTotal(tableData, rows);
 
   return (
     <section className={styles.dataBoundaryLab} aria-label="A2UI data boundary table">
@@ -132,6 +138,16 @@ export function DataBoundaryLabPanel({
             {tableError ? <span>fallback fixture: {tableError}</span> : null}
             {rows.length > visibleRows.length ? <span>preview {visibleRows.length}/{rows.length}</span> : null}
           </div>
+          {observedSource ? (
+            <div className={styles.dataMetaStrip} aria-label="Observed API source">
+              <span>dataset {observedSource.selectedDatasetPath ?? trace.aiSurfacePlanTrace.sourceArrayPath ?? "unknown"}</span>
+              <span>{observedSource.sourceFieldCount} source paths</span>
+              {observedSource.truncated ? <span>truncated</span> : null}
+              {observedSource.warnings.map((warning) => (
+                <span key={warning}>{warning}</span>
+              ))}
+            </div>
+          ) : null}
           <div className={styles.rawTableScroller}>
             <table className={styles.rawDataTable}>
               <thead>

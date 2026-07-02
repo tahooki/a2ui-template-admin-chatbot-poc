@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { INITIAL_TEMPLATES, TELEMETRY_STATUS_TEMPLATE_ID } from "@/features/a2ui-template-poc/initial-templates";
+import { INITIAL_TEMPLATES } from "@/features/a2ui-template-poc/initial-templates";
 import type { A2UITemplateRegistration } from "@/features/a2ui-template-poc/template-types";
 import { normalizeTemplateInputSchema } from "./schema-matcher/template-input-schema-adapter";
 
@@ -11,19 +11,25 @@ export type A2UITemplateCatalog = {
 };
 
 const catalogPath = path.join(process.cwd(), "data", "a2ui-template-catalog.json");
-const deprecatedTemplateIds = new Set(["simpleTextList", "equipment.commonStatusTable"]);
+const deprecatedTemplateIds = new Set([
+  "simpleTextList",
+  "equipment.commonStatusTable",
+  "equipment.statusBooleanList",
+  "equipment.telemetryStatusTable",
+  "equipment.imageCardList",
+]);
 
 function cloneInitialTemplates() {
   return INITIAL_TEMPLATES.map((template) => ({
     ...normalizeTemplateInputSchema(template),
-    updatedAt: "2026-06-09T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
   }));
 }
 
 function initialCatalog(): A2UITemplateCatalog {
   return {
     version: 1,
-    updatedAt: "2026-06-09T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
     templates: cloneInitialTemplates(),
   };
 }
@@ -35,24 +41,14 @@ function withoutDeprecatedTemplates(templates: A2UITemplateRegistration[]) {
 function withRequiredInitialTemplates(templates: A2UITemplateRegistration[]) {
   const normalizedTemplates = templates.map(normalizeTemplateInputSchema);
   const initialTemplates = cloneInitialTemplates();
-  const requiredIds = [TELEMETRY_STATUS_TEMPLATE_ID];
-  const withRequired = [...normalizedTemplates];
+  const merged = [...normalizedTemplates];
 
-  for (const componentId of requiredIds) {
-    if (withRequired.some((template) => template.componentId === componentId)) continue;
-    const fixedTemplate = initialTemplates.find((template) => template.componentId === componentId);
-    if (fixedTemplate) withRequired.unshift(fixedTemplate);
+  for (const initialTemplate of initialTemplates) {
+    if (merged.some((template) => template.componentId === initialTemplate.componentId)) continue;
+    merged.push(initialTemplate);
   }
 
-  return withRequired.map((template) =>
-    template.componentId === "equipment.statusBooleanList"
-      ? {
-          ...template,
-          status: "registered" as const,
-          description: template.description || "장비 상태 API를 상태값 테이블로 보여준다.",
-        }
-      : template,
-  );
+  return merged;
 }
 
 function isTemplate(value: unknown): value is A2UITemplateRegistration {

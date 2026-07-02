@@ -33,6 +33,24 @@ class DataIntegrityTest(unittest.TestCase):
         self.assertEqual(snapshot["shape"], "object{result.rows:array<object>}")
         self.assertIn("result", snapshot["topLevelKeys"])
 
+    def test_snapshot_counts_deep_nested_rows(self) -> None:
+        snapshot = build_data_integrity_snapshot(
+            {
+                "result": {
+                    "payload": {
+                        "body": {
+                            "rows": [{"eqp_id": "deep-1"}, {"eqp_id": "deep-2"}],
+                            "totalCount": 42,
+                        }
+                    }
+                },
+                "success": True,
+            }
+        )
+
+        self.assertEqual(snapshot["rowCount"], 42)
+        self.assertEqual(snapshot["shape"], "object{result.payload.body.rows:array<object>}")
+
     def test_detects_missing_row(self) -> None:
         source = {"items": [{"id": "eq-1"}, {"id": "eq-2"}], "total": 2}
         received = {"items": [{"id": "eq-1"}], "total": 1}
