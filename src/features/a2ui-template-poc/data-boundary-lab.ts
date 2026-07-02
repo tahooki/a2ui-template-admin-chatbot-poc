@@ -1549,7 +1549,8 @@ function eventData(trace: DataBoundaryScenarioTrace, step: string): Record<strin
       strategy: trace.renderPlan.strategy,
       comparisonData: trace.aiSurfacePlanTrace.comparisonData,
       validation: { ok: true, errors: [] },
-      plannerAttempts: [{ stage: "comparison_data", requestKind: "initial", outcome: "success" }],
+      comparisonDataSource: "server_source_contract",
+      plannerAttempts: [],
       aiSurfacePlanTrace: trace.aiSurfacePlanTrace,
     };
   }
@@ -1617,15 +1618,16 @@ export function dataBoundaryFlowEvents(trace: DataBoundaryScenarioTrace): AgentF
     { ...base, id: `${turnId}-profile`, event: "state:source_preview", phase: "profile", from: "a2ui", to: "a2ui", label: "API 데이터 관찰", detail: `preview=${trace.sampleDataPreview.sampleSize}/${trace.sampleDataPreview.rowCount}`, branch: "data", data: eventData(trace, "source_preview") },
     { ...base, id: `${turnId}-registry`, event: "state:template_contracts", phase: "registry_loaded", from: "a2ui", to: "registry", label: "템플릿 계약 로드", detail: trace.expectedTemplateId, branch: "data" },
     { ...base, id: `${turnId}-registry-loaded`, event: "state:registry_loaded", phase: "registry_loaded", from: "registry", to: "a2ui", label: "템플릿 계약 로드 완료", detail: `templates=${trace.renderPlan.candidates?.length ?? 0}`, branch: "data" },
-    { ...base, id: `${turnId}-comparison-request`, event: "state:comparison_data_request", phase: "matcher", from: "a2ui", to: "llm", label: "비교용 데이터 생성 요청", detail: `fields=${trace.aiSurfacePlanTrace.sourceFieldPaths.length}`, branch: "data", data: {
+    { ...base, id: `${turnId}-comparison-request`, event: "state:comparison_data_request", phase: "matcher", from: "a2ui", to: "a2ui", label: "비교용 데이터 계약 생성", detail: `fields=${trace.aiSurfacePlanTrace.sourceFieldPaths.length}`, branch: "data", data: {
       mode: "comparison_data",
       strategy: trace.renderPlan.strategy,
+      comparisonDataSource: "server_source_contract",
       sourceFieldCount: trace.aiSurfacePlanTrace.sourceFieldPaths.length,
       promptFieldCount: trace.aiSurfacePlanTrace.sourceFieldPaths.length,
       sourceSampleSize: trace.aiSurfacePlanTrace.sourceSampleRows.length,
       observedSource: trace.aiSurfacePlanTrace.observedSource,
     } },
-    { ...base, id: `${turnId}-comparison-data`, event: "state:comparison_data", phase: "matcher", from: "llm", to: "a2ui", label: "비교용 데이터 생성 결과 반환", detail: `profiles=${Array.isArray(trace.aiSurfacePlanTrace.comparisonData?.fieldProfiles) ? trace.aiSurfacePlanTrace.comparisonData.fieldProfiles.length : 0}`, branch: "data", data: eventData(trace, "comparison_data") },
+    { ...base, id: `${turnId}-comparison-data`, event: "state:comparison_data", phase: "matcher", from: "a2ui", to: "a2ui", label: "비교용 데이터 계약 준비", detail: `profiles=${Array.isArray(trace.aiSurfacePlanTrace.comparisonData?.fieldProfiles) ? trace.aiSurfacePlanTrace.comparisonData.fieldProfiles.length : 0}`, branch: "data", data: eventData(trace, "comparison_data") },
     { ...base, id: `${turnId}-planner-request`, event: "state:matcher_request", phase: "matcher", from: "a2ui", to: "llm", label: "템플릿 판단 요청", detail: `candidates=${trace.renderPlan.candidates?.length ?? 0}`, branch: "data" },
     { ...base, id: `${turnId}-planner`, event: "state:ai_surface_plan", phase: "matcher", from: "llm", to: "a2ui", label: "판단 결과 반환", detail: `template=${trace.templateContract.componentId} | score=${trace.renderPlan.score}`, branch: "data", data: eventData(trace, "ai_surface_plan") },
     { ...base, id: `${turnId}-slot-request`, event: "state:slot_mapping_request", phase: "matcher", from: "a2ui", to: "llm", label: "슬롯 생성 요청", detail: trace.templateContract.componentId, branch: "data", data: { mode: "slot_mapping", templateId: trace.templateContract.componentId, templateSelection: trace.aiSurfacePlanTrace.templateSelection } },

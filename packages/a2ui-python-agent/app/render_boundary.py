@@ -118,8 +118,8 @@ async def render_business_tool_result(
         profile,
         fallback_text,
         display_data=None,
-        derived_schema=None,
-        sample_data_preview=None,
+        derived_schema=derived_schema,
+        sample_data_preview=sample_data_preview,
         tool_metadata=tool_metadata,
     )
     if a2ui.type != "surface":
@@ -169,8 +169,8 @@ async def render_business_tool_result_stream(
         profile,
         fallback_text,
         display_data=None,
-        derived_schema=None,
-        sample_data_preview=None,
+        derived_schema=derived_schema,
+        sample_data_preview=sample_data_preview,
         tool_metadata=tool_metadata,
     ):
         if event.get("type") == "progress":

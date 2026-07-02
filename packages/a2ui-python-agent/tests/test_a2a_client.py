@@ -103,8 +103,8 @@ class A2AClientTest(unittest.TestCase):
         render_data = payload["message"]["parts"][1]["data"]
         self.assertEqual(render_data["toolMetadata"]["sourceToolName"], "get_equipment_status")
         self.assertEqual(render_data["facts"]["sourceToolResultId"], "tool-result-1")
-        self.assertIs(render_data["facts"]["data"], data)
-        self.assertIs(render_data["facts"]["displayData"], display_data)
+        self.assertNotIn("data", render_data["facts"])
+        self.assertNotIn("displayData", render_data["facts"])
         self.assertIs(render_data["data"], data)
         self.assertIs(render_data["displayData"], display_data)
         self.assertTrue(render_data["a2uiOptions"]["allowIntentFallback"])
@@ -126,8 +126,10 @@ class A2AClientTest(unittest.TestCase):
         )
 
         facts = payload["message"]["parts"][1]["data"]["facts"]
+        render_data = payload["message"]["parts"][1]["data"]
         self.assertEqual(facts["apiId"], "equipment-status")
-        self.assertIs(facts["data"], data)
+        self.assertIs(render_data["data"], data)
+        self.assertNotIn("data", facts)
         self.assertEqual(facts["fallbackText"], "fallback")
         self.assertEqual(facts["sourceToolName"], "get_equipment_status")
 

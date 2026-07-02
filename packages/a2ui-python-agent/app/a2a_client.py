@@ -51,15 +51,17 @@ class A2UIA2AClient:
             intent_key = "equipment.status.lookup"
         else:
             intent_key = f"a2ui.fixture.{api_id}.lookup"
+        metadata_facts = {
+            key: value
+            for key, value in (tool_metadata or {}).items()
+            if key not in {"apiId", "data", "displayData", "profile", "fallbackText", "sampleDataPreview", "derivedSchema"}
+        }
         facts = {
-            **(tool_metadata or {}),
+            **metadata_facts,
             "apiId": api_id,
-            "data": data,
             "profile": profile,
             "fallbackText": fallback_text,
         }
-        if display_data is not None:
-            facts["displayData"] = display_data
         return {
             "configuration": {
                 "acceptedOutputModes": [A2A_SURFACE, "text/plain"],

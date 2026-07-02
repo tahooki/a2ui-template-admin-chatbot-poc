@@ -191,8 +191,8 @@ const steps: SequenceStep[] = buildSequenceSteps([
     label: "템플릿 계약 로드 완료",
     branch: "data",
   },
-  { id: "comparison-data", phase: "matcher", events: ["state:comparison_data_request"], from: "a2ui", to: "llm", label: "비교용 데이터 생성 요청", branch: "data", a2uiSubstep: true },
-  { id: "comparison-data-result", phase: "matcher", events: ["state:comparison_data"], from: "llm", to: "a2ui", label: "비교용 데이터 생성 결과 반환", branch: "data", a2uiSubstep: true },
+  { id: "comparison-data", phase: "matcher", events: ["state:comparison_data_request"], from: "a2ui", to: "a2ui", label: "비교용 데이터 계약 생성", branch: "data", a2uiSubstep: true },
+  { id: "comparison-data-result", phase: "matcher", events: ["state:comparison_data"], from: "a2ui", to: "a2ui", label: "비교용 데이터 계약 준비", branch: "data", a2uiSubstep: true },
   { id: "matcher", phase: "matcher", events: ["state:matcher_request"], from: "a2ui", to: "llm", label: "템플릿 판단 요청", branch: "data", a2uiSubstep: true },
   { id: "matcher-result", phase: "matcher", events: ["state:ai_surface_plan"], from: "llm", to: "a2ui", label: "판단 결과 반환", branch: "data", a2uiSubstep: true },
   { id: "slot-generation", phase: "matcher", events: ["state:slot_mapping_request"], from: "a2ui", to: "llm", label: "슬롯 생성 요청", branch: "data", a2uiSubstep: true },
@@ -797,18 +797,19 @@ function comparisonDataEvidenceView(trace: DataBoundaryScenarioTrace | undefined
   const outputJson = trace
     ? cleanJsonValue({
         comparisonData,
-        plannerAttempts: trace.aiSurfacePlanTrace.plannerAttempts?.filter((attempt) => attempt.stage === "comparison_data"),
+        comparisonDataSource: "server_source_contract",
       })
     : cleanJsonValue({
         comparisonData,
+        comparisonDataSource: resultData.comparisonDataSource ?? requestData.comparisonDataSource,
         validation: resultData.validation,
         comparisonDataEvent: eventPayload(resultEvent),
       });
 
   return {
     eyebrow: `Evidence: ${eventEvidenceText(resultEvent ?? requestEvent, trace ? "sample" : "pending")}`,
-    title: "비교용 데이터 생성",
-    purpose: "AI가 raw API field와 sample을 보고 화면 후보 비교에 쓸 의미 profile을 생성한 결과입니다.",
+    title: "비교용 데이터 계약",
+    purpose: "A2UI 서버가 raw API field와 bounded sample을 작게 접어 화면 후보 비교에 쓸 schema profile을 만든 결과입니다.",
     jsonPanels: [
       { title: "Input JSON: 관찰된 API 데이터", value: inputJson },
       { title: "Output JSON: AI 비교용 데이터", value: outputJson },

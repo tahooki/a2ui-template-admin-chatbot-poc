@@ -60,7 +60,6 @@ function a2aPayload({ query, apiId, data }) {
             apiId,
             facts: {
               apiId,
-              data,
               fallbackText: `${query} fallback`,
               profile: { rowCount: rowCount(data) },
             },
@@ -144,8 +143,8 @@ function assertProgressSequence({ label, events, expectedTemplateId, expectedSou
     expected: [
       { status: "a2a", label: "A2UI 레지스트리" },
       { status: "registry_loaded", label: "A2UI 레지스트리" },
-      { status: "matcher", label: "비교용 데이터 생성 요청", mode: "comparison_data" },
-      { status: "matcher", label: "비교용 데이터 생성 결과 반환", mode: "comparison_data_ready" },
+      { status: "matcher", label: "비교용 데이터 계약 생성", mode: "comparison_data" },
+      { status: "matcher", label: "비교용 데이터 계약 준비", mode: "comparison_data_ready" },
       { status: "matcher", label: "템플릿 판단 요청", mode: "template_selection" },
       { status: "matcher", label: "판단 결과 반환", mode: "template_selected", templateId: expectedTemplateId },
       { status: "matcher", label: "슬롯 생성 요청", mode: "slot_mapping", templateId: expectedTemplateId },
@@ -180,7 +179,7 @@ function assertProgressSequence({ label, events, expectedTemplateId, expectedSou
 
   const attemptStages = new Set((aiTrace?.plannerAttempts ?? []).map((attempt) => attempt.stage));
   if (attemptStages.size > 0) {
-    expect(attemptStages.has("comparison_data"), `${label} attempts should include comparison_data`);
+    expect(!attemptStages.has("comparison_data"), `${label} attempts should not include deterministic comparison_data`);
     expect(attemptStages.has("template_selection"), `${label} attempts should include template_selection`);
     expect(attemptStages.has("slot_mapping"), `${label} attempts should include slot_mapping`);
   }

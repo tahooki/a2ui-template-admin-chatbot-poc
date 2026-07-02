@@ -75,11 +75,11 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("normalizationTrace", captured["render"]["tool_metadata"])
         self.assertIs(captured["render"]["data"], business_result.data)
         self.assertIsNone(captured["render"]["display_data"])
-        self.assertIsNone(captured["render"]["derived_schema"])
-        self.assertIsNone(captured["render"]["sample_data_preview"])
+        self.assertEqual(captured["render"]["derived_schema"]["rowCount"], 1)
+        self.assertEqual(captured["render"]["sample_data_preview"]["rowCount"], 1)
         self.assertEqual(result.metadata["dataIntegrity"]["matched"], True)
 
-    async def test_large_rows_keep_internal_preview_but_send_raw_only_to_a2ui(self) -> None:
+    async def test_large_rows_forward_bounded_preview_and_schema_to_a2ui(self) -> None:
         rows = [
             {
                 "id": f"eq-large-{index}",
@@ -152,8 +152,9 @@ class RenderBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["api_id"], "equipment-status-large-rows")
         self.assertFalse(fallback_called)
         self.assertIsNone(captured["display_data"])
-        self.assertIsNone(captured["sample_data_preview"])
-        self.assertIsNone(captured["derived_schema"])
+        self.assertEqual(captured["sample_data_preview"]["rowCount"], 1000)
+        self.assertLess(captured["sample_data_preview"]["sampleSize"], 1000)
+        self.assertEqual(captured["derived_schema"]["rowCount"], 1000)
         self.assertEqual(captured["profile"]["rowCount"], 1000)
         self.assertEqual(captured["profile"]["listPath"], "result.rows")
         self.assertEqual(captured["tool_metadata"]["sourceToolName"], "get_equipment_status_large_rows")
