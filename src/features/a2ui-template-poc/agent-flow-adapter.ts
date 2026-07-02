@@ -281,10 +281,13 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
 
   if (status === "intent") {
     const isGeneral = label === "general";
+    const intentSource = textValue(source.data.source);
+    const usesLlm = intentSource === "llm";
     const detail = [
       `intent=${label || "unknown"}`,
-      source.data.source ? `source=${String(source.data.source)}` : undefined,
-      source.data.llmConfigured !== undefined ? `llm=${String(source.data.llmConfigured)}` : undefined,
+      intentSource ? `source=${intentSource}` : undefined,
+      source.data.intentRouter ? `router=${String(source.data.intentRouter)}` : undefined,
+      usesLlm && source.data.llmConfigured !== undefined ? `llm=${String(source.data.llmConfigured)}` : undefined,
     ]
       .filter(Boolean)
       .join(" | ");
@@ -294,8 +297,8 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
         event: "state:intent",
         phase: "intent",
         from: "main_agent",
-        to: "llm",
-        label: isGeneral ? "일반 대화로 분류" : "API 데이터 호출 판단",
+        to: usesLlm ? "llm" : "main_agent",
+        label: usesLlm ? (isGeneral ? "일반 대화로 분류" : "API 데이터 호출 판단") : isGeneral ? "정규식 일반 분류" : "정규식 API 라우팅",
         detail,
         branch,
         severity: "info",
@@ -305,9 +308,9 @@ function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[
       newFlowEvent(source, 1, {
         event: "state:intent_result",
         phase: "intent",
-        from: "llm",
+        from: usesLlm ? "llm" : "main_agent",
         to: "main_agent",
-        label: isGeneral ? "일반 의도 반환" : "API 데이터 호출 여부반환",
+        label: usesLlm ? (isGeneral ? "일반 의도 반환" : "API 데이터 호출 여부반환") : isGeneral ? "일반 분류 결과" : "API 라우팅 결과",
         detail,
         branch,
         severity: "success",

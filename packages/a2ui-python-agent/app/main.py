@@ -72,6 +72,7 @@ async def health() -> dict[str, Any]:
         "name": "a2ui-template-main-agent",
         "a2aUrl": settings.a2a_url,
         "nextApiBaseUrl": settings.next_api_base_url,
+        "intentRouter": "regex",
         "llmConfigured": bool(settings.openai_api_key),
         "openaiModel": settings.openai_model,
     }

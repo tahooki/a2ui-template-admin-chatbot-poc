@@ -1,67 +1,60 @@
 import json
 import unittest
-from unittest.mock import patch
 
-from app.ai.llm_client import LLMClientError
-from app.orchestrate import AgentRuntimeError, _choose_api
+from app.orchestrate import _choose_api
 from app.orchestrate import stream_chat_turn
+from app.intent_router import choose_api_by_regex
 
 
 class IntentRoutingTest(unittest.IsolatedAsyncioTestCase):
-    async def test_llm_null_classification_is_final(self) -> None:
-        async def llm_general(message, history=None):
-            return {"api_id": None, "confidence": 0.91, "reason": "greeting"}
+    async def test_regex_routes_equipment_status_without_llm(self) -> None:
+        api_id, source = await _choose_api("장비 상태 보여줘")
 
-        with (
-            patch("app.orchestrate.is_llm_available", return_value=True),
-            patch("app.orchestrate.classify_equipment_intent_with_llm", llm_general),
-        ):
-            api_id, source = await _choose_api("장비 상태 보여줘")
+        self.assertEqual(api_id, "equipment-status")
+        self.assertEqual(source, "regex")
+
+    async def test_regex_routes_quick_prompt_api_badges(self) -> None:
+        cases = {
+            "장비 상태 목록 보여줘": "equipment-status",
+            "장비 목록 보여줘": "equipment-catalog",
+            "컬럼이 많은 장비 상태 목록 보여줘": "equipment-status-wide-columns",
+            "데이터가 많은 장비 상태 목록 보여줘": "equipment-status-large-rows",
+            "work-items API를 진행률로 보여줘": "work-items",
+            "work-items API를 처리 큐처럼 보여줘": "work-items",
+            "resources API를 카드로 보여줘": "resources",
+            "status-checks API를 상태표로 보여줘": "status-checks",
+            "summary API를 숫자 카드로 보여줘": "summary",
+            "hierarchy API를 트리로 보여줘": "hierarchy",
+        }
+
+        for prompt, expected_api_id in cases.items():
+            with self.subTest(prompt=prompt):
+                self.assertEqual(choose_api_by_regex(prompt).api_id, expected_api_id)
+
+    async def test_regex_routes_fixture_requests(self) -> None:
+        self.assertEqual(choose_api_by_regex("작업 항목 진행률 보여줘").api_id, "work-items")
+        self.assertEqual(choose_api_by_regex("계층 트리 데이터 보여줘").api_id, "hierarchy")
+        self.assertEqual(choose_api_by_regex("KPI 요약 지표 보여줘").api_id, "summary")
+
+    async def test_regex_general_classification_is_final(self) -> None:
+        api_id, source = await _choose_api("안녕")
 
         self.assertIsNone(api_id)
-        self.assertEqual(source, "llm")
+        self.assertEqual(source, "regex")
 
-    async def test_llm_failure_raises_without_rule_fallback(self) -> None:
-        async def llm_unavailable(message, history=None):
-            return None
+    async def test_stream_intent_event_reports_regex_router(self) -> None:
+        chunks = []
+        async for chunk in stream_chat_turn("장비 상태 보여줘"):
+            chunks.append(chunk)
+            if '"status": "intent"' in chunk:
+                break
 
-        with (
-            patch("app.orchestrate.is_llm_available", return_value=True),
-            patch("app.orchestrate.classify_equipment_intent_with_llm", llm_unavailable),
-        ):
-            with self.assertRaises(AgentRuntimeError):
-                await _choose_api("장비 상태 보여줘")
-
-    async def test_missing_llm_configuration_raises_without_rule_fallback(self) -> None:
-        with patch("app.orchestrate.is_llm_available", return_value=False):
-            with self.assertRaises(AgentRuntimeError):
-                await _choose_api("장비 상태 보여줘")
-
-    async def test_stream_error_logs_llm_failure_details_without_exposing_them(self) -> None:
-        async def llm_error(message, history=None):
-            raise LLMClientError(
-                "intent_classification",
-                "LLM request returned a non-success response.",
-                status_code=401,
-                response_body='{"error":"invalid_api_key"}',
-            )
-
-        with (
-            patch("app.orchestrate.is_llm_available", return_value=True),
-            patch("app.orchestrate.classify_equipment_intent_with_llm", llm_error),
-        ):
-            with self.assertLogs("uvicorn.error", level="ERROR") as logs:
-                chunks = [chunk async for chunk in stream_chat_turn("장비 상태 보여줘")]
-
-        error_chunk = next(chunk for chunk in chunks if chunk.startswith("event: error"))
-        payload = json.loads(error_chunk.split("data: ", 1)[1])
-        self.assertEqual(payload["message"], "Agent가 장비 데이터를 조회하거나 처리하지 못했습니다. Python 실행 로그를 확인해 주세요.")
-        self.assertNotIn("details", payload)
-        self.assertNotIn("errorType", payload)
-        self.assertIn("chat stream failed", "\n".join(logs.output))
-        self.assertIn("LLM intent classification failed", "\n".join(logs.output))
-        self.assertIn("status=401", "\n".join(logs.output))
-        self.assertIn("invalid_api_key", "\n".join(logs.output))
+        intent_chunk = next(chunk for chunk in chunks if '"status": "intent"' in chunk)
+        payload = json.loads(intent_chunk.split("data: ", 1)[1])
+        self.assertEqual(payload["label"], "equipment-status")
+        self.assertEqual(payload["source"], "regex")
+        self.assertEqual(payload["intentRouter"], "regex")
+        self.assertNotIn("llmConfigured", payload)
 
 
 if __name__ == "__main__":

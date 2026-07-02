@@ -64,6 +64,30 @@ const quickPrompts = [
     label: "데이터 많은 상태",
     prompt: "데이터가 많은 장비 상태 목록 보여줘",
   },
+  {
+    label: "작업 진행률",
+    prompt: "work-items API를 진행률로 보여줘",
+  },
+  {
+    label: "작업 큐",
+    prompt: "work-items API를 처리 큐처럼 보여줘",
+  },
+  {
+    label: "리소스 카드",
+    prompt: "resources API를 카드로 보여줘",
+  },
+  {
+    label: "상태 체크표",
+    prompt: "status-checks API를 상태표로 보여줘",
+  },
+  {
+    label: "요약 지표",
+    prompt: "summary API를 숫자 카드로 보여줘",
+  },
+  {
+    label: "계층 트리",
+    prompt: "hierarchy API를 트리로 보여줘",
+  },
 ];
 
 const pendingText = "조회 중입니다.";

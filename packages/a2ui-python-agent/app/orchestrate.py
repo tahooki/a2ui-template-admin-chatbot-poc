@@ -5,14 +5,9 @@ from typing import Any, AsyncIterator
 from uuid import uuid4
 
 from .a2ui_render_tool import A2UIRenderToolInput, A2UIRenderToolResult, run_a2ui_render_tool, stream_a2ui_render_tool
-from .ai.llm_client import (
-    LLMClientError,
-    classify_equipment_intent_with_llm,
-    generate_general_response_with_llm,
-    is_llm_available,
-)
-from .config import settings
+from .ai.llm_client import LLMClientError, generate_general_response_with_llm
 from .equipment_tools import equipment_api_title
+from .intent_router import choose_api_by_regex
 from .business_tools import BusinessToolResult, run_business_tool
 from .render_boundary import RenderBoundaryError
 from .tool_router import business_tool_for_api
@@ -26,16 +21,9 @@ class AgentRuntimeError(RuntimeError):
 
 
 async def _choose_api(message: str, history: list[dict[str, Any]] | None = None) -> tuple[str | None, str]:
-    if not is_llm_available():
-        raise AgentRuntimeError("LLM is not configured. Set OPENAI_API_KEY before using the agent.")
-
-    try:
-        llm_classification = await classify_equipment_intent_with_llm(message, history)
-    except LLMClientError as exc:
-        raise AgentRuntimeError(f"LLM intent classification failed: {exc}") from exc
-    if llm_classification is None:
-        raise AgentRuntimeError("LLM intent classification failed: empty classification result.")
-    return llm_classification["api_id"], "llm"
+    _ = history
+    classification = choose_api_by_regex(message)
+    return classification.api_id, "regex"
 
 
 async def _general_response(message: str, history: list[dict[str, Any]] | None = None) -> str:
@@ -156,7 +144,7 @@ async def run_chat_turn(message: str, history: list[dict[str, Any]] | None = Non
             "text": await _general_response(message, history),
             "surface": None,
             "mode": "text_fallback",
-            "reason": "No equipment intent detected by LLM.",
+            "reason": "No equipment intent detected by regex router.",
             "intent_source": intent_source,
             "matcher": {
                 "strategy": None,
@@ -215,7 +203,7 @@ async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = 
                     "status": "intent",
                     "label": api_id or "general",
                     "source": intent_source,
-                    "llmConfigured": is_llm_available(),
+                    "intentRouter": "regex",
                 },
                 "data" if api_id else "general",
             ),
@@ -229,7 +217,7 @@ async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = 
                     {
                         "mode": "text_fallback",
                         "branch": "general",
-                        "reason": "No equipment intent detected by LLM.",
+                        "reason": "No equipment intent detected by regex router.",
                         "intent_source": intent_source,
                     },
                     "general",

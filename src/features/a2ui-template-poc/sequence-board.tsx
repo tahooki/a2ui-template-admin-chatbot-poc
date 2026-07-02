@@ -143,8 +143,8 @@ function buildSequenceSteps(specs: SequenceStepSpec[]) {
 
 const steps: SequenceStep[] = buildSequenceSteps([
   { id: "chat-stream", phase: "request", events: ["request_start", "response_open"], from: "chat", to: "main_agent", label: "채팅 스트림 열기" },
-  { id: "intent", phase: "intent", events: ["state:planning", "state:intent"], from: "main_agent", to: "llm", label: "API 데이터 호출 판단", gapBefore: "selfLoop" },
-  { id: "intent-result", phase: "intent", events: ["state:intent_result"], from: "llm", to: "main_agent", label: "API 데이터 호출 여부반환" },
+  { id: "intent", phase: "intent", events: ["state:planning", "state:intent"], from: "main_agent", to: "main_agent", label: "정규식 API 라우팅", gapBefore: "selfLoop" },
+  { id: "intent-result", phase: "intent", events: ["state:intent_result"], from: "main_agent", to: "main_agent", label: "API 라우팅 결과" },
   {
     id: "business-tool-call",
     phase: "intent",

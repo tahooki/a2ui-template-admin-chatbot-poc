@@ -6,7 +6,7 @@ It receives a chat request, calls the equipment API from the Next app, asks the 
 
 The default local path uses the Next-hosted A2A facade.
 
-The agent requires OpenAI-compatible chat completions for intent routing and non-surface text generation. It reads these values from process env, the repo root `.env.local`, or this package's `.env.local`:
+The agent routes API intent with deterministic regex rules. OpenAI-compatible chat completions are only used for general/non-surface fallback text generation in the Python agent, while A2UI template matching has its own LLM-backed flow. The Python agent reads these values from process env, the repo root `.env.local`, or this package's `.env.local`:
 
 ```bash
 OPENAI_API_KEY=...
@@ -43,4 +43,4 @@ MAIN_AGENT_URL=http://localhost:8000
 
 If the Python agent is unavailable, `/api/chat` streams an `error` event instead of rendering a local deterministic fallback. The POC should show real Agent/A2A wiring, so a missing agent must be visible during verification.
 
-If `OPENAI_API_KEY` is unavailable or the LLM request fails, `/api/chat` streams an `error` event. There is no rule-based intent fallback. Check `/health` for `llmConfigured: true`, then confirm a chat stream emits intent state with `source: "llm"` before presenting this as a real LLM-backed Agent demo.
+Main-agent API selection is rule-based for demos. Check `/health` for `intentRouter: "regex"`, then confirm a chat stream emits intent state with `source: "regex"` before presenting A2UI's matcher steps as the LLM-backed part of the flow.
