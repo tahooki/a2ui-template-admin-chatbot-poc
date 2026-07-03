@@ -248,7 +248,10 @@ function collectLeafPaths(value: unknown, prefix: string, output: Set<string>, d
   }
 
   if (Array.isArray(value)) {
-    if (prefix) output.add(`${prefix}.length`);
+    if (prefix) {
+      output.add(prefix);
+      output.add(`${prefix}.length`);
+    }
     const first = value.find((item) => item !== undefined && item !== null);
     if (first !== undefined && prefix) collectLeafPaths(first, `${prefix}.first`, output, depth + 1, maxDepth, warnings);
     return;

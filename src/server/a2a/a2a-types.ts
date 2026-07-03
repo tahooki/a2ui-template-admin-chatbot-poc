@@ -104,6 +104,7 @@ export type A2UIDecisionArtifactData = {
     candidates?: A2UICandidateTrace[];
     mapping?: A2UIMappingDecision;
     aiSurfacePlanTrace?: A2UISurfacePlanTrace;
+    diagnostic?: A2UISurfacePlanTrace["diagnostic"];
     sourceTool?: Record<string, unknown>;
     dataIntegrity?: Record<string, unknown>;
   };
@@ -117,6 +118,7 @@ export type A2ATraceArtifactData = {
   candidates?: A2UICandidateTrace[];
   mapping?: A2UIMappingDecision;
   aiSurfacePlanTrace?: A2UISurfacePlanTrace;
+  diagnostic?: A2UISurfacePlanTrace["diagnostic"];
   sourceTool?: Record<string, unknown>;
   dataIntegrity?: Record<string, unknown>;
 };

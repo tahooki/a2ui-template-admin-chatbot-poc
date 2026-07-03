@@ -798,11 +798,13 @@ function comparisonDataEvidenceView(trace: DataBoundaryScenarioTrace | undefined
     ? cleanJsonValue({
         comparisonData,
         comparisonDataSource: "server_source_contract",
+        diagnostic: trace.aiSurfacePlanTrace.diagnostic,
       })
     : cleanJsonValue({
         comparisonData,
         comparisonDataSource: resultData.comparisonDataSource ?? requestData.comparisonDataSource,
         validation: resultData.validation,
+        diagnostic: resultData.diagnostic ?? eventTrace?.diagnostic,
         comparisonDataEvent: eventPayload(resultEvent),
       });
 
@@ -855,6 +857,12 @@ function templateComparisonEvidenceView(trace: DataBoundaryScenarioTrace | undef
   const candidates = trace?.renderPlan.candidates ?? firstRecordArray(resultData.candidates, validationData.candidates, toolResultData.candidates, eventTrace?.candidateEvaluations);
   const reason = stringValue(resultData.reason ?? validationData.reason ?? mappingData.reason ?? toolResultData.reason ?? surfaceRenderPlan.reason, "");
   const sourceTool = sourceToolFromEvent(toolResultEvent);
+  const diagnostic = recordValue(trace?.aiSurfacePlanTrace.diagnostic)
+    ?? recordValue(resultData.diagnostic)
+    ?? recordValue(validationData.diagnostic)
+    ?? recordValue(mappingData.diagnostic)
+    ?? recordValue(toolResultData.diagnostic)
+    ?? recordValue(eventTrace?.diagnostic);
   const inputJson = trace
     ? cleanJsonValue({
         sourceData: trace.sourceData,
@@ -889,6 +897,7 @@ function templateComparisonEvidenceView(trace: DataBoundaryScenarioTrace | undef
         score,
         reason: reason || undefined,
         templateSelection: recordValue(trace.aiSurfacePlanTrace.templateSelection),
+        diagnostic,
         candidates,
       })
     : cleanJsonValue({
@@ -899,6 +908,7 @@ function templateComparisonEvidenceView(trace: DataBoundaryScenarioTrace | undef
         reason: reason || undefined,
         candidates,
         templateSelection: resultData.templateSelection ?? eventTrace?.templateSelection,
+        diagnostic,
         templateSelectionResultEvent: eventPayload(templateResultEvent),
       });
 
@@ -926,6 +936,11 @@ function slotGenerationEvidenceView(trace: DataBoundaryScenarioTrace | undefined
   const mappingData = recordValue(mappingEvent?.data);
   const traceSlotMapping = recordValue(trace?.aiSurfacePlanTrace.slotMapping) ?? recordValue(eventTrace?.slotMapping);
   const traceSelection = recordValue(trace?.aiSurfacePlanTrace.templateSelection) ?? recordValue(eventTrace?.templateSelection);
+  const diagnostic = recordValue(trace?.aiSurfacePlanTrace.diagnostic)
+    ?? recordValue(slotData.diagnostic)
+    ?? recordValue(validationData.diagnostic)
+    ?? recordValue(mappingData.diagnostic)
+    ?? recordValue(eventTrace?.diagnostic);
 
   const inputJson = trace
     ? cleanJsonValue({
@@ -952,12 +967,14 @@ function slotGenerationEvidenceView(trace: DataBoundaryScenarioTrace | undefined
         fieldMappings: trace.aiSurfacePlanTrace.fieldMappings,
         slotMappings: trace.aiSurfacePlanTrace.slotMappings,
         validation: trace.aiSurfacePlanTrace.validation,
+        diagnostic,
         mappingComparison: trace.mappingComparison,
       })
     : cleanJsonValue({
         slotMapping: slotData.slotMapping ?? validationData.slotMapping ?? mappingData.slotMapping ?? traceSlotMapping,
         validationEvent: eventPayload(validationEvent),
         mappingEvent: eventPayload(mappingEvent),
+        diagnostic,
         a2uiToolResultEvent: eventPayload(toolResultEvent),
       });
 

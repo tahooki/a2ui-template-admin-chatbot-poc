@@ -162,6 +162,30 @@ type ValidationResult = {
 
 type PlannerResponseFormat = "json_schema" | "json_object" | "none";
 type PlannerStage = "template_selection" | "slot_mapping";
+type A2UIDiagnosticSeverity = "ok" | "warning" | "error";
+type A2UIDiagnosticStage =
+  | "source_preview"
+  | "comparison_data"
+  | "template_selection"
+  | "slot_mapping"
+  | "slot_mapping_validation"
+  | "plan_validation"
+  | "mapping_applied";
+export type A2UIDiagnosticCode =
+  | "A2UI-OK"
+  | "A2UI-SRC-001"
+  | "A2UI-CMP-001"
+  | "A2UI-TPL-001"
+  | "A2UI-TPL-002"
+  | "A2UI-TPL-003"
+  | "A2UI-SLOT-001"
+  | "A2UI-SLOT-002"
+  | "A2UI-SLOT-003"
+  | "A2UI-SLOT-004"
+  | "A2UI-MAP-001"
+  | "A2UI-LLM-001"
+  | "A2UI-LLM-002"
+  | "A2UI-VAL-001";
 
 type PlannerAttemptConfig = {
   maxTokens: number;
@@ -183,6 +207,36 @@ type PlannerAttemptTrace = {
   contentLength?: number;
   contentPreview?: string;
   error?: string;
+};
+
+export type A2UIDiagnosticReport = {
+  code: A2UIDiagnosticCode;
+  severity: A2UIDiagnosticSeverity;
+  stage: A2UIDiagnosticStage;
+  title: string;
+  summary: string;
+  nextAction: string;
+  copyLine: string;
+  apiId?: EquipmentApiId;
+  templateId?: string;
+  model?: string;
+  sourceShape?: string;
+  sourceArrayPath?: string;
+  sourceRowCount?: number;
+  sourceFieldCount?: number;
+  renderRowCount?: number;
+  errorCount: number;
+  errors: string[];
+  plannerOutcomes?: Array<{
+    stage: PlannerStage;
+    requestKind: PlannerAttemptTrace["requestKind"];
+    attempt: number;
+    responseFormat: PlannerResponseFormat;
+    outcome: PlannerAttemptTrace["outcome"];
+    status?: number;
+    finishReason?: string;
+    error?: string;
+  }>;
 };
 
 type PlannerJsonRequestResult<T> = {
@@ -225,6 +279,7 @@ export type A2UISurfacePlanTrace = {
   renderDataHash?: string;
   renderDataByteLength?: number;
   plannerAttempts?: PlannerAttemptTrace[];
+  diagnostic?: A2UIDiagnosticReport;
   beforeRows: DataRecord[];
   afterRows?: DataRecord[];
 };
@@ -271,7 +326,7 @@ export type A2UISurfacePlanProgress = {
 
 export type A2UISurfacePlanProgressHandler = (progress: A2UISurfacePlanProgress) => void | Promise<void>;
 
-const promptVersion = "2026-06-22.a2ui-comparison-data-surface-plan.v2" as const;
+const promptVersion = "2026-07-03.a2ui-diagnostic-glm.v1" as const;
 const allowedTransforms: PlannerTransform[] = ["copy", "boolean_code", "number_to_boolean", "default_false"];
 const maxPromptFieldPaths = 40;
 const maxPromptSampleRows = 3;
@@ -283,7 +338,7 @@ const defaultPlannerAttempts: PlannerAttemptConfig[] = [
 ];
 const aiTemplateSelectionIncompleteReason = "AI가 템플릿 판단 결과를 끝까지 완성하지 못해 선택을 확정하지 못했습니다.";
 const aiSlotMappingIncompleteReason = "AI가 선택된 템플릿의 슬롯 생성 결과를 끝까지 완성하지 못했습니다.";
-const plannerAttemptPreviewLength = 1600;
+const plannerAttemptPreviewLength = 800;
 const titleSourceKeys = ["name", "equipmentName", "equipment_name", "eqpNm", "eqp_nm", "assetDisplayName", "assetName", "asset_nm", "asset_name", "title"];
 const idSourceKeys = ["id", "eqpId", "eqp_id", "equipmentId", "equipment_id", "assetId", "asset_id"];
 const onlineSourceKeys = ["isOnline", "opYn", "op_yn", "operationYn", "operation_yn", "operStateCd", "oper_state_cd", "onlineYn", "online_yn"];
@@ -894,7 +949,8 @@ function buildPrompt({
       templateSelectionRules: [
         "The active registry uses generic design-system surfaces. Do not select deprecated equipment.* templates unless they are explicitly present in allowedTemplateIds.",
         "Select collection.cardGrid for image/title/card-like rows.",
-        "Select matrix.statusMatrix when multiple boolean status flags can fill items[].statusFlags.",
+        "Select matrix.statusMatrix for explicit status-check, health-check, boolean matrix, or checklist views when multiple boolean status flags can fill items[].statusFlags.",
+        "Select matrix.table for large-row, wide-column, telemetry-rich, or general scalar row comparison data, even if some status flags also exist.",
         "Select metric.progressList when each row has a concrete progress/percent/completion numeric field.",
         "Select metric.statCards for small summary objects with numeric KPI fields.",
         "Select time.timeline when event-like rows have timestamps.",
@@ -975,6 +1031,15 @@ function buildTemplateSelectionPrompt(args: Parameters<typeof buildPrompt>[0]) {
       candidateRule: "candidateNotes may explain why templates were selected or rejected, but selectedTemplateId and reason are the source of truth.",
       presentationIntentRule:
         "If presentationIntent.requestedSurfaces is non-empty and the requested registered surface can fill its required slots from source fields, choose the first compatible requested surface even when other data signals are also strong. If the requested surface is incompatible, choose the closest compatible surface and explain the repair.",
+      glmSelectionRules: [
+        "Return exactly one JSON object. Do not wrap it in markdown and do not add prose before or after it.",
+        "selectedTemplateId must be copied exactly from allowedTemplateIds. Never translate, shorten, pluralize, or invent template ids.",
+        "For tree or hierarchy requests, choose relation.tree only when source.fieldPaths contains a children-like array field or a parentId-like field.",
+        "For summary metric or KPI/stat-card requests, choose metric.statCards when the source is a small object or rows contain concrete numeric value/delta/unit fields.",
+        "For status check, health check, boolean matrix, or checklist requests, choose matrix.statusMatrix when two or more boolean/status flag fields exist.",
+        "For large rows, wide columns, telemetry metrics, or generic status lists without an explicit status-check/checklist request, choose matrix.table instead of matrix.statusMatrix.",
+        "For resource card, image card, catalog card, document card, or media/card requests, choose collection.cardGrid when title/image/description/category fields exist.",
+      ],
     },
     outputJsonShape: {
       selectedTemplateId: "registered template id",
@@ -1028,6 +1093,16 @@ function buildSlotMappingPrompt({
       ],
       renderRule: "A2UI will apply fieldMappings to display rows, then bind selected template slots through slotMappings.",
       candidateRule: "Do not return candidateEvaluations in this step.",
+      glmSlotRules: [
+        "Return exactly one JSON object. Do not wrap it in markdown and do not add prose before or after it.",
+        "Every sourcePath must be copied exactly from source.fieldPaths. Never invent childNodes, children, parentId, imageUrl, status, value, or title paths unless that exact path exists.",
+        "Every required slot in templates[0].inputSchema.requiredSlots must appear in slotMappings at least minCount times.",
+        "relation.tree: map nodes[].title plus nodes[].children or nodes[].parentId only when those exact source.fieldPaths exist.",
+        "metric.statCards: map concrete numeric fields to metrics[].value or the registered metric value slot; map label/title/category/name fields only to label/title slots.",
+        "matrix.statusMatrix: map items[].title plus status flag slots from boolean/status fields. Use number_to_boolean only for count fields such as alarm counts.",
+        "collection.cardGrid: map cards/items title, optional image, description, category, and status slots from exact existing source.fieldPaths.",
+        "slotMappings must be backed by fieldMappings through the same sourcePath or targetField.",
+      ],
     },
     outputJsonShape: {
       fieldMappings: [
@@ -1083,9 +1158,26 @@ async function requestPlannerJson<T>({
   const attemptConfigs = plannerAttemptsForRequest();
   const requestKind = correction ? "correction" : "initial";
   const attemptRecords: PlannerAttemptTrace[] = [];
+  const verboseLlmLogs = process.env.A2UI_VERBOSE_LLM_LOGS === "1";
   const recordAttempt = (record: PlannerAttemptTrace) => {
     attemptRecords.push(record);
-    console.info("[a2ui] AI surface planner attempt summary", record);
+    const summary = {
+      stage: record.stage,
+      requestKind: record.requestKind,
+      attempt: record.attempt,
+      responseFormat: record.responseFormat,
+      maxTokens: record.maxTokens,
+      durationMs: record.durationMs,
+      outcome: record.outcome,
+      status: record.status,
+      finishReason: record.finishReason,
+      rawResponseLength: record.rawResponseLength,
+      contentLength: record.contentLength,
+      error: record.error,
+      rawResponsePreview: verboseLlmLogs ? record.rawResponsePreview : undefined,
+      contentPreview: verboseLlmLogs ? record.contentPreview : undefined,
+    };
+    console.info("[a2ui] AI surface planner attempt summary", summary);
   };
 
   const userPayload = correction
@@ -1136,16 +1228,19 @@ async function requestPlannerJson<T>({
       });
       const rawText = await response.text();
       const durationMs = Date.now() - startedAt;
-      console.info(
-        "[a2ui] AI surface planner raw response",
-        response.status,
-        `attempt=${attemptIndex + 1}`,
-        `stage=${stage}`,
-        `requestKind=${requestKind}`,
-        `format=${attempt.responseFormat}`,
-        `maxTokens=${attempt.maxTokens}`,
-        rawText.slice(0, 6000),
-      );
+      if (verboseLlmLogs) {
+        console.info("[a2ui] AI surface planner response summary", {
+          status: response.status,
+          attempt: attemptIndex + 1,
+          stage,
+          requestKind,
+          responseFormat: attempt.responseFormat,
+          maxTokens: attempt.maxTokens,
+          durationMs,
+          rawResponseLength: rawText.length,
+          rawResponsePreview: previewText(rawText, 500),
+        });
+      }
       if (!response.ok) {
         lastInternalError = `A2UI AI surface planning request failed with status ${response.status}.`;
         recordAttempt({
@@ -1161,7 +1256,7 @@ async function requestPlannerJson<T>({
           rawResponsePreview: previewText(rawText),
           error: lastInternalError,
         });
-        console.warn("[a2ui] AI surface planner request failed", lastInternalError, rawText.slice(0, 2000));
+        console.warn("[a2ui] AI surface planner request failed", lastInternalError, previewText(rawText, 500));
         if (response.status === 401 || response.status === 403) break;
         if (attemptIndex < attemptConfigs.length - 1) continue;
         break;
@@ -1185,7 +1280,7 @@ async function requestPlannerJson<T>({
           rawResponsePreview: previewText(rawText),
           error: lastInternalError,
         });
-        console.warn("[a2ui] AI surface planner envelope parse failed", lastInternalError, rawText.slice(0, 2000));
+        console.warn("[a2ui] AI surface planner envelope parse failed", lastInternalError, previewText(rawText, 500));
         break;
       }
 
@@ -1256,7 +1351,7 @@ async function requestPlannerJson<T>({
           finishReason: choice.finish_reason,
           contentLength: content.length,
           error: errorMessage(error),
-          contentPreview: content.slice(0, 2000),
+          contentPreview: previewText(content, 500),
         });
         if (attemptIndex < attemptConfigs.length - 1) continue;
       }
@@ -1297,8 +1392,25 @@ function requestTemplateSelection(
   return requestPlannerJson<TemplateSelectionResult>({
     stage: "template_selection",
     prompt,
-    systemPrompt:
-      "You are the A2UI template selector. Choose exactly one registered A2UI design-system surface for the AI comparison data profile, API definition, presentationIntent, and user query. Return JSON only. The only required decision fields are selectedTemplateId and reason. Do not create fieldMappings, slotMappings, render payloads, or legacy mappings. Use source.comparisonData, source.fieldPaths, and source.sampleRows as evidence for template choice. Many rows alone is not a template reason; choose based on data meaning and template contract. If presentationIntent.requestedSurfaces contains a compatible registered surface, honor that explicit display request before default data-shape preferences. If the requested surface is incompatible with the observed fields, choose the closest compatible surface and say why. Prefer generic surfaces such as collection.cardGrid, matrix.statusMatrix, metric.progressList, metric.statCards, time.timeline, process.queue, relation.tree, matrix.table, and collection.list when their required slots fit. Candidate scores are optional explanation aids, not validation requirements.",
+    systemPrompt: [
+      "You are the A2UI template selector.",
+      "Choose exactly one registered A2UI design-system surface for the AI comparison data profile, API definition, presentationIntent, and user query.",
+      "Return exactly one JSON object only. Do not use markdown. Do not add prose before or after the JSON.",
+      "The only required decision fields are selectedTemplateId and reason.",
+      "selectedTemplateId must be copied exactly from allowedTemplateIds.",
+      "Do not create fieldMappings, slotMappings, render payloads, or legacy mappings.",
+      "Use source.comparisonData, source.fieldPaths, and source.sampleRows as evidence for template choice.",
+      "Many rows alone is not a template reason; choose based on data meaning and template contract.",
+      "If presentationIntent.requestedSurfaces contains a compatible registered surface, honor that explicit display request before default data-shape preferences.",
+      "If the requested surface is incompatible with the observed fields, choose the closest compatible surface and say why.",
+      "Tree or hierarchy requests need relation.tree with an exact children-like or parentId-like source field.",
+      "Summary KPI/stat requests need metric.statCards with concrete numeric value fields.",
+      "Status check, health matrix, checklist, or 상태표 requests need matrix.statusMatrix with boolean/status flag fields.",
+      "Large rows, wide columns, telemetry metrics, or generic status lists without explicit status-check/checklist wording need matrix.table even when status flags exist.",
+      "Resource card/catalog card/media card requests need collection.cardGrid with title/image/description-like fields.",
+      "Prefer generic surfaces such as collection.cardGrid, matrix.statusMatrix, metric.progressList, metric.statCards, time.timeline, process.queue, relation.tree, matrix.table, and collection.list when their required slots fit.",
+      "Candidate scores are optional explanation aids, not validation requirements.",
+    ].join(" "),
     responseFormatFor: () => templateSelectionResponseFormatFor({ templateIds: prompt.allowedTemplateIds }),
     correction: correction
       ? {
@@ -1318,8 +1430,24 @@ function requestSlotMapping(
   return requestPlannerJson<SlotMappingResult>({
     stage: "slot_mapping",
     prompt,
-    systemPrompt:
-      "You are the A2UI slot mapper. A template has already been selected. Create fieldMappings and slotMappings only for selectedTemplateId. Do not compare templates and do not change selectedTemplateId. Use source.comparisonData to understand field meaning, but use only source.fieldPaths as sourcePath values. Do not invent source fields. Do not use wildcard paths. slotMappings do not need templateId because the A2UI server will attach selectedTemplateId; if templateId is included, it must equal selectedTemplateId. Fill required slots from the selected template inputSchema. For progress slots use concrete progress/percent/completion fields. For table columns, map concrete scalar fields. For tree slots, map children or parentId only when they exist. Metric slots should use concrete numeric metric source paths from comparisonData metric candidates or role=metric fieldProfiles.",
+    systemPrompt: [
+      "You are the A2UI slot mapper.",
+      "A template has already been selected. Create fieldMappings and slotMappings only for selectedTemplateId.",
+      "Return exactly one JSON object only. Do not use markdown. Do not add prose before or after the JSON.",
+      "Do not compare templates and do not change selectedTemplateId.",
+      "Use source.comparisonData to understand field meaning, but use only source.fieldPaths as sourcePath values.",
+      "Every sourcePath must be copied exactly from source.fieldPaths. Do not invent source fields. Do not use wildcard paths.",
+      "slotMappings do not need templateId because the A2UI server will attach selectedTemplateId; if templateId is included, it must equal selectedTemplateId.",
+      "Fill every required slot from templates[0].inputSchema.requiredSlots at least minCount times.",
+      "slotMappings must be backed by fieldMappings through the same sourcePath or targetField.",
+      "For progress slots use concrete progress/percent/completion fields.",
+      "For table columns, map concrete scalar fields.",
+      "For tree slots, map children or parentId only when those exact source.fieldPaths exist.",
+      "For metric.statCards, use concrete numeric metric/value source paths and do not map labels as metric values.",
+      "For matrix.statusMatrix, use boolean/status flag source paths for status slots and number_to_boolean only for count fields.",
+      "For collection.cardGrid, map title/image/description/category/status slots from exact existing source.fieldPaths.",
+      "Metric slots should use concrete numeric metric source paths from comparisonData metric candidates or role=metric fieldProfiles.",
+    ].join(" "),
     responseFormatFor: () => slotMappingResponseFormatFor({
       templateId,
       sourcePaths: prompt.source.fieldPaths,
@@ -2400,7 +2528,269 @@ function fallbackRenderPlan({ registryVersion, reason, candidates }: { registryV
   };
 }
 
+const diagnosticMessages: Record<A2UIDiagnosticCode, Pick<A2UIDiagnosticReport, "severity" | "title" | "summary" | "nextAction">> = {
+  "A2UI-OK": {
+    severity: "ok",
+    title: "A2UI 렌더 계획 완료",
+    summary: "템플릿 선택, 슬롯 매핑, 데이터 바인딩이 모두 통과했습니다.",
+    nextAction: "화면이 기대와 다르면 selectedTemplateId와 slotMappings가 사용자 의도와 맞는지 비교하세요.",
+  },
+  "A2UI-SRC-001": {
+    severity: "error",
+    title: "원본 데이터 행 없음",
+    summary: "A2UI가 그릴 row 배열을 원본 응답에서 찾지 못했습니다.",
+    nextAction: "raw API 응답에 items/rows/list 같은 배열이 있는지, 또는 observedSource.selectedDatasetPath가 맞는지 확인하세요.",
+  },
+  "A2UI-CMP-001": {
+    severity: "error",
+    title: "비교용 데이터 계약 오류",
+    summary: "서버가 만든 comparisonData 계약이 유효하지 않아 템플릿 판단을 진행하지 못했습니다.",
+    nextAction: "comparisonData.fieldProfiles와 sourceFieldPaths가 비어 있거나 서로 맞지 않는지 확인하세요.",
+  },
+  "A2UI-TPL-001": {
+    severity: "error",
+    title: "템플릿 판단 응답 오류",
+    summary: "LLM의 템플릿 선택 결과가 비어 있거나 필수 형식을 만족하지 못했습니다.",
+    nextAction: "selectedTemplateId가 allowedTemplateIds 중 하나인지, reason이 포함됐는지 확인하세요.",
+  },
+  "A2UI-TPL-002": {
+    severity: "error",
+    title: "등록되지 않은 템플릿 선택",
+    summary: "LLM이 현재 A2UI registry에 없는 템플릿을 선택했습니다.",
+    nextAction: "selectedTemplateId를 allowedTemplateIds 값 그대로 쓰도록 프롬프트와 모델 응답을 확인하세요.",
+  },
+  "A2UI-TPL-003": {
+    severity: "warning",
+    title: "호환 템플릿 부족",
+    summary: "요청한 화면 유형을 채울 등록 템플릿이나 필수 필드가 부족합니다.",
+    nextAction: "registry에 해당 surface가 등록되어 있는지, requiredSlots를 채울 source field가 있는지 확인하세요.",
+  },
+  "A2UI-SLOT-001": {
+    severity: "error",
+    title: "슬롯 매핑 응답 오류",
+    summary: "LLM의 슬롯 생성 결과가 비어 있거나 fieldMappings/slotMappings 구조가 부족합니다.",
+    nextAction: "fieldMappings와 slotMappings를 둘 다 반환했는지, slotMappings가 fieldMappings의 targetField/sourcePath로 뒷받침되는지 확인하세요.",
+  },
+  "A2UI-SLOT-002": {
+    severity: "error",
+    title: "알 수 없는 sourcePath",
+    summary: "LLM이 source.fieldPaths에 없는 필드 경로를 만들어냈습니다.",
+    nextAction: "slotMappings.sourcePath와 fieldMappings.sourcePath가 source.fieldPaths 문자열과 완전히 같은지 확인하세요.",
+  },
+  "A2UI-SLOT-003": {
+    severity: "error",
+    title: "필수 슬롯 누락",
+    summary: "선택된 템플릿의 required slot을 충분히 채우지 못했습니다.",
+    nextAction: "selectedTemplate.inputSchema.requiredSlots의 각 slot이 minCount 이상 slotMappings에 들어갔는지 확인하세요.",
+  },
+  "A2UI-SLOT-004": {
+    severity: "error",
+    title: "슬롯 타입 불일치",
+    summary: "매핑된 필드 타입이 템플릿 슬롯이 허용하는 타입과 맞지 않습니다.",
+    nextAction: "slot.acceptsTypes와 실제 source field 타입을 비교하고, 숫자/불리언/status 변환이 필요한지 확인하세요.",
+  },
+  "A2UI-MAP-001": {
+    severity: "warning",
+    title: "렌더 데이터 비어 있음",
+    summary: "검증은 통과했지만 renderer에 넘길 row가 비어 있습니다.",
+    nextAction: "원본 rowCount와 applyPlan 이후 renderRowCount를 비교해 필터링이나 배열 선택이 잘못됐는지 확인하세요.",
+  },
+  "A2UI-LLM-001": {
+    severity: "error",
+    title: "LLM JSON/내용 파싱 오류",
+    summary: "LLM 응답을 JSON으로 읽지 못했거나 content가 비어 있습니다.",
+    nextAction: "plannerAttempts의 outcome, contentPreview, finishReason을 보고 JSON-only 응답과 max_tokens 부족 여부를 확인하세요.",
+  },
+  "A2UI-LLM-002": {
+    severity: "error",
+    title: "LLM 요청/제공자 오류",
+    summary: "LLM provider 호출 자체가 실패했거나 HTTP 오류를 반환했습니다.",
+    nextAction: "OPENAI_BASE_URL, OPENAI_MODEL, API key, HTTP status, provider 응답 형식을 확인하세요.",
+  },
+  "A2UI-VAL-001": {
+    severity: "error",
+    title: "A2UI 계획 검증 오류",
+    summary: "템플릿/슬롯/후보 검증 중 일반 오류가 발생했습니다.",
+    nextAction: "validation.errors의 첫 3개를 보고 selectedTemplateId, candidateEvaluations, fieldMappings 구조를 확인하세요.",
+  },
+};
+
+function latestPlannerFailure(plannerAttempts?: PlannerAttemptTrace[]) {
+  return (plannerAttempts ?? []).slice().reverse().find((attempt) => attempt.outcome !== "success");
+}
+
+function plannerOutcomesForDiagnostic(plannerAttempts?: PlannerAttemptTrace[]) {
+  const attempts = plannerAttempts ?? [];
+  if (!attempts.length) return undefined;
+  return attempts.slice(-4).map((attempt) => ({
+    stage: attempt.stage,
+    requestKind: attempt.requestKind,
+    attempt: attempt.attempt,
+    responseFormat: attempt.responseFormat,
+    outcome: attempt.outcome,
+    status: attempt.status,
+    finishReason: attempt.finishReason,
+    error: attempt.error ? previewText(attempt.error, 160) : undefined,
+  }));
+}
+
+function diagnosticCodeFromPlannerFailure(attempt?: PlannerAttemptTrace): A2UIDiagnosticCode {
+  if (!attempt) return "A2UI-LLM-001";
+  if (attempt.outcome === "http_error" || attempt.outcome === "request_error") return "A2UI-LLM-002";
+  return "A2UI-LLM-001";
+}
+
+function diagnosticStageFromCode(code: A2UIDiagnosticCode, attempt?: PlannerAttemptTrace): A2UIDiagnosticStage {
+  if (code === "A2UI-SRC-001") return "source_preview";
+  if (code === "A2UI-CMP-001") return "comparison_data";
+  if (code.startsWith("A2UI-TPL") || (code.startsWith("A2UI-LLM") && attempt?.stage === "template_selection")) return "template_selection";
+  if (code.startsWith("A2UI-SLOT") || (code.startsWith("A2UI-LLM") && attempt?.stage === "slot_mapping")) return "slot_mapping";
+  if (code === "A2UI-MAP-001" || code === "A2UI-OK") return "mapping_applied";
+  return "plan_validation";
+}
+
+function classifyDiagnosticCode({
+  validation,
+  extracted,
+  data,
+  plannerAttempts,
+}: {
+  validation: ValidationResult;
+  extracted: RowExtraction;
+  data?: EquipmentApiResponse<unknown>;
+  plannerAttempts?: PlannerAttemptTrace[];
+}): A2UIDiagnosticCode {
+  const errors = validation.errors ?? [];
+  const joined = errors.join(" | ").toLowerCase();
+  const latestFailure = latestPlannerFailure(plannerAttempts);
+  const looksLikePlannerIncomplete =
+    joined.includes(aiTemplateSelectionIncompleteReason.toLowerCase()) ||
+    joined.includes(aiSlotMappingIncompleteReason.toLowerCase()) ||
+    joined.includes("did not return complete mapping json") ||
+    joined.includes("missing_content") ||
+    joined.includes("content_parse_error");
+
+  if (extracted.rowCount === 0) return "A2UI-SRC-001";
+  if (looksLikePlannerIncomplete) return diagnosticCodeFromPlannerFailure(latestFailure);
+  if (joined.includes("server comparison data contract")) return "A2UI-CMP-001";
+  if (joined.includes("selected template is not registered")) {
+    if (joined.includes("(empty)") || joined.includes("undefined")) return "A2UI-TPL-001";
+    return "A2UI-TPL-002";
+  }
+  if (joined.includes("맞는 a2ui 템플릿이 없습니다") || joined.includes("requires at least")) return "A2UI-TPL-003";
+  if (joined.includes("template selection failed") || joined.includes("ai template selection") || joined.includes("did not include reason")) {
+    return "A2UI-TPL-001";
+  }
+  if (joined.includes("unknown sourcepath")) return "A2UI-SLOT-002";
+  if (joined.includes("missing required slot")) return "A2UI-SLOT-003";
+  if (joined.includes("does not accept mapped type")) return "A2UI-SLOT-004";
+  if (joined.includes("did not include fieldmappings") || joined.includes("did not include slotmappings") || joined.includes("slotmappings source is not backed")) {
+    return "A2UI-SLOT-001";
+  }
+  if (!validation.ok) return "A2UI-VAL-001";
+  if (data && data.total === 0) return "A2UI-MAP-001";
+  return "A2UI-OK";
+}
+
+function logValue(value: string | number | undefined) {
+  if (value === undefined || value === "") return "-";
+  if (typeof value === "number") return String(value);
+  return JSON.stringify(previewText(value, 120).replace(/\s+/g, " "));
+}
+
+function diagnosticCopyLine(report: Omit<A2UIDiagnosticReport, "copyLine">) {
+  const firstError = report.errors[0];
+  return [
+    `A2UI_DIAG code=${report.code}`,
+    `severity=${report.severity}`,
+    `stage=${report.stage}`,
+    `api=${logValue(report.apiId)}`,
+    `template=${logValue(report.templateId)}`,
+    `rows=${logValue(report.sourceRowCount)}`,
+    `fields=${logValue(report.sourceFieldCount)}`,
+    `renderRows=${logValue(report.renderRowCount)}`,
+    `errors=${report.errorCount}`,
+    firstError ? `reason=${logValue(firstError)}` : undefined,
+  ].filter(Boolean).join(" ");
+}
+
+function buildDiagnosticReport({
+  apiId,
+  rawData,
+  extracted,
+  model,
+  plan,
+  validation,
+  data,
+  plannerAttempts,
+}: {
+  apiId: EquipmentApiId;
+  rawData: unknown;
+  extracted: RowExtraction;
+  model?: string;
+  plan: AIPlannerPlan;
+  validation: ValidationResult;
+  data?: EquipmentApiResponse<unknown>;
+  plannerAttempts?: PlannerAttemptTrace[];
+}): A2UIDiagnosticReport {
+  const code = classifyDiagnosticCode({ validation, extracted, data, plannerAttempts });
+  const latestFailure = latestPlannerFailure(plannerAttempts);
+  const message = diagnosticMessages[code];
+  const observedSource = extracted.observedSource;
+  const sourceFieldPaths = sourcePathsForExtraction(extracted);
+  const reportWithoutCopyLine: Omit<A2UIDiagnosticReport, "copyLine"> = {
+    code,
+    severity: message.severity,
+    stage: diagnosticStageFromCode(code, latestFailure),
+    title: message.title,
+    summary: message.summary,
+    nextAction: message.nextAction,
+    apiId,
+    templateId: plan.selectedTemplateId,
+    model,
+    sourceShape: observedSource ? shapeFromObservedSource(observedSource) : dataShape(rawData),
+    sourceArrayPath: extracted.arrayPath,
+    sourceRowCount: extracted.rowCount,
+    sourceFieldCount: sourceFieldPaths.length,
+    renderRowCount: data?.total,
+    errorCount: validation.errors.length,
+    errors: validation.errors.slice(0, 5),
+    plannerOutcomes: plannerOutcomesForDiagnostic(plannerAttempts),
+  };
+  return {
+    ...reportWithoutCopyLine,
+    copyLine: diagnosticCopyLine(reportWithoutCopyLine),
+  };
+}
+
+function logDiagnosticReport(report: A2UIDiagnosticReport) {
+  const details = {
+    code: report.code,
+    severity: report.severity,
+    stage: report.stage,
+    title: report.title,
+    apiId: report.apiId,
+    templateId: report.templateId,
+    model: report.model,
+    sourceShape: report.sourceShape,
+    sourceArrayPath: report.sourceArrayPath,
+    sourceRowCount: report.sourceRowCount,
+    sourceFieldCount: report.sourceFieldCount,
+    renderRowCount: report.renderRowCount,
+    errorCount: report.errorCount,
+    errors: report.errors,
+    nextAction: report.nextAction,
+    plannerOutcomes: report.plannerOutcomes,
+  };
+  if (report.severity === "ok") {
+    console.info("[a2ui-diagnostic]", report.copyLine, details);
+  } else {
+    console.warn("[a2ui-diagnostic]", report.copyLine, details);
+  }
+}
+
 function buildTrace({
+  apiId,
   rawData,
   extracted,
   model,
@@ -2412,6 +2802,7 @@ function buildTrace({
   templateSelection,
   slotMapping,
 }: {
+  apiId: EquipmentApiId;
   rawData: unknown;
   extracted: RowExtraction;
   model?: string;
@@ -2425,6 +2816,17 @@ function buildTrace({
 }): A2UISurfacePlanTrace {
   const sourceFieldPaths = sourcePathsForExtraction(extracted);
   const observedSource = extracted.observedSource;
+  const diagnostic = buildDiagnosticReport({
+    apiId,
+    rawData,
+    extracted,
+    model,
+    plan,
+    validation,
+    data,
+    plannerAttempts,
+  });
+  logDiagnosticReport(diagnostic);
   return {
     promptVersion,
     model,
@@ -2459,6 +2861,7 @@ function buildTrace({
     renderDataHash: data ? dataHash(data) : undefined,
     renderDataByteLength: data ? byteLength(data) : undefined,
     plannerAttempts,
+    diagnostic,
     beforeRows: extracted.rows.slice(0, 2),
     afterRows: (data?.items as DataRecord[] | undefined)?.slice(0, 2),
   };
@@ -2602,7 +3005,7 @@ export async function planA2UISurfaceWithAI({
       })),
     };
     const candidates = failurePlan.candidateEvaluations?.map(candidateTrace) ?? [];
-    const trace = buildTrace({ rawData, extracted, model, plan: failurePlan, validation, plannerAttempts, comparisonData });
+    const trace = buildTrace({ apiId, rawData, extracted, model, plan: failurePlan, validation, plannerAttempts, comparisonData });
     await emitProgress(onProgress, {
       status: "plan_validation",
       label: "슬롯 검증",
@@ -2616,6 +3019,7 @@ export async function planA2UISurfaceWithAI({
         candidateCount: candidates.length,
         validation,
         plannerAttempts,
+        diagnostic: trace.diagnostic,
         candidates,
         comparisonData,
         mapping: null,
@@ -2675,7 +3079,7 @@ export async function planA2UISurfaceWithAI({
       slotMappings: [],
       candidateEvaluations,
     };
-    const trace = buildTrace({ rawData, extracted, model: model ?? "registry-gate", plan, validation, plannerAttempts, comparisonData });
+    const trace = buildTrace({ apiId, rawData, extracted, model: model ?? "registry-gate", plan, validation, plannerAttempts, comparisonData });
 
     await emitProgress(onProgress, {
       status: "matcher",
@@ -2703,6 +3107,7 @@ export async function planA2UISurfaceWithAI({
         score: 0,
         candidateCount: candidates.length,
         validation,
+        diagnostic: trace.diagnostic,
         candidates,
         mapping: null,
       },
@@ -2756,7 +3161,7 @@ export async function planA2UISurfaceWithAI({
       slotMappings: [],
       candidateEvaluations,
     };
-    const trace = buildTrace({ rawData, extracted, model: model ?? "registry-gate", plan, validation, plannerAttempts, comparisonData });
+    const trace = buildTrace({ apiId, rawData, extracted, model: model ?? "registry-gate", plan, validation, plannerAttempts, comparisonData });
 
     await emitProgress(onProgress, {
       status: "matcher",
@@ -2784,6 +3189,7 @@ export async function planA2UISurfaceWithAI({
         score: 0,
         candidateCount: candidates.length,
         validation,
+        diagnostic: trace.diagnostic,
         candidates,
         mapping: null,
       },
@@ -2903,7 +3309,7 @@ export async function planA2UISurfaceWithAI({
       candidateEvaluations,
     };
     const validation: ValidationResult = { ok: false, errors: [reason] };
-    const trace = buildTrace({ rawData, extracted, model, plan: failurePlan, validation, plannerAttempts, comparisonData, templateSelection: selection });
+    const trace = buildTrace({ apiId, rawData, extracted, model, plan: failurePlan, validation, plannerAttempts, comparisonData, templateSelection: selection });
     await emitProgress(onProgress, {
       status: "matcher",
       label: "판단 결과 반환",
@@ -2933,6 +3339,7 @@ export async function planA2UISurfaceWithAI({
         score: 0,
         candidateCount: candidates.length,
         validation,
+        diagnostic: trace.diagnostic,
         plannerAttempts,
         candidates,
         comparisonData,
@@ -3026,7 +3433,7 @@ export async function planA2UISurfaceWithAI({
     if (mappingAi.internalError) console.warn("[a2ui] AI slot mapper hidden failure detail", mappingAi.internalError);
     const failurePlan = assemblePlanFromSelectionAndMapping({ selection, mappingResult: {}, templates, extracted });
     const validation: ValidationResult = { ok: false, errors: [reason] };
-    const trace = buildTrace({ rawData, extracted, model, plan: failurePlan, validation, plannerAttempts, comparisonData, templateSelection: selection });
+    const trace = buildTrace({ apiId, rawData, extracted, model, plan: failurePlan, validation, plannerAttempts, comparisonData, templateSelection: selection });
     await emitProgress(onProgress, {
       status: "plan_validation",
       label: "슬롯 검증",
@@ -3039,6 +3446,7 @@ export async function planA2UISurfaceWithAI({
         score: scoreValue(selection.confidence, 0.86),
         candidateCount: candidates.length,
         validation,
+        diagnostic: trace.diagnostic,
         plannerAttempts,
         candidates,
         comparisonData,
@@ -3104,6 +3512,7 @@ export async function planA2UISurfaceWithAI({
   }
 
   const validatedCandidates = (plan.candidateEvaluations ?? []).map(candidateTrace);
+  const validationDiagnostic = buildDiagnosticReport({ apiId, rawData, extracted, model, plan, validation, plannerAttempts });
   await emitProgress(onProgress, {
     status: "plan_validation",
     label: "슬롯 검증",
@@ -3119,6 +3528,7 @@ export async function planA2UISurfaceWithAI({
       score: plan.confidence,
       candidateCount: validatedCandidates.length,
       validation,
+      diagnostic: validationDiagnostic,
       plannerAttempts,
       slotMappingCleanup: slotMappingCleanup.removedCount > 0
         ? {
@@ -3143,7 +3553,7 @@ export async function planA2UISurfaceWithAI({
   });
   if (!validation.ok) {
     const reason = `AI slot mapping failed validation: ${validation.errors.join("; ")}`;
-    const trace = buildTrace({ rawData, extracted, model, plan, validation, plannerAttempts, comparisonData, templateSelection: selection, slotMapping });
+    const trace = buildTrace({ apiId, rawData, extracted, model, plan, validation, plannerAttempts, comparisonData, templateSelection: selection, slotMapping });
     return {
       mode: "text_fallback",
       apiId,
@@ -3180,6 +3590,7 @@ export async function planA2UISurfaceWithAI({
   }
 
   const data = applyPlan(plan, extracted);
+  const mappingDiagnostic = buildDiagnosticReport({ apiId, rawData, extracted, model, plan, validation, data, plannerAttempts });
   await emitProgress(onProgress, {
     status: "mapping_applied",
     label: "데이터 / 슬롯 맵핑",
@@ -3193,6 +3604,7 @@ export async function planA2UISurfaceWithAI({
       fieldMappingCount: plan.fieldMappings?.length ?? 0,
       slotMappingCount: plan.slotMappings?.length ?? 0,
       renderRowCount: data.total,
+      diagnostic: mappingDiagnostic,
       plannerAttempts,
       comparisonData,
       slotMapping,
@@ -3210,7 +3622,7 @@ export async function planA2UISurfaceWithAI({
   const sampleDataPreview = buildSampleDataPreview(data, { sourceId: apiId, sourceKind: "api_response" });
   const derivedSchema = buildDerivedSchema(data, { sourceId: apiId, sourceKind: "api_response", sampleDataPreview });
   const mapping = mappingDecision(template, plan);
-  const trace = buildTrace({ rawData, extracted, model, plan, validation, data, plannerAttempts, comparisonData, templateSelection: selection, slotMapping });
+  const trace = buildTrace({ apiId, rawData, extracted, model, plan, validation, data, plannerAttempts, comparisonData, templateSelection: selection, slotMapping });
   const renderPlan: A2UIRenderPlan = {
     selectedComponentId: template.componentId,
     viewType: template.surfaceConfig.viewType,

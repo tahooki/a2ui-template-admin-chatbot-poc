@@ -186,6 +186,7 @@ function readSourceToolMetadata(
     "displayRowCount",
     "displayDataShape",
     "aiSurfacePlanTrace",
+    "aiSurfacePlanDiagnostic",
     "intentSource",
   ];
 
@@ -238,6 +239,7 @@ function withPlanningMetadata(
     ...(sourceTool ?? {}),
     sourceApiId: sourceTool?.sourceApiId ?? apiId,
     aiSurfacePlanTrace: trace,
+    aiSurfacePlanDiagnostic: trace.diagnostic,
     displayDataHash: trace.renderDataHash,
     displayDataByteLength: trace.renderDataByteLength,
     displayRowCount: trace.renderRowCount,
@@ -283,6 +285,7 @@ function decisionTrace(
     candidates,
     mapping: plan.mode === "render_surface" ? plan.mapping : undefined,
     aiSurfacePlanTrace: plan.trace,
+    diagnostic: plan.trace?.diagnostic,
     sourceTool,
     dataIntegrity,
   };
@@ -316,6 +319,7 @@ function textFallbackTask({
       score: plan?.score,
       candidates: plan?.candidates,
       mapping: plan?.mode === "render_surface" ? plan.mapping : undefined,
+      diagnostic: plan?.trace?.diagnostic,
       sourceTool,
       dataIntegrity,
     },
@@ -423,6 +427,7 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string, onProgre
         score: plan.score,
         candidates: plan.candidates,
         mapping: plan.mapping,
+        diagnostic: plan.trace.diagnostic,
       },
     };
     const trace = decisionTrace(plan, sourceTool, dataIntegrity);
@@ -446,6 +451,7 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string, onProgre
             candidates: plan.candidates as A2UICandidateTrace[] | undefined,
             mapping: plan.mapping as A2UIMappingDecision | undefined,
             aiSurfacePlanTrace: plan.trace,
+            diagnostic: plan.trace.diagnostic,
             sourceTool,
             dataIntegrity,
           },
@@ -458,6 +464,7 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string, onProgre
         score: plan.score,
         candidates: plan.candidates,
         mapping: plan.mapping,
+        diagnostic: plan.trace.diagnostic,
         sourceTool,
         dataIntegrity,
       },

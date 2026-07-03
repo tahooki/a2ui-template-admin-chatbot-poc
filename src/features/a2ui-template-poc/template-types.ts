@@ -291,6 +291,7 @@ export type A2UIRenderPlan = {
       contentPreview?: string;
       error?: string;
     }>;
+    diagnostic?: Record<string, unknown>;
     beforeRows?: Record<string, unknown>[];
     afterRows?: Record<string, unknown>[];
   };
@@ -345,5 +346,6 @@ export type A2UISurfaceEnvelope = {
     score?: number;
     candidates?: A2UICandidateTrace[];
     mapping?: A2UIMappingDecision;
+    diagnostic?: Record<string, unknown>;
   };
 };

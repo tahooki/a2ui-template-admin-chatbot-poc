@@ -115,6 +115,7 @@ export type AiSurfacePlanDemoTrace = {
   comparisonData?: Record<string, unknown>;
   templateSelection?: Record<string, unknown>;
   slotMapping?: Record<string, unknown>;
+  diagnostic?: Record<string, unknown>;
   fieldMappings?: Record<string, unknown>[];
   slotMappings?: Record<string, unknown>[];
   validation: {
@@ -969,12 +970,28 @@ function planDisplayData(source: unknown, scenario: DataBoundaryScenario, select
     metricCandidates: comparisonFieldProfiles.filter((field) => field.role === "metric").map((field) => field.sourcePath),
     timestampCandidates: comparisonFieldProfiles.filter((field) => field.role === "timestamp").map((field) => field.sourcePath),
   };
+  const diagnostic = {
+    code: "A2UI-OK",
+    severity: "ok",
+    stage: "mapping_applied",
+    title: "A2UI 렌더 계획 완료",
+    summary: "데모 trace에서 템플릿 선택, 슬롯 매핑, 데이터 바인딩이 모두 통과했습니다.",
+    nextAction: "실제 LLM 테스트에서는 aiSurfacePlanTrace.diagnostic.code와 validation.errors를 함께 확인하세요.",
+    apiId: scenario.apiId,
+    templateId: selectedTemplateId,
+    sourceRowCount: extracted.rowCount,
+    sourceFieldCount: sourceFieldPaths.length,
+    renderRowCount: displayData.items.length,
+    errorCount: 0,
+    errors: [],
+    copyLine: `A2UI_DIAG code=A2UI-OK severity=ok stage=mapping_applied template="${selectedTemplateId}" rows=${extracted.rowCount} fields=${sourceFieldPaths.length} renderRows=${displayData.items.length} errors=0`,
+  };
   return {
     displayData,
     trace: {
       applied: rules.length > 0,
       strategy: "ai_surface_planner",
-      promptVersion: "2026-06-22.a2ui-comparison-data-surface-plan.v2",
+      promptVersion: "2026-07-03.a2ui-diagnostic-glm.v1",
       model: "mock-a2ui-surface-planner",
       selectedTemplateId,
       sourceArrayPath: extracted.arrayPath ?? "items",
@@ -999,6 +1016,7 @@ function planDisplayData(source: unknown, scenario: DataBoundaryScenario, select
         slotMappings,
         reason: "Demo mapper generated slot bindings for the selected template.",
       },
+      diagnostic,
       fieldMappings,
       slotMappings,
       validation: {
@@ -1498,6 +1516,7 @@ export function buildDataBoundaryScenarioTrace(id: DataBoundaryScenarioId): Data
         renderToolName: "a2ui_render",
         renderToolCallPolicy: "ai_surface_planner_after_business_tool_result",
         aiSurfacePlanTrace: planned.trace,
+        aiSurfacePlanDiagnostic: planned.trace.diagnostic,
       },
     },
   };
@@ -1540,6 +1559,7 @@ function eventData(trace: DataBoundaryScenarioTrace, step: string): Record<strin
       candidates: trace.renderPlan.candidates,
       candidateCount: trace.renderPlan.candidates?.length,
       templateSelection: trace.aiSurfacePlanTrace.templateSelection,
+      diagnostic: trace.aiSurfacePlanTrace.diagnostic,
       aiSurfacePlanTrace: trace.aiSurfacePlanTrace,
     };
   }
@@ -1551,6 +1571,7 @@ function eventData(trace: DataBoundaryScenarioTrace, step: string): Record<strin
       validation: { ok: true, errors: [] },
       comparisonDataSource: "server_source_contract",
       plannerAttempts: [],
+      diagnostic: trace.aiSurfacePlanTrace.diagnostic,
       aiSurfacePlanTrace: trace.aiSurfacePlanTrace,
     };
   }
@@ -1566,12 +1587,14 @@ function eventData(trace: DataBoundaryScenarioTrace, step: string): Record<strin
       fieldMappings: trace.aiSurfacePlanTrace.fieldMappings ?? trace.aiSurfacePlanTrace.rules,
       slotMappings: trace.aiSurfacePlanTrace.slotMappings,
       fieldMappingComparison: trace.mappingComparison,
+      diagnostic: trace.aiSurfacePlanTrace.diagnostic,
       aiSurfacePlanTrace: trace.aiSurfacePlanTrace,
     };
   }
   if (step === "plan_validation") {
     return {
       validation: trace.aiSurfacePlanTrace.validation,
+      diagnostic: trace.aiSurfacePlanTrace.diagnostic,
       selectedTemplateId: trace.aiSurfacePlanTrace.selectedTemplateId,
       requiredSlots: trace.templateContract.inputSchema?.requiredSlots,
     };
@@ -1582,6 +1605,7 @@ function eventData(trace: DataBoundaryScenarioTrace, step: string): Record<strin
       slotMappings: trace.aiSurfacePlanTrace.slotMappings,
       beforeRows: trace.aiSurfacePlanTrace.beforeRows,
       afterRows: trace.aiSurfacePlanTrace.afterRows,
+      diagnostic: trace.aiSurfacePlanTrace.diagnostic,
     };
   }
   if (step === "a2ui_tool_result") {
@@ -1591,6 +1615,7 @@ function eventData(trace: DataBoundaryScenarioTrace, step: string): Record<strin
       strategy: trace.renderPlan.strategy,
       score: trace.renderPlan.score,
       dataIntegrity: trace.integrity,
+      diagnostic: trace.aiSurfacePlanTrace.diagnostic,
     };
   }
   return {};
