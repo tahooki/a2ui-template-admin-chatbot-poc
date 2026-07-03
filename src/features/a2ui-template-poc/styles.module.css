@@ -128,6 +128,119 @@
   color: #374151;
 }
 
+.codeModalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 46;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.38);
+  padding: 18px;
+}
+
+.codeModal {
+  width: min(920px, calc(100vw - 36px));
+  max-height: calc(100vh - 36px);
+  max-height: calc(100dvh - 36px);
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 26px 70px rgba(15, 23, 42, 0.24);
+  overflow: hidden;
+  padding: 14px;
+}
+
+.codeModalTop {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--a2ui-line-soft);
+  padding-bottom: 10px;
+}
+
+.codeModalTop h3 {
+  margin: 0;
+  color: var(--a2ui-ink);
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.codeModalTop span {
+  display: block;
+  margin-top: 5px;
+  color: var(--a2ui-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.codeModalTop code {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  color: var(--a2ui-primary);
+}
+
+.codeModalActions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.codeModalBody {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+}
+
+.codeModalNote {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(31, 122, 109, 0.18);
+  border-radius: 8px;
+  background: var(--a2ui-teal-soft);
+  padding: 9px 10px;
+}
+
+.codeModalNote strong {
+  color: var(--a2ui-teal);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.codeModalNote span {
+  color: #36524d;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.pythonCodeBlock {
+  min-height: 0;
+  margin: 0;
+  border: 1px solid #233044;
+  border-radius: 8px;
+  background: var(--a2ui-code);
+  color: #e2e8f0;
+  overflow: auto;
+  padding: 14px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.6;
+  tab-size: 4;
+  white-space: pre;
+}
+
 .workspace {
   flex: 1;
   min-height: 0;
@@ -2764,6 +2877,26 @@
   .traceHeader {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .codeModalTop {
+    flex-direction: column;
+  }
+
+  .codeModalActions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .codeModal {
+    width: calc(100vw - 18px);
+    max-height: calc(100dvh - 18px);
+    padding: 12px;
+  }
+
+  .pythonCodeBlock {
+    font-size: 11px;
   }
 
   .adminPanel {
