@@ -19,12 +19,37 @@ const maxFlowEvents = 180;
 const minChatWidth = 292;
 const maxChatWidth = 640;
 const resizeViewportReserve = 520;
+const pythonHookCode = `# legacy_main_agent.py
+from app.a2ui_render_tool import A2UIRenderToolInput, run_a2ui_render_tool
+
+
+async def handle_business_tool_result(message, business_tool_result, intent_source):
+    # 기존 Main Agent가 business API tool을 실행한 직후에 이 블록만 추가합니다.
+    a2ui_result = await run_a2ui_render_tool(
+        A2UIRenderToolInput(
+            query=message,
+            business_tool_result=business_tool_result,
+            context={"intentSource": intent_source},
+        )
+    )
+
+    if a2ui_result.type == "surface" and a2ui_result.surface:
+        return {
+            "text": "등록된 A2UI 템플릿으로 정리했습니다.",
+            "surface": a2ui_result.surface,
+            "tool_metadata": a2ui_result.metadata,
+        }
+
+    return {"text": a2ui_result.fallback_text, "surface": None}
+`;
 
 export function A2UITemplatePocPage() {
   const { templates, version, saveTemplate, resetRegistry, isLoading, error } = useTemplateRegistry();
   const [chatWidth, setChatWidth] = useState(304);
   const [chatResetKey, setChatResetKey] = useState(0);
   const [isFlowPlaybackDelayed, setIsFlowPlaybackDelayed] = useState(false);
+  const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [flowEvents, setFlowEvents] = useState<AgentFlowEvent[]>([]);
   const [selectedBoundaryScenario, setSelectedBoundaryScenario] = useState<DataBoundaryScenarioId>("status");
   const draggingRef = useRef(false);
@@ -154,6 +179,25 @@ export function A2UITemplatePocPage() {
     setSelectedBoundaryScenario("status");
   }
 
+  async function copyPythonHookCode() {
+    try {
+      await navigator.clipboard.writeText(pythonHookCode);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  }
+
+  function openCodeModal() {
+    setCopyState("idle");
+    setIsCodeModalOpen(true);
+  }
+
+  function closeCodeModal() {
+    setIsCodeModalOpen(false);
+    setCopyState("idle");
+  }
+
   function toggleFlowPlaybackDelay() {
     const nextIsDelayed = !isFlowPlaybackDelayed;
     setIsFlowPlaybackDelayed(nextIsDelayed);
@@ -268,6 +312,9 @@ export function A2UITemplatePocPage() {
             <span>{isFlowPlaybackDelayed ? "1초 대기" : "즉시 처리"}</span>
           </button>
           <span>v{version}</span>
+          <button className={styles.secondaryButton} type="button" onClick={openCodeModal}>
+            Python hook
+          </button>
           <button className={styles.secondaryButton} type="button" onClick={() => void resetDemo()}>
             Reset demo
           </button>
@@ -296,6 +343,42 @@ export function A2UITemplatePocPage() {
           width={chatWidth}
         />
       </div>
+      {isCodeModalOpen ? (
+        <div className={styles.codeModalBackdrop} onClick={closeCodeModal} role="presentation">
+          <div
+            aria-labelledby="python-hook-title"
+            aria-modal="true"
+            className={styles.codeModal}
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className={styles.codeModalTop}>
+              <div>
+                <p className={styles.eyebrow}>Main Agent Integration</p>
+                <h3 id="python-hook-title">Legacy Python hook</h3>
+                <span>
+                  business tool result 이후 deterministic하게 <code>a2ui_render</code>를 실행합니다.
+                </span>
+              </div>
+              <div className={styles.codeModalActions}>
+                <button className={styles.sequenceModalClose} type="button" onClick={() => void copyPythonHookCode()}>
+                  {copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy"}
+                </button>
+                <button className={styles.sequenceModalClose} type="button" onClick={closeCodeModal}>
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className={styles.codeModalBody}>
+              <div className={styles.codeModalNote}>
+                <strong>Drop-in point</strong>
+                <span>현재 구현 기준: `packages/a2ui-python-agent/app/orchestrate.py`의 business tool 실행 직후</span>
+              </div>
+              <pre className={styles.pythonCodeBlock}><code>{pythonHookCode}</code></pre>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
