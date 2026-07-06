@@ -98,7 +98,7 @@ export function AdminPanel({
 
   if (isDetailOpen && selected) {
     return (
-      <section className={styles.adminPanel} aria-label="A2UI template admin">
+      <section className={`${styles.adminPanel} ${styles.adminPanelDetail}`} aria-label="A2UI template admin">
         <button
           className={styles.backButton}
           type="button"
@@ -190,7 +190,7 @@ export function AdminPanel({
   }
 
   return (
-    <section className={styles.adminPanel} aria-label="A2UI template admin">
+    <section className={`${styles.adminPanel} ${styles.adminPanelList}`} aria-label="A2UI template admin">
       <div className={styles.panelHeader}>
         <div>
           <p className={styles.eyebrow}>Admin</p>
