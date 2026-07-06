@@ -347,6 +347,10 @@ const alarmSourceKeys = ["hasAlarm", "alrmCnt", "alrm_count", "alarmCnt", "alarm
 const inspectionSourceKeys = ["needsInspection", "inspReqYn", "insp_req_yn", "inspectionRequired", "inspection_required", "inspectionYn", "inspection_yn", "inspectDueYn", "inspect_due_yn"];
 const reservedSourceKeys = ["isReserved", "reservedFlag", "reserved_flag", "reserveFlag", "reserve_flag", "reservedYn", "reserved_yn", "reserveYn", "reserve_yn"];
 const updatedAtSourceKeys = ["updatedAt", "updated_at", "lastDtm", "last_dtm", "lastSignalAt", "last_signal_at", "timestamp", "time"];
+const startAtSourceKeys = ["startAt", "start_at", "startedAt", "started_at", "startDate", "start_date", "beginAt", "begin_at", "fromDate", "from_date"];
+const endAtSourceKeys = ["endAt", "end_at", "endedAt", "ended_at", "endDate", "end_date", "finishedAt", "finished_at", "finishAt", "finish_at", "toDate", "to_date"];
+const durationSourceKeys = ["duration", "durationDays", "duration_days", "leadTime", "lead_time", "elapsed"];
+const laneSourceKeys = ["lane", "track", "team", "group"];
 const locationSourceKeys = ["location", "site", "site_nm", "plantZone", "plant_zone", "zone"];
 const metricLikePattern = /^(telemetry_|metric_)|sensor|measure|measurement|reading|temperature|temp|pressure|rpm|speed|vibration|current|voltage|power|load|rate|score|value/i;
 const nonMetricLikePattern = /alarm|alrm|count|cnt|total|status|state|flag|yn$|code$|id$|name|title/i;
@@ -363,6 +367,10 @@ const canonicalTargetFields = new Set([
   "status",
   "updatedAt",
   "time",
+  "startAt",
+  "endAt",
+  "duration",
+  "lane",
   "location",
   "imageUrl",
   "image",
@@ -659,6 +667,10 @@ function rolesForKey(key: string, type: A2UIDerivedFieldType): A2UIRole[] {
   if (/status|state|phase|yn$|flag$|code$|oper|running|inspection|reserve/i.test(key)) roles.push("status");
   if (/category|type/i.test(key)) roles.push("category");
   if (/location|zone|site|plant/i.test(key)) roles.push("location");
+  if (/startAt|start_at|startedAt|started_at|startDate|start_date|beginAt|begin_at|fromDate|from_date/i.test(key)) roles.push("startAt", "time");
+  if (/endAt|end_at|endedAt|ended_at|endDate|end_date|finishedAt|finished_at|finishAt|finish_at|toDate|to_date/i.test(key)) roles.push("endAt", "time");
+  if (/duration|leadTime|lead_time|elapsed/i.test(key)) roles.push("duration", "metric");
+  if (/lane|track|team|group/i.test(key)) roles.push("lane", "category");
   if (/updatedAt|last|dtm|date|time|signal/i.test(key) || type === "date" || type === "datetime") roles.push("updatedAt", "time");
   if (type === "number" && (isMetricLikeKey(key) || /amount|size/i.test(key))) roles.push("metric");
   if (type === "number" && /progress|percent|percentage|completion|completeRate|completionRate|doneRatio|done_rate/i.test(key)) roles.push("progress", "metric");
@@ -953,7 +965,7 @@ function buildPrompt({
         "Select matrix.table for large-row, wide-column, telemetry-rich, or general scalar row comparison data, even if some status flags also exist.",
         "Select metric.progressList when each row has a concrete progress/percent/completion numeric field.",
         "Select metric.statCards for small summary objects with numeric KPI fields.",
-        "Select time.timeline when event-like rows have timestamps.",
+        "Select time.timeline for scheduled rows with startAt/startDate and endAt/endDate/dueAt range fields, such as schedules, roadmaps, or gantt-like duration comparison.",
         "Select process.queue when status is combined with priority, assignee, or due date metadata.",
         "Select relation.tree when children or parentId fields indicate hierarchy.",
         "Use matrix.table for general scalar row/column comparison, and collection.list for simple title/description collections.",
@@ -1446,6 +1458,7 @@ function requestSlotMapping(
       "For metric.statCards, use concrete numeric metric/value source paths and do not map labels as metric values.",
       "For matrix.statusMatrix, use boolean/status flag source paths for status slots and number_to_boolean only for count fields.",
       "For collection.cardGrid, map title/image/description/category/status slots from exact existing source.fieldPaths.",
+      "For time.timeline, map items[].startAt from a start-like date field and items[].endAt from an end-like or due date field; do not use updatedAt-only event logs.",
       "Metric slots should use concrete numeric metric source paths from comparisonData metric candidates or role=metric fieldProfiles.",
     ].join(" "),
     responseFormatFor: () => slotMappingResponseFormatFor({
@@ -1522,11 +1535,14 @@ function mockPlan({
   const imagePath = pathByRole("image") ?? pathByKeys(["imageUrl", "thumbnailUrl", "photoUrl", "image"]);
   const categoryPath = pathByRole("category") ?? pathByKeys(["category", "type"]);
   const timePath = pathByRole("time") ?? pathByRole("updatedAt") ?? pathByKeys([...updatedAtSourceKeys, "createdAt", "occurredAt", "eventTime"]);
+  const startAtPath = pathByRole("startAt") ?? pathByKeys(startAtSourceKeys);
   const progressPath = pathByRole("progress") ?? pathByKeys(["progress", "percent", "percentage", "completionRate", "doneRatio", "completionPercent"]);
   const priorityPath = pathByRole("priority") ?? pathByKeys(["priority", "severity", "urgency", "rank"]);
   const assigneePath = pathByRole("assignee") ?? pathByKeys(["assignee", "owner", "manager", "operator"]);
   const actorPath = pathByRole("actor") ?? pathByKeys(["actor", "author", "createdBy", "created_by", "user", "requester"]);
   const dueAtPath = pathByRole("dueAt") ?? pathByKeys(["dueAt", "due_at", "deadline", "targetDate"]);
+  const endAtPath = pathByRole("endAt") ?? dueAtPath ?? pathByKeys(endAtSourceKeys);
+  const lanePath = pathByRole("lane") ?? categoryPath ?? pathByKeys(laneSourceKeys);
   const parentIdPath = pathByRole("parentId") ?? pathByKeys(["parentId", "parent_id", "parent"]);
   const childrenPath = pathByRole("children") ?? pathByKeys(["children", "nodes"]);
   const idPath = pathByRole("id") ?? pathByKeys(idSourceKeys);
@@ -1544,6 +1560,7 @@ function mockPlan({
   const queryText = query.toLowerCase();
   const presentationIntent = presentationIntentForQuery(query);
   const queueIntentRequested = presentationIntent.requestedSurfaces.includes("process.queue") || /queue|대기열|처리\s*큐|처리순서|우선순위/.test(queryText);
+  const timelineIntentRequested = presentationIntent.requestedSurfaces.includes("time.timeline") || /timeline|타임라인|일정|스케줄|기간|로드맵|gantt/.test(queryText);
   const numericScalarPaths = scalarPaths.filter((path) => typeForSourcePath(firstRow, path, extracted) === "number");
   const isArrayLike = !isSingleObject;
   const compatibleIntentSurfaces = presentationIntent.requestedSurfaces.filter((templateId) => {
@@ -1555,7 +1572,7 @@ function mockPlan({
     if (templateId === "matrix.statusMatrix") return Boolean(isArrayLike && titlePath && statusFlagPaths.length >= 2);
     if (templateId === "metric.statCards") return Boolean(metricPaths.length || numericScalarPaths.length);
     if (templateId === "metric.progressList") return Boolean(isArrayLike && titlePath && progressPath);
-    if (templateId === "time.timeline") return Boolean(isArrayLike && titlePath && timePath);
+    if (templateId === "time.timeline") return Boolean(isArrayLike && titlePath && startAtPath && (endAtPath || timelineIntentRequested));
     if (templateId === "process.queue") return Boolean(isArrayLike && titlePath && statusPath && (priorityPath || assigneePath || queueIntentRequested));
     if (templateId === "relation.tree") return Boolean(titlePath && (childrenPath || parentIdPath));
     return false;
@@ -1565,7 +1582,7 @@ function mockPlan({
     ...compatibleIntentSurfaces,
     ...(childrenPath || parentIdPath || /트리|tree|계층|hierarchy|구조/.test(queryText) ? ["relation.tree"] : []),
     ...(progressPath ? ["metric.progressList"] : []),
-    ...(timePath && /타임라인|timeline|이력|history|event|활동|시간순/.test(queryText) ? ["time.timeline"] : []),
+    ...(startAtPath && (endAtPath || timelineIntentRequested) && /타임라인|timeline|일정|스케줄|기간|로드맵|gantt/.test(queryText) ? ["time.timeline"] : []),
     ...(statusPath && (priorityPath || assigneePath || queueIntentRequested) ? ["process.queue"] : []),
     ...(statusFlagPaths.length >= 2 && metricPaths.length < 3 ? ["matrix.statusMatrix"] : []),
     ...(scalarPaths.length >= 8 || /테이블|table|표|컬럼/.test(queryText) ? ["matrix.table"] : []),
@@ -1621,11 +1638,13 @@ function mockPlan({
     addSlot("items[].status", statusPath, targetForPath(statusPath, "status"), "copy", "progress status");
     addSlot("items[].updatedAt", timePath, "updatedAt", "copy", "progress update time");
   } else if (selectedTemplateId === "time.timeline") {
-    addSlot("items[].time", timePath, "time", "copy", "event time");
-    addSlot("items[].title", titlePath ?? descriptionPath, "title", "copy", "event title");
-    addSlot("items[].description", descriptionPath, "description", "copy", "event description");
-    addSlot("items[].actor", actorPath ?? assigneePath, actorPath ? "actor" : "assignee", "copy", "event actor");
-    addSlot("items[].status", statusPath, targetForPath(statusPath, "status"), "copy", "event status");
+    addSlot("items[].startAt", startAtPath, "startAt", "copy", "timeline start");
+    addSlot("items[].endAt", endAtPath, endAtPath === dueAtPath ? "dueAt" : "endAt", "copy", "timeline end");
+    addSlot("items[].title", titlePath ?? descriptionPath, "title", "copy", "timeline title");
+    addSlot("items[].description", descriptionPath, "description", "copy", "timeline description");
+    addSlot("items[].lane", lanePath, lanePath === categoryPath ? "category" : "lane", "copy", "timeline lane");
+    addSlot("items[].assignee", assigneePath ?? actorPath, assigneePath ? "assignee" : "actor", "copy", "timeline assignee");
+    addSlot("items[].status", statusPath, targetForPath(statusPath, "status"), "copy", "timeline status");
   } else if (selectedTemplateId === "process.queue") {
     addSlot("items[].title", titlePath, "title", "copy", "queue title");
     addSlot("items[].status", statusPath, targetForPath(statusPath, "status"), "copy", "queue status");
@@ -1769,6 +1788,10 @@ function sourcePathForTarget(targetField: string | undefined, paths: string[], s
   if (normalized === "needsInspection") return findSourcePathByKeys(paths, inspectionSourceKeys);
   if (normalized === "isReserved") return findSourcePathByKeys(paths, reservedSourceKeys);
   if (normalized === "updatedAt" || normalized === "time") return findSourcePathByKeys(paths, updatedAtSourceKeys);
+  if (normalized === "startAt") return findSourcePathByKeys(paths, startAtSourceKeys);
+  if (normalized === "endAt") return findSourcePathByKeys(paths, [...endAtSourceKeys, "dueAt", "due_at", "deadline", "targetDate"]);
+  if (normalized === "duration") return findSourcePathByKeys(paths, durationSourceKeys);
+  if (normalized === "lane") return findSourcePathByKeys(paths, laneSourceKeys);
   if (normalized === "location") return findSourcePathByKeys(paths, locationSourceKeys);
   if (normalized === "imageUrl" || normalized === "image") return findSourcePathByKeys(paths, ["imageUrl", "thumbnailUrl", "photoUrl", "image"]);
   if (normalized === "description" || normalized === "content") return findSourcePathByKeys(paths, ["description", "summary", "content"]);
@@ -1813,6 +1836,10 @@ function normalizeTargetFieldValue(targetField: string | undefined, sourcePath?:
   if (/description|content|summary/i.test(fieldHint)) return "description";
   if (/category|type/i.test(fieldHint)) return "category";
   if (/location|zone|site|plant/i.test(fieldHint)) return "location";
+  if (/startAt|start_at|startedAt|started_at|startDate|start_date|beginAt|begin_at|fromDate|from_date/i.test(fieldHint)) return "startAt";
+  if (/endAt|end_at|endedAt|ended_at|endDate|end_date|finishedAt|finished_at|finishAt|finish_at|toDate|to_date/i.test(fieldHint)) return "endAt";
+  if (/duration|leadTime|lead_time|elapsed/i.test(fieldHint)) return "duration";
+  if (/lane|track|team|group/i.test(fieldHint)) return "lane";
   if (/updatedAt|last|dtm|date|time|signal/i.test(fieldHint)) return "updatedAt";
   if (/progress|percent|percentage|completion|doneRatio/i.test(fieldHint)) return "progress";
   if (/priority|severity|urgency|rank/i.test(fieldHint)) return "priority";
@@ -2423,6 +2450,10 @@ function fieldMappingFromSlots(template: A2UITemplateRegistration, plan: AIPlann
   const category = slotMappings.find((item) => /category/i.test(item.slot))?.targetField;
   const updatedAt = slotMappings.find((item) => /updatedAt/i.test(item.slot))?.targetField;
   const time = slotMappings.find((item) => /\.time|time$/i.test(item.slot))?.targetField;
+  const startAt = slotMappings.find((item) => /startAt|start/i.test(item.slot))?.targetField;
+  const endAt = slotMappings.find((item) => /endAt|end/i.test(item.slot))?.targetField;
+  const duration = slotMappings.find((item) => /duration/i.test(item.slot))?.targetField;
+  const lane = slotMappings.find((item) => /lane/i.test(item.slot))?.targetField;
   const progress = slotMappings.find((item) => /progress/i.test(item.slot))?.targetField;
   const priority = slotMappings.find((item) => /priority/i.test(item.slot))?.targetField;
   const assignee = slotMappings.find((item) => /assignee/i.test(item.slot))?.targetField;
@@ -2457,6 +2488,10 @@ function fieldMappingFromSlots(template: A2UITemplateRegistration, plan: AIPlann
     category: renderPath(category) ?? template.surfaceConfig.categoryBinding,
     updatedAt: renderPath(updatedAt) ?? template.surfaceConfig.timeBinding,
     time: renderPath(time) ?? template.surfaceConfig.timeBinding,
+    startAt: renderPath(startAt) ?? template.surfaceConfig.startBinding,
+    endAt: renderPath(endAt) ?? template.surfaceConfig.endBinding,
+    duration: renderPath(duration),
+    lane: renderPath(lane) ?? template.surfaceConfig.laneBinding,
     progress: renderPath(progress) ?? template.surfaceConfig.progressBinding,
     priority: renderPath(priority) ?? template.surfaceConfig.priorityBinding,
     assignee: renderPath(assignee ?? actor) ?? template.surfaceConfig.assigneeBinding,

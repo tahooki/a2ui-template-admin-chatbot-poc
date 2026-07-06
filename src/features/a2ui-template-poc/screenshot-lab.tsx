@@ -149,11 +149,14 @@ const screenshotCases: ScreenshotCase[] = [
     templateId: "time.timeline",
     viewType: "time.timeline",
     apiRoute: "/api/a2ui-fixtures/work-items?pageSize=8",
-    query: "work-items API를 타임라인으로 보여줘",
+    query: "work-items API를 일정 타임라인으로 보여줘",
     fieldMapping: {
       title: "items[].title",
       content: "items[].description",
-      time: "items[].updatedAt",
+      time: "items[].startAt",
+      startAt: "items[].startAt",
+      endAt: "items[].endAt",
+      lane: "items[].lane",
       assignee: "items[].assignee",
       status: "items[].status",
     },
@@ -249,6 +252,10 @@ function rolesForField(key: string, type: FieldProfile["type"]) {
   if (/progress|percent|ratio/i.test(key)) roles.push("progress", "metric");
   if (/priority|severity|urgency/i.test(key)) roles.push("priority");
   if (/assignee|owner|actor/i.test(key)) roles.push("assignee", "actor");
+  if (/startAt|start_at|startedAt|startDate|beginAt|fromDate/i.test(key)) roles.push("startAt", "time");
+  if (/endAt|end_at|endedAt|endDate|finishedAt|finishAt|toDate/i.test(key)) roles.push("endAt", "time");
+  if (/duration|leadTime|elapsed/i.test(key)) roles.push("duration", "metric");
+  if (/lane|track|team|group/i.test(key)) roles.push("lane", "category");
   if (/dueAt|deadline|targetDate/i.test(key)) roles.push("dueAt", "time");
   if (/updatedAt|checkedAt|time|date/i.test(key)) roles.push("updatedAt", "time");
   if (/children|nodes/i.test(key)) roles.push("children");

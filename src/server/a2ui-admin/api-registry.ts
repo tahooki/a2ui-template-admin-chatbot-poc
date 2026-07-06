@@ -165,7 +165,7 @@ const presentationPatterns: Array<{ surface: string; confidence: number; phrases
   { surface: "collection.cardGrid", confidence: 0.95, phrases: ["카드로", "카드 형태", "그리드로", "갤러리로", "썸네일로"] },
   { surface: "metric.progressList", confidence: 0.96, phrases: ["진행률로", "완료율로", "퍼센트로", "progress", "progress bar"] },
   { surface: "process.queue", confidence: 0.96, phrases: ["처리 큐", "큐처럼", "대기열", "처리순서", "우선순위로"] },
-  { surface: "time.timeline", confidence: 0.94, phrases: ["타임라인", "시간순", "이력", "로그처럼", "최근 변경 순서", "timeline"] },
+  { surface: "time.timeline", confidence: 0.94, phrases: ["타임라인", "일정", "스케줄", "기간", "로드맵", "timeline", "gantt"] },
   { surface: "relation.tree", confidence: 0.97, phrases: ["트리로", "계층으로", "구조로", "상하위", "tree"] },
   { surface: "matrix.statusMatrix", confidence: 0.95, phrases: ["상태표로", "상태 매트릭스", "체크표", "체크 리스트", "on/off", "불리언"] },
   { surface: "metric.statCards", confidence: 0.95, phrases: ["숫자 카드", "지표 카드", "kpi 카드", "통계 카드", "요약 카드"] },

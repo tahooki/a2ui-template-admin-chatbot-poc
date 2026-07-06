@@ -109,6 +109,41 @@ function normalizedProgress(raw: unknown) {
   return Math.max(0, Math.min(100, percent));
 }
 
+function dateTimeValue(raw: unknown) {
+  if (raw instanceof Date) return raw.getTime();
+  if (typeof raw !== "string" && typeof raw !== "number") return undefined;
+  const time = new Date(raw).getTime();
+  return Number.isFinite(time) ? time : undefined;
+}
+
+function shortDate(raw: unknown) {
+  const time = dateTimeValue(raw);
+  if (time === undefined) return displayValue(raw);
+  return new Intl.DateTimeFormat("ko-KR", { month: "short", day: "numeric" }).format(new Date(time));
+}
+
+function timelineItems(rows: DataRow[], renderPlan: A2UIRenderPlan) {
+  return rows
+    .map((row, index) => {
+      const startRaw = value(row, renderPlan.fieldMapping.startAt) ?? value(row, renderPlan.fieldMapping.time);
+      const endRaw = value(row, renderPlan.fieldMapping.endAt) ?? value(row, renderPlan.fieldMapping.dueAt) ?? startRaw;
+      const start = dateTimeValue(startRaw);
+      const end = dateTimeValue(endRaw) ?? start;
+      if (start === undefined || end === undefined) return null;
+      return {
+        row,
+        index,
+        start,
+        end: Math.max(end, start),
+        startRaw,
+        endRaw,
+        lane: value(row, renderPlan.fieldMapping.lane) ?? value(row, renderPlan.fieldMapping.category),
+        status: value(row, renderPlan.fieldMapping.status),
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+}
+
 function rowKey(row: DataRow, index: number) {
   return String(row.id ?? row.key ?? row.title ?? row.name ?? index);
 }
@@ -353,17 +388,7 @@ export function A2UIDemoRenderer({
       ) : null}
 
       {viewType === "time.timeline" ? (
-        <div className={styles.timelineList}>
-          {visibleRows.map((row, index) => (
-            <div className={styles.timelineItem} key={rowKey(row, index)}>
-              <time>{displayValue(value(row, renderPlan.fieldMapping.time))}</time>
-              <div>
-                <strong>{titleValue(row, renderPlan)}</strong>
-                <span>{textValue(row, renderPlan.fieldMapping.content) || displayValue(value(row, renderPlan.fieldMapping.assignee))}</span>
-              </div>
-            </div>
-          ))}
-        </div>
+        <TimelineRange rows={visibleRows} renderPlan={renderPlan} />
       ) : null}
 
       {viewType === "process.queue" ? (
@@ -404,6 +429,49 @@ export function A2UIDemoRenderer({
 
       {!rows.length ? <div className={styles.emptyState}>표시할 데이터가 없습니다.</div> : null}
       {profile.rowCount > visibleRows.length ? <div className={styles.surfaceFooter}>Showing {visibleRows.length} of {profile.rowCount}</div> : null}
+    </div>
+  );
+}
+
+function TimelineRange({ rows, renderPlan }: { rows: DataRow[]; renderPlan: A2UIRenderPlan }) {
+  const items = timelineItems(rows, renderPlan);
+  if (!items.length) return <div className={styles.emptyState}>표시할 일정 데이터가 없습니다.</div>;
+  const rangeStart = Math.min(...items.map((item) => item.start));
+  const rangeEnd = Math.max(...items.map((item) => item.end));
+  const span = Math.max(1, rangeEnd - rangeStart);
+  const middle = rangeStart + span / 2;
+
+  return (
+    <div className={styles.rangeTimeline}>
+      <div className={styles.timelineAxis} aria-hidden="true">
+        <span>{shortDate(rangeStart)}</span>
+        <span>{shortDate(middle)}</span>
+        <span>{shortDate(rangeEnd)}</span>
+      </div>
+      <div className={styles.timelineRangeRows}>
+        {items.map((item) => {
+          const offset = Math.max(0, Math.min(100, ((item.start - rangeStart) / span) * 100));
+          const width = Math.max(2, Math.min(100 - offset, ((item.end - item.start) / span) * 100));
+          const status = displayValue(item.status);
+          const lane = displayValue(item.lane);
+          return (
+            <div className={styles.timelineRangeRow} key={rowKey(item.row, item.index)}>
+              <div className={styles.timelineRangeMeta}>
+                <strong>{titleValue(item.row, renderPlan)}</strong>
+                <span>{lane} · {shortDate(item.startRaw)} - {shortDate(item.endRaw)}</span>
+              </div>
+              <div className={styles.timelineTrack} aria-label={`${titleValue(item.row, renderPlan)} ${shortDate(item.startRaw)} to ${shortDate(item.endRaw)}`}>
+                <span
+                  className={`${styles.timelineRangeBar} ${statusTone(item.status)}`}
+                  style={{ "--offset": `${offset}%`, "--span": `${width}%` } as CSSProperties}
+                >
+                  {status}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

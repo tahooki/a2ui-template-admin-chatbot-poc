@@ -2513,7 +2513,7 @@
 .detailSurface,
 .statGrid,
 .progressList,
-.timelineList,
+.rangeTimeline,
 .queueList,
 .treeList {
   display: grid;
@@ -2560,7 +2560,7 @@
 .detailFields span,
 .statCard span,
 .progressItem span,
-.timelineItem span,
+.timelineRangeMeta span,
 .queueItem span,
 .treeNode span {
   color: var(--a2ui-muted);
@@ -2570,7 +2570,7 @@
 .detailFields strong,
 .statCard strong,
 .progressItem strong,
-.timelineItem strong,
+.timelineRangeMeta strong,
 .queueItem strong,
 .treeNode strong {
   color: var(--a2ui-ink);
@@ -2626,25 +2626,110 @@
   background: var(--a2ui-teal);
 }
 
-.timelineItem {
-  display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
+.rangeTimeline {
+  min-width: 0;
 }
 
-.timelineItem time {
-  color: var(--a2ui-primary);
-  font-size: 11px;
+.timelineAxis {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--a2ui-line-soft);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--a2ui-muted);
+  padding: 7px 10px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10px;
   font-weight: 850;
-  line-height: 1.4;
 }
 
-.timelineItem div {
+.timelineAxis span:nth-child(2) {
+  text-align: center;
+}
+
+.timelineAxis span:nth-child(3) {
+  text-align: right;
+}
+
+.timelineRangeRows {
   display: grid;
-  gap: 4px;
-  border-left: 2px solid #b8ddd6;
-  padding: 0 0 10px 10px;
+  gap: 8px;
+}
+
+.timelineRangeRow {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(108px, 0.42fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.timelineRangeMeta {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.timelineRangeMeta strong,
+.timelineRangeMeta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timelineTrack {
+  position: relative;
+  min-width: 0;
+  height: 30px;
+  border: 1px solid #dbe6ef;
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, transparent calc(25% - 1px), rgba(148, 163, 184, 0.28) 25%, transparent calc(25% + 1px)),
+    linear-gradient(90deg, transparent calc(50% - 1px), rgba(148, 163, 184, 0.32) 50%, transparent calc(50% + 1px)),
+    linear-gradient(90deg, transparent calc(75% - 1px), rgba(148, 163, 184, 0.28) 75%, transparent calc(75% + 1px)),
+    #f8fafc;
+  overflow: hidden;
+}
+
+.timelineRangeBar {
+  position: absolute;
+  left: var(--offset, 0%);
+  top: 5px;
+  width: var(--span, 10%);
+  min-width: 18px;
+  max-width: calc(100% - var(--offset, 0%));
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0 8px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timelineRangeBar.flagOn {
+  border-color: transparent;
+  background: var(--a2ui-teal);
+  color: #fff;
+}
+
+.timelineRangeBar.flagOff {
+  border-color: transparent;
+  background: #64748b;
+  color: #fff;
+}
+
+.timelineRangeBar.flagBad {
+  border-color: transparent;
+  background: #bd4b4b;
+  color: #fff;
 }
 
 .queueItem {
@@ -2931,6 +3016,15 @@
   .screenshotShotHeader {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .timelineRangeRow {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .timelineTrack {
+    height: 28px;
   }
 
   .logRow {

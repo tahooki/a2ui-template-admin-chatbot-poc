@@ -11,6 +11,10 @@ function roleCandidates(key: string, type: FieldProfile["type"]): A2UIRole[] {
   if (/status|state|stage|phase|상태|여부/i.test(key)) roles.push("status");
   if (/category|type|분류/i.test(key)) roles.push("category");
   if (/location|zone|site/i.test(key)) roles.push("location");
+  if (/startAt|start_at|startedAt|started_at|begin|began|fromDate|startDate|시작|착수/i.test(key)) roles.push("startAt", "time");
+  if (/endAt|end_at|endedAt|ended_at|finish|finished|toDate|endDate|완료일|종료|마감/i.test(key)) roles.push("endAt", "time");
+  if (/duration|elapsed|leadTime|기간|소요/i.test(key)) roles.push("duration", "metric");
+  if (/lane|track|swimlane|team|group|stream|라인|레인|팀|그룹/i.test(key)) roles.push("lane", "category");
   if (/updatedAt|date|time|timestamp|일시|날짜/i.test(key)) roles.push("updatedAt", "time");
   if (type === "number" && /count|total|rate|score|metric|value|amount|avg|average/i.test(key)) roles.push("metric");
   if (type === "number" && /progress|percent|percentage|completion|completeRate|completionRate|doneRatio|done_rate|진행률|완료율|달성률/i.test(key)) roles.push("progress", "metric");

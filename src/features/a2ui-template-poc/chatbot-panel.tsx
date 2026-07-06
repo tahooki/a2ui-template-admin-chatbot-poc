@@ -78,7 +78,7 @@ const quickPrompts = [
   },
   {
     label: "타임라인",
-    prompt: "work-items API를 타임라인으로 보여줘",
+    prompt: "work-items API를 일정 타임라인으로 보여줘",
   },
   {
     label: "처리 대기열",

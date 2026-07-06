@@ -12,12 +12,16 @@ export type A2UIRole =
   | "location"
   | "updatedAt"
   | "time"
+  | "startAt"
+  | "endAt"
+  | "duration"
   | "metric"
   | "progress"
   | "priority"
   | "assignee"
   | "dueAt"
   | "actor"
+  | "lane"
   | "parentId"
   | "children"
   | "delta"
@@ -66,6 +70,7 @@ export type A2UITemplateInputSchema = {
       hasPriority: boolean;
       hasAssignee: boolean;
       hasDueDate: boolean;
+      hasTimeRange: boolean;
       hasTree: boolean;
       hasDelta: boolean;
       hasUnits: boolean;
@@ -126,6 +131,9 @@ export type A2UIComponentSurfaceConfig = {
   priorityBinding?: string;
   assigneeBinding?: string;
   dueAtBinding?: string;
+  startBinding?: string;
+  endBinding?: string;
+  laneBinding?: string;
   parentIdBinding?: string;
   childrenBinding?: string;
   deltaBinding?: string;
@@ -176,6 +184,10 @@ export type FieldMapping = {
   category?: string;
   updatedAt?: string;
   time?: string;
+  startAt?: string;
+  endAt?: string;
+  duration?: string;
+  lane?: string;
   progress?: string;
   priority?: string;
   assignee?: string;

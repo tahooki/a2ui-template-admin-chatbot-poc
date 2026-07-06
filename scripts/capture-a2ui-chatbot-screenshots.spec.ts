@@ -11,7 +11,7 @@ const scenarios = [
   { id: "matrix-status-matrix", title: "상태 매트릭스", prompt: "status-checks API를 상태표로 보여줘" },
   { id: "metric-stat-cards", title: "지표 카드", prompt: "summary API를 숫자 카드로 보여줘" },
   { id: "metric-progress-list", title: "진행률 목록", prompt: "work-items API를 진행률로 보여줘" },
-  { id: "time-timeline", title: "타임라인", prompt: "work-items API를 타임라인으로 보여줘" },
+  { id: "time-timeline", title: "타임라인", prompt: "work-items API를 일정 타임라인으로 보여줘" },
   { id: "process-queue", title: "처리 대기열", prompt: "work-items API를 처리 큐처럼 보여줘" },
   { id: "relation-tree", title: "계층 트리", prompt: "hierarchy API를 트리로 보여줘" },
 ];

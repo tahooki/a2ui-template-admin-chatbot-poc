@@ -102,10 +102,14 @@ export function buildWorkItems(options: FixtureOptions): FixtureRow[] {
   const statuses = ["queued", "in_progress", "review", "blocked", "done"];
   const priorities = ["high", "medium", "low", "urgent"];
   const owners = ["김도윤", "Ari Kim", "Mina Park", "Jules Lee", "Noah Choi"];
+  const lanes = ["Discovery", "Build", "QA", "Release"];
   const count = options.count ?? 18;
   const rows = Array.from({ length: count }, (_, index) => {
     const serial = String(index + 1).padStart(3, "0");
     const progress = Math.min(100, 12 + index * 5);
+    const startDay = (index % 12) + 1;
+    const durationDays = 2 + (index % 5);
+    const endDay = Math.min(startDay + durationDays, 24);
     return {
       id: `work-${serial}`,
       title: `워크 아이템 ${serial}`,
@@ -114,11 +118,14 @@ export function buildWorkItems(options: FixtureOptions): FixtureRow[] {
       progress: options.variant === "ratio" ? Number((progress / 100).toFixed(2)) : progress,
       priority: cycle(priorities, index),
       assignee: cycle(owners, index),
-      dueAt: `2026-07-${String((index % 20) + 3).padStart(2, "0")}T18:00:00Z`,
+      lane: cycle(lanes, index),
+      startAt: `2026-07-${String(startDay).padStart(2, "0")}T09:00:00Z`,
+      endAt: `2026-07-${String(endDay).padStart(2, "0")}T18:00:00Z`,
+      dueAt: `2026-07-${String(endDay).padStart(2, "0")}T18:00:00Z`,
       updatedAt: `2026-07-${String((index % 20) + 1).padStart(2, "0")}T09:${String((index * 7) % 60).padStart(2, "0")}:00Z`,
     };
   });
-  return withNulls(rows, options, ["description", "assignee", "dueAt"]);
+  return withNulls(rows, options, ["description", "assignee", "endAt"]);
 }
 
 export function buildResources(options: FixtureOptions): FixtureRow[] {

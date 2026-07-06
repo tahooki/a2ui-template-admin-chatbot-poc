@@ -89,6 +89,7 @@ export type LabDerivedSchema = {
     hasBooleans: boolean;
     hasStatus: boolean;
     hasTimeField: boolean;
+    hasTimeRange: boolean;
     hasNumericMetrics: boolean;
     hasCategories: boolean;
     hasNestedObjects: boolean;
@@ -579,8 +580,12 @@ function workItemRows(count = 12) {
   const statuses = ["queued", "in_progress", "review", "blocked", "done"];
   const priorities = ["high", "medium", "low", "urgent"];
   const assignees = ["김도윤", "Ari Kim", "Mina Park", "Jules Lee"];
+  const lanes = ["Discovery", "Build", "QA", "Release"];
   return Array.from({ length: count }, (_, index) => {
     const serial = String(index + 1).padStart(3, "0");
+    const startDay = (index % 12) + 1;
+    const durationDays = 2 + (index % 5);
+    const endDay = Math.min(startDay + durationDays, 24);
     return {
       id: `work-${serial}`,
       title: `워크 아이템 ${serial}`,
@@ -589,7 +594,10 @@ function workItemRows(count = 12) {
       progress: Math.min(100, 12 + index * 6),
       priority: priorities[index % priorities.length],
       assignee: assignees[index % assignees.length],
-      dueAt: `2026-07-${String((index % 20) + 3).padStart(2, "0")}T18:00:00Z`,
+      lane: lanes[index % lanes.length],
+      startAt: `2026-07-${String(startDay).padStart(2, "0")}T09:00:00Z`,
+      endAt: `2026-07-${String(endDay).padStart(2, "0")}T18:00:00Z`,
+      dueAt: `2026-07-${String(endDay).padStart(2, "0")}T18:00:00Z`,
       updatedAt: `2026-07-${String((index % 20) + 1).padStart(2, "0")}T09:${String((index * 7) % 60).padStart(2, "0")}:00Z`,
     };
   });
@@ -1093,6 +1101,10 @@ function rolesForKey(key: string, type: A2UIDerivedFieldType): A2UIRole[] {
   if (type === "boolean") roles.push("booleanFlag", "status");
   if (/status|state|phase|상태|여부/i.test(key)) roles.push("status");
   if (/category|type|분류/i.test(key)) roles.push("category");
+  if (/startAt|start_at|startedAt|startDate|beginAt|fromDate|시작일|시작/i.test(key)) roles.push("startAt", "time");
+  if (/endAt|end_at|endedAt|endDate|finishedAt|finishAt|toDate|종료일|종료/i.test(key)) roles.push("endAt", "time");
+  if (/duration|leadTime|elapsed|기간|소요/i.test(key)) roles.push("duration", "metric");
+  if (/lane|track|team|group|라인|트랙|팀|그룹/i.test(key)) roles.push("lane", "category");
   if (/updatedAt|lastDtm|date|time|일시|날짜/i.test(key) || type === "date" || type === "datetime") roles.push("updatedAt", "time");
   if (/location|site|zone/i.test(key)) roles.push("location");
   if (type === "number" && /count|total|rate|score|metric|amount|size|cnt/i.test(key)) roles.push("metric");
@@ -1134,6 +1146,7 @@ function derivedSchema(preview: LabPreview, sourceId: string): LabDerivedSchema 
       hasBooleans: fields.some((field) => field.type === "boolean"),
       hasStatus: fields.some((field) => field.roles.includes("status")),
       hasTimeField: fields.some((field) => field.roles.includes("time")),
+      hasTimeRange: fields.some((field) => field.roles.includes("startAt")) && fields.some((field) => field.roles.includes("endAt") || field.roles.includes("dueAt")),
       hasNumericMetrics: fields.some((field) => field.type === "number"),
       hasCategories: fields.some((field) => field.roles.includes("category")),
       hasNestedObjects: fields.some((field) => field.type === "object" || field.type === "array"),
@@ -1226,9 +1239,11 @@ function mappingComparison(schema: LabDerivedSchema, planTrace: AiSurfacePlanDem
   }
 
   if (template.surfaceConfig.viewType === "time.timeline") {
-    pushFirst(["time", "updatedAt"], "items[].time");
+    pushFirst(["startAt"], "items[].startAt");
+    pushFirst(["endAt", "dueAt"], "items[].endAt");
+    pushFirst(["lane", "category"], "items[].lane");
+    pushFirst(["assignee", "actor"], "items[].assignee");
     pushFirst(["status"], "items[].status");
-    pushFirst(["actor", "assignee"], "items[].actor");
     return rows;
   }
 
@@ -1333,6 +1348,9 @@ function fieldMappingForTemplate(template: A2UITemplateRegistration) {
     status: template.surfaceConfig.statusBindings?.[0],
     category: template.surfaceConfig.categoryBinding,
     time: template.surfaceConfig.timeBinding,
+    startAt: template.surfaceConfig.startBinding,
+    endAt: template.surfaceConfig.endBinding,
+    lane: template.surfaceConfig.laneBinding,
     progress: template.surfaceConfig.progressBinding,
     priority: template.surfaceConfig.priorityBinding,
     assignee: template.surfaceConfig.assigneeBinding,
@@ -1347,7 +1365,7 @@ function fieldMappingForTemplate(template: A2UITemplateRegistration) {
   if (isCardView(viewType)) return { ...base, title: "items[].title", content: "items[].description", image: "items[].imageUrl" };
   if (viewType === "metric.progressList") return { ...base, title: "items[].title", progress: "items[].progress", status: "items[].status" };
   if (viewType === "process.queue") return { ...base, title: "items[].title", status: "items[].status", priority: "items[].priority", assignee: "items[].assignee", dueAt: "items[].dueAt" };
-  if (viewType === "time.timeline") return { ...base, title: "items[].title", time: "items[].updatedAt", status: "items[].status" };
+  if (viewType === "time.timeline") return { ...base, title: "items[].title", time: "items[].startAt", startAt: "items[].startAt", endAt: "items[].endAt", lane: "items[].lane", assignee: "items[].assignee", status: "items[].status" };
   if (viewType === "metric.statCards") return { ...base, title: "items[].label", value: "items[].value", delta: "items[].delta", unit: "items[].unit", status: "items[].status" };
   if (viewType === "relation.tree") return { ...base, title: "items[].title", children: "items[].children", parentId: "items[].parentId", status: "items[].status" };
   if (viewType === "matrix.table") return { ...base, title: "items[].title", fields: ["items[].id", "items[].status", "items[].progress", "items[].priority", "items[].assignee", "items[].dueAt"] };
@@ -1364,7 +1382,7 @@ function scoreForScenario(template: A2UITemplateRegistration, schema: LabDerived
   const hasTitle = Boolean(firstField(schema, ["title", "label"]));
   if (viewType === "metric.progressList") return integrity.matched && hasTitle && firstField(schema, ["progress"]) ? 0.94 : 0.5;
   if (viewType === "process.queue") return integrity.matched && hasTitle && firstField(schema, ["status"]) && firstField(schema, ["priority", "assignee", "dueAt"]) ? 0.93 : 0.5;
-  if (viewType === "time.timeline") return integrity.matched && hasTitle && firstField(schema, ["time", "updatedAt"]) ? 0.92 : 0.5;
+  if (viewType === "time.timeline") return integrity.matched && hasTitle && firstField(schema, ["startAt"]) && firstField(schema, ["endAt", "dueAt"]) ? 0.92 : 0.5;
   if (viewType === "metric.statCards") return integrity.matched && firstField(schema, ["metric"]) ? 0.93 : 0.5;
   if (viewType === "relation.tree") return integrity.matched && hasTitle && firstField(schema, ["children", "parentId"]) ? 0.94 : 0.5;
   if (viewType === "collection.list") return integrity.matched && hasTitle ? 0.9 : 0.48;

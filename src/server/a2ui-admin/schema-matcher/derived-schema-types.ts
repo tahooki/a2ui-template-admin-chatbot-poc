@@ -14,6 +14,7 @@ export type DerivedSchemaCapabilities = {
   hasPriority: boolean;
   hasAssignee: boolean;
   hasDueDate: boolean;
+  hasTimeRange: boolean;
   hasTree: boolean;
   hasDelta: boolean;
   hasUnits: boolean;

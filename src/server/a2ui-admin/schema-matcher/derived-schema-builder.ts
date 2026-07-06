@@ -19,6 +19,7 @@ function capabilities(fields: DerivedSchemaField[]): DerivedSchemaCapabilities {
     hasPriority: fields.some((field) => field.roles.includes("priority")),
     hasAssignee: fields.some((field) => field.roles.includes("assignee")),
     hasDueDate: fields.some((field) => field.roles.includes("dueAt")),
+    hasTimeRange: fields.some((field) => field.roles.includes("startAt")) && fields.some((field) => field.roles.includes("endAt") || field.roles.includes("dueAt")),
     hasTree: fields.some((field) => field.roles.includes("children") || field.roles.includes("parentId")),
     hasDelta: fields.some((field) => field.roles.includes("delta")),
     hasUnits: fields.some((field) => field.roles.includes("unit")),

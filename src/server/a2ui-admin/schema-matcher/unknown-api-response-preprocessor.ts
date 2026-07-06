@@ -215,6 +215,10 @@ function rolesForField(path: string, key: string, type: A2UIDerivedFieldType | "
   if (/status|state|phase|yn$|flag$|code$|oper|running|inspection|reserve|상태|여부/i.test(text)) roles.push("status");
   if (/category|type|분류/i.test(text)) roles.push("category");
   if (/location|zone|site|plant|factory|line/i.test(text)) roles.push("location");
+  if (/startAt|start_at|startedAt|started_at|begin|began|fromDate|startDate|시작|착수/i.test(text)) roles.push("startAt", "time");
+  if (/endAt|end_at|endedAt|ended_at|finish|finished|toDate|endDate|완료일|종료|마감/i.test(text)) roles.push("endAt", "time");
+  if (/duration|elapsed|leadTime|기간|소요/i.test(text)) roles.push("duration", "metric");
+  if (/lane|track|swimlane|team|group|stream|라인|레인|팀|그룹/i.test(text)) roles.push("lane", "category");
   if (/updatedAt|last|dtm|date|time|timestamp|signal/i.test(text) || type === "date" || type === "datetime") roles.push("updatedAt", "time");
   if (type === "number" && /metric|telemetry|sensor|measure|temperature|temp|pressure|rpm|speed|vibration|current|voltage|power|load|rate|score|amount|size|count|total/i.test(text)) {
     roles.push("metric");

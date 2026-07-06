@@ -16,8 +16,11 @@ const roleOrder: A2UIRole[] = [
   "metric",
   "progress",
   "time",
+  "startAt",
+  "endAt",
   "priority",
   "assignee",
+  "lane",
   "parentId",
   "children",
 ];
@@ -66,6 +69,9 @@ function buildMapping(template: A2UITemplateRegistration, profile: A2UIDataProfi
         .filter((field) => field.path !== title?.path && field.type !== "unknown")
         .slice(0, 6)
         .map((field) => field.path);
+  const startAt = fieldForRole(profile, "startAt", hints.startAt);
+  const endAt = fieldForRole(profile, "endAt", hints.endAt) ?? fieldForRole(profile, "dueAt", hints.dueAt);
+  const lane = fieldForRole(profile, "lane", hints.lane) ?? fieldForRole(profile, "category", hints.category);
 
   return {
     title: template.surfaceConfig.titleBinding || title?.path,
@@ -78,6 +84,9 @@ function buildMapping(template: A2UITemplateRegistration, profile: A2UIDataProfi
     category: template.surfaceConfig.categoryBinding,
     updatedAt: template.surfaceConfig.timeBinding,
     time: template.surfaceConfig.timeBinding,
+    startAt: template.surfaceConfig.startBinding || startAt?.path,
+    endAt: template.surfaceConfig.endBinding || endAt?.path,
+    lane: template.surfaceConfig.laneBinding || lane?.path,
     progress: template.surfaceConfig.progressBinding,
     priority: template.surfaceConfig.priorityBinding,
     assignee: template.surfaceConfig.assigneeBinding,
@@ -103,7 +112,7 @@ function viewTypeBonus(template: A2UITemplateRegistration, profile: A2UIDataProf
   if ((viewType === "imageCardList" || viewType === "collection.cardGrid") && profile.hasImageField) return 18;
   if (viewType === "metric.progressList" && profile.fields.some((field) => field.roleCandidates.includes("progress"))) return 22;
   if (viewType === "metric.statCards" && profile.fields.some((field) => field.type === "number" || field.roleCandidates.includes("metric"))) return 18;
-  if (viewType === "time.timeline" && profile.fields.some((field) => field.roleCandidates.includes("time"))) return 18;
+  if (viewType === "time.timeline" && profile.fields.some((field) => field.roleCandidates.includes("startAt"))) return 24;
   if (viewType === "relation.tree" && profile.fields.some((field) => field.roleCandidates.includes("children") || field.roleCandidates.includes("parentId"))) return 18;
   if (viewType === "telemetryStatusTable" && profile.fields.some((field) => field.type === "number" || field.roleCandidates.includes("metric"))) return 18;
   if ((viewType === "statusBooleanList" || viewType === "matrix.statusMatrix") && profile.booleanFieldCount > 0) return 16;

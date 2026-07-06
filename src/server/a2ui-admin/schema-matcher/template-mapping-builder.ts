@@ -135,6 +135,9 @@ export function fieldMappingFromDecision({
   const category = sourceForSlot(mapping, (slot) => /category/i.test(slot)) || template.surfaceConfig.categoryBinding;
   const updatedAt = sourceForSlot(mapping, (slot) => /updatedAt/i.test(slot)) || template.surfaceConfig.timeBinding;
   const time = sourceForSlot(mapping, (slot) => /time/i.test(slot)) || template.surfaceConfig.timeBinding;
+  const startAt = sourceForSlot(mapping, (slot) => /startAt|start/i.test(slot)) || template.surfaceConfig.startBinding;
+  const endAt = sourceForSlot(mapping, (slot) => /endAt|end/i.test(slot)) || template.surfaceConfig.endBinding || template.surfaceConfig.dueAtBinding;
+  const lane = sourceForSlot(mapping, (slot) => /lane|track/i.test(slot)) || template.surfaceConfig.laneBinding || template.surfaceConfig.categoryBinding;
   const priority = sourceForSlot(mapping, (slot) => /priority/i.test(slot)) || template.surfaceConfig.priorityBinding;
   const assignee = sourceForSlot(mapping, (slot) => /assignee|actor/i.test(slot)) || template.surfaceConfig.assigneeBinding;
   const dueAt = sourceForSlot(mapping, (slot) => /dueAt/i.test(slot)) || template.surfaceConfig.dueAtBinding;
@@ -181,6 +184,9 @@ export function fieldMappingFromDecision({
     category,
     updatedAt,
     time,
+    startAt,
+    endAt,
+    lane,
     progress,
     priority,
     assignee,

@@ -252,7 +252,7 @@ async function main() {
   });
   await assertTemplate({
     label: "work items as timeline",
-    query: "work-items API를 최근 변경 순서로 보여줘",
+    query: "work-items API를 일정 타임라인으로 보여줘",
     apiId: "work-items",
     data: workItems,
     expectedTemplateId: "time.timeline",
