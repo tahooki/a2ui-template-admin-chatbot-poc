@@ -2186,6 +2186,78 @@
   line-height: 1.2;
 }
 
+.displaySelection {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--a2ui-line-soft);
+}
+
+.displaySelection .displaySelectionPrompt {
+  color: var(--a2ui-ink);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.displayOptionList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.displayOptionButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  border: 1px solid rgba(31, 122, 109, 0.35);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--a2ui-primary);
+  padding: 6px 9px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.displayOptionButton:hover:not(:disabled),
+.displayOptionButton:focus-visible,
+.displayOptionButtonSelected {
+  border-color: var(--a2ui-teal);
+  background: var(--a2ui-teal-soft);
+  color: var(--a2ui-teal);
+  outline: none;
+}
+
+.displayOptionButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.64;
+}
+
+.displayOptionButton small {
+  border-radius: 999px;
+  background: var(--a2ui-teal);
+  color: #fff;
+  padding: 2px 5px;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.displaySelectionStatus,
+.displaySelectionError {
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.displaySelectionStatus {
+  color: var(--a2ui-muted);
+}
+
+.displaySelectionError {
+  color: #b42318;
+}
+
 .message_user {
   align-self: flex-end;
   max-width: min(520px, 82%);

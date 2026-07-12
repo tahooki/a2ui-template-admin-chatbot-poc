@@ -54,7 +54,7 @@ function eventSeen(events: AgentFlowEvent[], eventName: string) {
 }
 
 function isLiveA2UIProgress(source: ChatFlowSourceEvent) {
-  return source.data.liveA2UIProgress === true;
+  return source.data.liveA2UIProgress === true || source.data.physicalSource === "a2ui-agent";
 }
 
 function a2uiEvidenceKind(source: ChatFlowSourceEvent) {
@@ -62,7 +62,7 @@ function a2uiEvidenceKind(source: ChatFlowSourceEvent) {
 }
 
 function a2uiEmitter(source: ChatFlowSourceEvent) {
-  return isLiveA2UIProgress(source) ? "a2ui-agent" : "main-agent";
+  return isLiveA2UIProgress(source) ? "a2ui-agent" : "a2ui-proxy-agent";
 }
 
 export function summarizeFlowState(events: AgentFlowEvent[]): AgentFlowAdapterState {
@@ -229,7 +229,7 @@ function localEvent(source: ChatFlowSourceEvent, state: AgentFlowAdapterState): 
         event: "response_open",
         phase: "bridge",
         from: "next",
-        to: "main_agent",
+        to: "proxy_agent",
         label: "채팅 스트림 열기",
         detail: `registry=v${source.registryVersion}`,
         severity: "info",
@@ -262,6 +262,73 @@ function localEvent(source: ChatFlowSourceEvent, state: AgentFlowAdapterState): 
 function stateEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[]): AgentFlowEvent[] {
   const status = textValue(source.data.status);
   const label = textValue(source.data.label, status);
+
+  if (status === "proxy_main_agent_call") {
+    return [
+      newFlowEvent(source, 0, {
+        event: "state:proxy_main_agent_call",
+        phase: "bridge",
+        from: "proxy_agent",
+        to: "main_agent",
+        label: "Main Agent 호출",
+        detail: label,
+        severity: "info",
+        physicalEmitter: "a2ui-proxy-agent",
+        data: source.data,
+      }),
+    ];
+  }
+
+  if (status === "proxy_data_received") {
+    return [
+      newFlowEvent(source, 0, {
+        event: "state:proxy_data_received",
+        phase: "data_loaded",
+        from: "main_agent",
+        to: "proxy_agent",
+        label: "조회 데이터와 메타데이터 반환",
+        detail: toolDetail(source),
+        branch: "data",
+        severity: "success",
+        physicalEmitter: "a2ui-proxy-agent",
+        data: source.data,
+      }),
+    ];
+  }
+
+  if (status === "proxy_a2ui_call") {
+    return [
+      newFlowEvent(source, 0, {
+        event: "transport:a2a_send",
+        phase: "registry_loaded",
+        from: "proxy_agent",
+        to: "a2ui",
+        label: "조회 데이터로 A2UI Agent 호출",
+        detail: toolDetail(source),
+        branch: "data",
+        severity: "info",
+        physicalEmitter: "a2ui-proxy-agent",
+        data: source.data,
+      }),
+    ];
+  }
+
+  if (status === "render_selected") {
+    return [
+      newFlowEvent(source, 0, {
+        event: "state:render_selected",
+        phase: "matcher",
+        from: "proxy_agent",
+        to: "a2ui",
+        label: "사용자 선택 화면 생성",
+        detail: matcherDetail(source),
+        branch: "matched",
+        severity: "info",
+        physicalEmitter: "a2ui-proxy-agent",
+        data: source.data,
+      }),
+    ];
+  }
 
   if (status === "planning") {
     return [
@@ -731,13 +798,30 @@ function sseEvent(source: ChatFlowSourceEvent, existingEvents: AgentFlowEvent[])
       newFlowEvent(source, 0, {
         event: "surface",
         phase: "surface",
-        from: "main_agent",
+        from: "proxy_agent",
         to: "chat",
         label: "A2UI 화면 반환",
         detail: surfaceDetail(source),
         branch: "matched",
         severity: "success",
-        physicalEmitter: "main-agent",
+        physicalEmitter: "a2ui-proxy-agent",
+        data: source.data,
+      }),
+    ];
+  }
+
+  if (source.event === "display_options") {
+    return [
+      newFlowEvent(source, 0, {
+        event: "display_options",
+        phase: "matcher",
+        from: "proxy_agent",
+        to: "chat",
+        label: "표시 방식 선택 요청",
+        detail: `${Array.isArray(source.data.options) ? source.data.options.length : 0} candidates`,
+        branch: "matched",
+        severity: "success",
+        physicalEmitter: "a2ui-proxy-agent",
         data: source.data,
       }),
     ];

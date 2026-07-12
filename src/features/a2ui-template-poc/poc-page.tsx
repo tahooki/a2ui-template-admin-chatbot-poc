@@ -19,28 +19,29 @@ const maxFlowEvents = 180;
 const minChatWidth = 292;
 const maxChatWidth = 640;
 const resizeViewportReserve = 520;
-const pythonHookCode = `# legacy_main_agent.py
-from app.a2ui_render_tool import A2UIRenderToolInput, run_a2ui_render_tool
-
-
+const pythonHookCode = `# main_agent.py
 async def handle_business_tool_result(message, business_tool_result, intent_source):
-    # 기존 Main Agent가 business API tool을 실행한 직후에 이 블록만 추가합니다.
-    a2ui_result = await run_a2ui_render_tool(
-        A2UIRenderToolInput(
-            query=message,
-            business_tool_result=business_tool_result,
-            context={"intentSource": intent_source},
-        )
+    # Main Agent는 조회 데이터와 메타데이터까지만 Proxy Agent에 반환합니다.
+    return {
+        "kind": "main_agent.data_result",
+        "query": message,
+        "apiId": business_tool_result.api_id,
+        "data": business_tool_result.data,
+        "metadata": business_tool_result.metadata,
+        "intentSource": intent_source,
+    }
+
+
+# a2ui_proxy_agent.py
+async def handle_data_result(data_result):
+    # A2UI 호출과 사용자 표시 방식 선택은 Proxy Agent가 담당합니다.
+    recommendation = await a2ui_agent.recommend(
+        query=data_result["query"],
+        api_id=data_result["apiId"],
+        data=data_result["data"],
+        metadata=data_result["metadata"],
     )
-
-    if a2ui_result.type == "surface" and a2ui_result.surface:
-        return {
-            "text": "등록된 A2UI 템플릿으로 정리했습니다.",
-            "surface": a2ui_result.surface,
-            "tool_metadata": a2ui_result.metadata,
-        }
-
-    return {"text": a2ui_result.fallback_text, "surface": None}
+    return build_display_options(recommendation)
 `;
 
 export function A2UITemplatePocPage() {

@@ -48,7 +48,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="A2UI Template Main Agent", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Template Data Main Agent", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -69,8 +69,7 @@ def _message(body: ChatRequest) -> str:
 async def health() -> dict[str, Any]:
     return {
         "ok": True,
-        "name": "a2ui-template-main-agent",
-        "a2aUrl": settings.a2a_url,
+        "name": "template-data-main-agent",
         "nextApiBaseUrl": settings.next_api_base_url,
         "intentRouter": "regex",
         "llmConfigured": bool(settings.openai_api_key),

@@ -10,8 +10,11 @@
     "equipment-source:dev": "node scripts/equipment-source-dev.mjs",
     "main-agent:dev": "node scripts/main-agent-dev.mjs",
     "main-agent:test": "node scripts/main-agent-test.mjs",
+    "proxy-agent:dev": "node scripts/proxy-agent-dev.mjs",
+    "proxy-agent:test": "node scripts/proxy-agent-test.mjs",
     "e2e:data-boundary": "node scripts/e2e-a2ui-data-boundary.mjs",
     "e2e:sequence": "node scripts/e2e-a2ui-sequence.mjs",
+    "e2e:proxy-flow": "node scripts/e2e-proxy-flow.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"

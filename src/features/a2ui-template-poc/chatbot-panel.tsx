@@ -28,12 +28,29 @@ type ChatMatcherTrace = {
   candidates?: A2UICandidateTrace[];
 };
 
+type ChatDisplayOption = {
+  templateId: string;
+  label: string;
+  score?: number;
+  recommended?: boolean;
+};
+
+type ChatDisplaySelection = {
+  selectionId: string;
+  message: string;
+  options: ChatDisplayOption[];
+  status: "idle" | "loading" | "completed" | "error";
+  selectedTemplateId?: string;
+  error?: string;
+};
+
 type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
   surface?: ChatSurface;
   matcher?: ChatMatcherTrace;
+  displaySelection?: ChatDisplaySelection;
 };
 
 type ParsedSseEvent = {
@@ -185,6 +202,29 @@ function matcherFromState(data: Record<string, unknown>): ChatMatcherTrace {
   };
 }
 
+function displaySelectionFromEvent(data: Record<string, unknown>): ChatDisplaySelection | null {
+  const selectionId = typeof data.selectionId === "string" ? data.selectionId : "";
+  const rawOptions = Array.isArray(data.options) ? data.options : [];
+  const options = rawOptions.flatMap((value): ChatDisplayOption[] => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const option = value as Record<string, unknown>;
+    if (typeof option.templateId !== "string" || typeof option.label !== "string") return [];
+    return [{
+      templateId: option.templateId,
+      label: option.label,
+      score: numberValue(option.score),
+      recommended: option.recommended === true,
+    }];
+  });
+  if (!selectionId || !options.length) return null;
+  return {
+    selectionId,
+    message: typeof data.message === "string" ? data.message : "어떤 방식으로 보시겠습니까?",
+    options,
+    status: "idle",
+  };
+}
+
 export function ChatbotPanel({
   registryVersion,
   resetKey,
@@ -201,6 +241,7 @@ export function ChatbotPanel({
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([introMessage]);
   const [isRunning, setIsRunning] = useState(false);
+  const [selectingMessageId, setSelectingMessageId] = useState<string | null>(null);
   const resetKeyRef = useRef(resetKey);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const surfaceDisplayTimersRef = useRef<number[]>([]);
@@ -221,6 +262,93 @@ export function ChatbotPanel({
       callback();
     }, delayMs);
     surfaceDisplayTimersRef.current.push(timer);
+  }, []);
+
+  const selectDisplayTemplate = useCallback(async (
+    messageId: string,
+    selectionId: string,
+    templateId: string,
+  ) => {
+    setSelectingMessageId(messageId);
+    setMessages((current) => current.map((message) => (
+      message.id === messageId && message.displaySelection
+        ? {
+            ...message,
+            displaySelection: {
+              ...message.displaySelection,
+              status: "loading",
+              selectedTemplateId: templateId,
+              error: undefined,
+            },
+          }
+        : message
+    )));
+
+    try {
+      const response = await fetch("/api/chat/display-selection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selectionId, templateId }),
+      });
+      if (!response.ok) throw new Error(`display selection failed with ${response.status}`);
+
+      let selectionError = "";
+      await consumeSse(response, ({ event, data }) => {
+        if (event === "surface") {
+          const surface = surfaceFromEnvelope(data.surface ?? data);
+          if (!surface) return;
+          setMessages((current) => current.map((message) => (
+            message.id === messageId && message.displaySelection
+              ? {
+                  ...message,
+                  surface,
+                  displaySelection: {
+                    ...message.displaySelection,
+                    status: "completed",
+                    selectedTemplateId: templateId,
+                    error: undefined,
+                  },
+                }
+              : message
+          )));
+          return;
+        }
+        if (event === "error") {
+          selectionError = errorMessageFromEvent(data);
+          setMessages((current) => current.map((message) => (
+            message.id === messageId && message.displaySelection
+              ? {
+                  ...message,
+                  displaySelection: {
+                    ...message.displaySelection,
+                    status: "error",
+                    selectedTemplateId: templateId,
+                    error: selectionError,
+                  },
+                }
+              : message
+          )));
+        }
+      });
+      if (selectionError) return;
+    } catch (error) {
+      const errorText = error instanceof Error ? error.message : "선택한 화면을 생성하지 못했습니다.";
+      setMessages((current) => current.map((message) => (
+        message.id === messageId && message.displaySelection
+          ? {
+              ...message,
+              displaySelection: {
+                ...message.displaySelection,
+                status: "error",
+                selectedTemplateId: templateId,
+                error: errorText,
+              },
+            }
+          : message
+      )));
+    } finally {
+      setSelectingMessageId(null);
+    }
   }, []);
 
   const runQuery = useCallback(
@@ -309,6 +437,15 @@ export function ChatbotPanel({
             return;
           }
 
+          if (event === "display_options") {
+            const displaySelection = displaySelectionFromEvent(data);
+            if (!displaySelection) return;
+            setMessages((current) =>
+              current.map((message) => (message.id === assistantId ? { ...message, displaySelection } : message)),
+            );
+            return;
+          }
+
           if (event === "state" && data.status === "matcher") {
             const matcher = matcherFromState(data);
             setMessages((current) =>
@@ -362,6 +499,7 @@ export function ChatbotPanel({
     setMessages([introMessage]);
     setInput("");
     setIsRunning(false);
+    setSelectingMessageId(null);
   }, [clearSurfaceDisplayTimers, resetKey]);
 
   useEffect(() => () => clearSurfaceDisplayTimers(), [clearSurfaceDisplayTimers]);
@@ -429,6 +567,31 @@ export function ChatbotPanel({
                 <span>{message.matcher.strategy}</span>
                 {typeof message.matcher.score === "number" ? <span>{message.matcher.score.toFixed(2)}</span> : null}
                 {typeof message.matcher.candidateCount === "number" ? <span>{message.matcher.candidateCount} candidates</span> : null}
+              </div>
+            ) : null}
+            {message.displaySelection ? (
+              <div className={styles.displaySelection} aria-label="A2UI display options">
+                <p className={styles.displaySelectionPrompt}>{message.displaySelection.message}</p>
+                <div className={styles.displayOptionList}>
+                  {message.displaySelection.options.map((option) => {
+                    const selected = message.displaySelection?.selectedTemplateId === option.templateId;
+                    const disabled = message.displaySelection?.status === "loading" || message.displaySelection?.status === "completed";
+                    return (
+                      <button
+                        className={`${styles.displayOptionButton} ${selected ? styles.displayOptionButtonSelected : ""}`}
+                        disabled={disabled || selectingMessageId === message.id}
+                        key={option.templateId}
+                        type="button"
+                        onClick={() => void selectDisplayTemplate(message.id, message.displaySelection!.selectionId, option.templateId)}
+                      >
+                        <span>{option.label}</span>
+                        {option.recommended ? <small>추천</small> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+                {message.displaySelection.status === "loading" ? <span className={styles.displaySelectionStatus}>화면 생성 중…</span> : null}
+                {message.displaySelection.error ? <span className={styles.displaySelectionError}>{message.displaySelection.error}</span> : null}
               </div>
             ) : null}
             {message.surface ? (

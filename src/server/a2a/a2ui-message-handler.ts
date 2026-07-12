@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type {
   A2UICandidateTrace,
   A2UIMappingDecision,
+  EquipmentApiResponse,
 } from "@/features/a2ui-template-poc/template-types";
 import {
   type A2AActionRequestData,
@@ -24,8 +25,10 @@ import {
   type EquipmentApiId,
   chooseEquipmentApiForPrompt,
   isEquipmentApiId,
+  resolveTemplateData,
 } from "@/server/a2ui-admin/a2ui-runtime";
 import { sourceIntentForApi } from "@/server/a2ui-admin/api-registry";
+import { getTemplate } from "@/server/a2ui-admin/catalog-store";
 import { preprocessUnknownApiResponse, shapeFromObservedSource } from "@/server/a2ui-admin/schema-matcher/unknown-api-response-preprocessor";
 
 export type A2AStreamEvent =
@@ -372,8 +375,93 @@ async function renderTask(body: A2ASendMessageRequest, taskId?: string, onProgre
   const fallbackText = renderData.fallbackText || (typeof facts.fallbackText === "string" ? facts.fallbackText : undefined);
   let sourceTool = readSourceToolMetadata(renderData, facts, apiId);
   let dataIntegrity = buildDataIntegrity(rawData, sourceTool);
+  const selectedTemplateId = renderData.a2uiOptions?.mode === "render_selected"
+    ? renderData.a2uiOptions.selectedTemplateId?.trim()
+    : undefined;
 
   try {
+    if (selectedTemplateId) {
+      const template = await getTemplate(selectedTemplateId);
+      if (!template || template.status !== "registered") {
+        throw new Error(`Selected template is not registered: ${selectedTemplateId}`);
+      }
+      if (!rawData || typeof rawData !== "object") {
+        throw new Error("Selected template rendering requires agent-provided data.");
+      }
+
+      await onProgress?.({
+        status: "matcher",
+        label: "사용자 선택 템플릿 검증",
+        detail: selectedTemplateId,
+        data: {
+          mode: "render_selected",
+          templateId: selectedTemplateId,
+          strategy: "user_selected_template",
+        },
+      });
+
+      const surface = await resolveTemplateData({
+        templateId: selectedTemplateId,
+        query: `${query}\n사용자가 ${selectedTemplateId} 화면 형식을 선택했습니다.`,
+        apiId,
+        data: rawData as EquipmentApiResponse<unknown>,
+        derivedSchema: renderData.derivedSchema,
+        sampleDataPreview: renderData.sampleDataPreview,
+      });
+      const selectedCandidate: A2UICandidateTrace = {
+        templateId: selectedTemplateId,
+        score: surface.meta.score ?? surface.payload.renderPlan.score,
+        decision: "select",
+        reason: "사용자가 선택한 등록 템플릿입니다.",
+      };
+      const selectedTrace = {
+        kind: "a2ui.matcher.trace" as const,
+        strategy: "user_selected_template",
+        score: selectedCandidate.score,
+        candidateCount: 1,
+        candidates: [selectedCandidate],
+        mapping: surface.meta.mapping,
+        sourceTool,
+        dataIntegrity,
+      };
+
+      return task({
+        id: taskId,
+        contextId,
+        state: "TASK_STATE_COMPLETED",
+        text: `${template.title} 형식으로 정리했습니다.`,
+        artifacts: [
+          traceArtifact(selectedTrace),
+          surfaceArtifact({
+            schemaVersion: "2026-06-11",
+            kind: "a2ui.surface.response",
+            surface,
+            decision: {
+              mode: "render_surface",
+              reason: "사용자가 선택한 템플릿으로 Surface를 생성했습니다.",
+              strategy: "user_selected_template",
+              score: selectedCandidate.score,
+              templateId: selectedTemplateId,
+              candidates: [selectedCandidate],
+              mapping: surface.meta.mapping,
+              sourceTool,
+              dataIntegrity,
+            },
+          }),
+        ],
+        metadata: {
+          a2uiTaskKind: "render_surface",
+          reason: "사용자가 선택한 템플릿으로 Surface를 생성했습니다.",
+          strategy: "user_selected_template",
+          score: selectedCandidate.score,
+          candidates: [selectedCandidate],
+          mapping: surface.meta.mapping,
+          sourceTool,
+          dataIntegrity,
+        },
+      });
+    }
+
       const plan = await planA2UISurfaceWithAI({
         query,
         apiId,

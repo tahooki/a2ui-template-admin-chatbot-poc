@@ -1,6 +1,7 @@
 export type AgentFlowActor =
   | "chat"
   | "next"
+  | "proxy_agent"
   | "main_agent"
   | "a2ui"
   | "llm"
@@ -28,7 +29,7 @@ export type AgentFlowBranch = "general" | "data" | "matched" | "no_template" | "
 
 export type AgentFlowSeverity = "info" | "success" | "warning" | "error";
 
-export type AgentFlowEmitter = "chat" | "next" | "main-agent" | "a2ui-agent";
+export type AgentFlowEmitter = "chat" | "next" | "main-agent" | "a2ui-proxy-agent" | "a2ui-agent";
 
 export type AgentFlowEvidenceKind = "observed" | "inferred_transport" | "trace_derived";
 

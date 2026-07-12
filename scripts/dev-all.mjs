@@ -4,6 +4,7 @@ import readline from "node:readline";
 const services = [
   { name: "web", command: "npm", args: ["run", "web:dev"] },
   { name: "main-agent", command: "npm", args: ["run", "main-agent:dev"] },
+  { name: "proxy-agent", command: "npm", args: ["run", "proxy-agent:dev"] },
 ];
 
 const children = new Map();
@@ -48,4 +49,4 @@ for (const service of services) {
 process.on("SIGINT", () => stopAll("SIGINT"));
 process.on("SIGTERM", () => stopAll("SIGTERM"));
 
-console.log("[dev:all] starting web:3001 and main-agent:8000 with A2A");
+console.log("[dev:all] starting web:3001, main-agent:8000, and proxy-agent:8200 with A2A");

@@ -80,6 +80,9 @@ export type A2ARenderRequestData = {
   a2uiOptions?: {
     includeTrace?: boolean;
     allowIntentFallback?: boolean;
+    mode?: "recommend" | "render_selected";
+    selectedTemplateId?: string;
+    maxCandidates?: number;
   };
 };
 

@@ -19,7 +19,7 @@ const env = {
 
 const child = spawn(
   venvPython,
-  ["-m", "uvicorn", "app.main:app", "--reload", "--port", "8000", "--app-dir", agentDir],
+  ["-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", agentDir, "--port", "8000", "--app-dir", agentDir],
   {
     cwd: root,
     env,

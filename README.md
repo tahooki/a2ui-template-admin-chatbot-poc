@@ -5,7 +5,16 @@ This project is a local A2UI admin/chatbot proof of concept.
 Runtime flow:
 
 ```text
-Chat UI -> Next /api/chat -> Python Agent(:8000) -> LLM / equipment APIs -> A2UI template layer -> SSE -> browser
+Chat UI
+  -> Next /api/chat
+  -> A2UI Proxy Agent(:8200)
+  -> Main Agent(:8000)
+  -> business API data_result
+  -> A2UI Proxy Agent
+  -> A2A A2UI Agent / template candidates
+  -> user display selection
+  -> selected A2UI Surface
+  -> browser renderer
 ```
 
 ## Getting Started
@@ -35,13 +44,15 @@ If the combined command does not work in your local environment, start the requi
 ```bash
 npm run web:dev
 npm run main-agent:dev
+npm run proxy-agent:dev
 ```
 
 The combined dev command starts:
 
 ```text
 Next app:              http://localhost:3001
-Python Agent:          http://localhost:8000
+Main Agent:            http://localhost:8000
+A2UI Proxy Agent:      http://localhost:8200
 ```
 
 Open [http://localhost:3001](http://localhost:3001) in the browser.
@@ -56,7 +67,7 @@ OPENAI_MODEL=사내모델명
 OPENAI_BASE_URL=https://사내-llm-gateway.example.com/v1
 ```
 
-Local service URLs default to `http://localhost:3001` for Next/A2A and `http://localhost:8000` for the Python Agent. You only need URL env overrides if you change those ports.
+Local service URLs default to `http://localhost:3001` for Next/A2A, `http://localhost:8000` for the Main Agent, and `http://localhost:8200` for the A2UI Proxy Agent. You only need URL env overrides if you change those ports.
 
 The Next equipment API routes work without equipment-source env variables. They serve local fixture data by default:
 
@@ -69,7 +80,7 @@ GET http://localhost:3001/api/equipment-status-large-rows
 
 To proxy status/catalog to an external equipment source instead, set `A2UI_EQUIPMENT_STATUS_API_URL` and `A2UI_EQUIPMENT_CATALOG_API_URL`. If those env values point at a local source such as `localhost:8100` and that source is not running, the routes fall back to the local fixtures.
 
-The Python Agent expects an OpenAI-compatible chat completions endpoint:
+The Main Agent and Next-hosted A2UI planner expect an OpenAI-compatible chat completions endpoint:
 
 ```text
 POST {OPENAI_BASE_URL}/chat/completions
@@ -79,7 +90,7 @@ If the internal LLM gateway is not OpenAI-compatible, adapt the request and resp
 
 ## Health Checks
 
-Check that the Python Agent can read the LLM settings:
+Check that the Main Agent can read the LLM settings:
 
 ```bash
 curl http://localhost:8000/health
@@ -94,6 +105,26 @@ Expected signals:
   "openaiModel": "사내모델명"
 }
 ```
+
+Check the Proxy Agent:
+
+```bash
+curl http://localhost:8200/health
+```
+
+The response should include `mainAgentUrl`, `a2aUrl`, and `selectionTtlSeconds`.
+
+## Proxy Agent Responsibilities
+
+The Main Agent no longer calls A2UI directly. For a data request it emits:
+
+```text
+state -> text -> data_result -> done
+```
+
+`data_result` contains the raw business data and source integrity metadata. The Proxy Agent keeps that event server-side, sends the data to the A2UI Agent, and exposes only `display_options` to the browser. After the user chooses a template, the Proxy returns the selected `surface` event.
+
+For local development the selection context is stored in Proxy Agent memory for five minutes. Restarting the Proxy invalidates pending choices.
 
 Check the Next app:
 

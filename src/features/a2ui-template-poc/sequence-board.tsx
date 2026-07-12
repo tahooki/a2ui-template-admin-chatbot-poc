@@ -76,6 +76,7 @@ type SequenceBoardProps = {
 const lanes: ActorLane[] = [
   { id: "chat", label: "채팅 UI" },
   { id: "next", label: "Next API" },
+  { id: "proxy_agent", label: "A2UI 프록시" },
   { id: "main_agent", label: "메인 에이전트" },
   { id: "business_db", label: "업무 DB/API" },
   { id: "a2ui", label: "A2UI 에이전트" },
@@ -142,7 +143,8 @@ function buildSequenceSteps(specs: SequenceStepSpec[]) {
 }
 
 const steps: SequenceStep[] = buildSequenceSteps([
-  { id: "chat-stream", phase: "request", events: ["request_start", "response_open"], from: "chat", to: "main_agent", label: "채팅 스트림 열기" },
+  { id: "chat-stream", phase: "request", events: ["request_start", "response_open"], from: "chat", to: "proxy_agent", label: "프록시 스트림 열기" },
+  { id: "proxy-main-call", phase: "bridge", events: ["state:proxy_main_agent_call"], from: "proxy_agent", to: "main_agent", label: "Main Agent 호출" },
   { id: "intent", phase: "intent", events: ["state:planning", "state:intent"], from: "main_agent", to: "main_agent", label: "정규식 API 라우팅", gapBefore: "selfLoop" },
   { id: "intent-result", phase: "intent", events: ["state:intent_result"], from: "main_agent", to: "main_agent", label: "API 라우팅 결과" },
   {
@@ -165,10 +167,19 @@ const steps: SequenceStep[] = buildSequenceSteps([
     branch: "data",
   },
   {
+    id: "proxy-data-result",
+    phase: "data_loaded",
+    events: ["state:proxy_data_received"],
+    from: "main_agent",
+    to: "proxy_agent",
+    label: "조회 데이터 반환",
+    branch: "data",
+  },
+  {
     id: "a2a-send",
     phase: "registry_loaded",
     events: ["state:a2ui_tool_call", "transport:a2a_send"],
-    from: "main_agent",
+    from: "proxy_agent",
     to: "a2ui",
     label: "A2A 렌더 요청 전송",
     branch: "data",
@@ -204,7 +215,7 @@ const steps: SequenceStep[] = buildSequenceSteps([
     phase: "matcher",
     events: ["transport:a2a_result", "state:a2ui_tool_result"],
     from: "a2ui",
-    to: "main_agent",
+    to: "proxy_agent",
     label: "트레이스/렌더 결정 반환",
     branch: "data",
     a2uiSubstep: true,
@@ -220,10 +231,20 @@ const steps: SequenceStep[] = buildSequenceSteps([
     gapBefore: "section",
   },
   {
+    id: "display-options",
+    phase: "matcher",
+    events: ["display_options"],
+    from: "proxy_agent",
+    to: "chat",
+    label: "표시 방식 선택 요청",
+    branch: "matched",
+    gapBefore: "section",
+  },
+  {
     id: "surface",
     phase: "surface",
     events: ["surface"],
-    from: "main_agent",
+    from: "proxy_agent",
     to: "chat",
     label: "선택된 A2UI 화면 반환",
     branch: "matched",
@@ -262,7 +283,7 @@ function branchBlockFromSpec(spec: BranchBlockSpec): BranchBlock {
 const branchBlockSpecs: BranchBlockSpec[] = [
   { id: "data", label: "A2UI 렌더 경로", firstStepId: "business-tool-call", lastStepId: "a2a-result" },
   { id: "no_template", label: "텍스트 대체 응답", firstStepId: "fallback-text", lastStepId: "fallback-text" },
-  { id: "matched", label: "선택된 A2UI 화면", firstStepId: "surface", lastStepId: "surface" },
+  { id: "matched", label: "표시 방식 선택 및 A2UI 화면", firstStepId: "display-options", lastStepId: "surface" },
 ];
 
 const branchBlocks: BranchBlock[] = branchBlockSpecs.map(branchBlockFromSpec);
