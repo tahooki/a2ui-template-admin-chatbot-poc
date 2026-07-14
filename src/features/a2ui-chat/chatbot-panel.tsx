@@ -2,24 +2,21 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { A2UIDemoRenderer } from "@/features/a2ui-chat/a2ui-renderer";
+import {
+  A2UIDisplaySelection,
+  A2UISurfaceRenderer,
+  a2uiErrorMessage,
+  consumeA2UISse,
+  displaySelectionFromA2UIEvent,
+  surfaceFromA2UIEnvelope,
+} from "@/features/a2ui-chat-kit";
+import type {
+  A2UIChatSurface,
+  A2UIDisplaySelectionState,
+} from "@/features/a2ui-chat-kit";
 import styles from "./chat-components.module.css";
 import type { ChatFlowDisplayTiming, ChatFlowSourceEvent } from "@/features/a2ui-core/agent-event-types";
-import type {
-  A2UICandidateTrace,
-  A2UIDataProfile,
-  A2UIRenderPlan,
-  A2UISurfaceEnvelope,
-  EquipmentApiResponse,
-} from "@/features/a2ui-core/template-types";
-
-type ChatSurface = {
-  apiTitle: string;
-  apiId: string;
-  data: EquipmentApiResponse<unknown>;
-  profile: A2UIDataProfile;
-  renderPlan: A2UIRenderPlan;
-};
+import type { A2UICandidateTrace } from "@/features/a2ui-core/template-types";
 
 type ChatMatcherTrace = {
   strategy?: string;
@@ -28,34 +25,13 @@ type ChatMatcherTrace = {
   candidates?: A2UICandidateTrace[];
 };
 
-type ChatDisplayOption = {
-  templateId: string;
-  label: string;
-  score?: number;
-  recommended?: boolean;
-};
-
-type ChatDisplaySelection = {
-  selectionId: string;
-  message: string;
-  options: ChatDisplayOption[];
-  status: "idle" | "loading" | "completed" | "error";
-  selectedTemplateId?: string;
-  error?: string;
-};
-
 type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
-  surface?: ChatSurface;
+  surface?: A2UIChatSurface;
   matcher?: ChatMatcherTrace;
-  displaySelection?: ChatDisplaySelection;
-};
-
-type ParsedSseEvent = {
-  event: string;
-  data: Record<string, unknown>;
+  displaySelection?: A2UIDisplaySelectionState;
 };
 
 const introMessage: ChatMessage = {
@@ -113,81 +89,6 @@ function newId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function parseSseEvent(rawEvent: string): ParsedSseEvent | null {
-  const lines = rawEvent.split(/\r?\n/);
-  let event = "message";
-  const dataLines: string[] = [];
-
-  for (const line of lines) {
-    if (line.startsWith("event:")) {
-      event = line.slice(6).trim();
-      continue;
-    }
-
-    if (line.startsWith("data:")) {
-      dataLines.push(line.slice(5).trimStart());
-    }
-  }
-
-  if (!dataLines.length) return null;
-
-  try {
-    return { event, data: JSON.parse(dataLines.join("\n")) as Record<string, unknown> };
-  } catch {
-    return null;
-  }
-}
-
-async function consumeSse(response: Response, onEvent: (event: ParsedSseEvent) => void) {
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("Chat stream is empty");
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    let boundary = buffer.indexOf("\n\n");
-    while (boundary >= 0) {
-      const rawEvent = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      const parsed = parseSseEvent(rawEvent);
-      if (parsed) onEvent(parsed);
-      boundary = buffer.indexOf("\n\n");
-    }
-  }
-
-  const parsed = parseSseEvent(buffer.trim());
-  if (parsed) onEvent(parsed);
-}
-
-function errorMessageFromEvent(data: Record<string, unknown>) {
-  const message = typeof data.message === "string" ? data.message : "Agent 응답을 처리하는 중 오류가 발생했습니다.";
-  const details = typeof data.details === "string" ? data.details : "";
-  const errorType = typeof data.errorType === "string" ? data.errorType : "";
-  const reason = [errorType, details].filter(Boolean).join(": ");
-  return reason && reason !== message ? `${message}\n원인: ${reason}` : message;
-}
-
-function surfaceFromEnvelope(value: unknown): ChatSurface | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const envelope = value as Partial<A2UISurfaceEnvelope>;
-  const payload = envelope.payload;
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
-  if (!payload.data || !payload.profile || !payload.renderPlan) return null;
-
-  return {
-    apiTitle: String(payload.apiTitle ?? "A2UI API"),
-    apiId: String(payload.apiId ?? envelope.templateId ?? "a2ui"),
-    data: payload.data,
-    profile: payload.profile,
-    renderPlan: payload.renderPlan,
-  };
-}
-
 function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -199,29 +100,6 @@ function matcherFromState(data: Record<string, unknown>): ChatMatcherTrace {
     score: numberValue(data.score),
     candidateCount: numberValue(data.candidateCount) ?? candidates?.length,
     candidates,
-  };
-}
-
-function displaySelectionFromEvent(data: Record<string, unknown>): ChatDisplaySelection | null {
-  const selectionId = typeof data.selectionId === "string" ? data.selectionId : "";
-  const rawOptions = Array.isArray(data.options) ? data.options : [];
-  const options = rawOptions.flatMap((value): ChatDisplayOption[] => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-    const option = value as Record<string, unknown>;
-    if (typeof option.templateId !== "string" || typeof option.label !== "string") return [];
-    return [{
-      templateId: option.templateId,
-      label: option.label,
-      score: numberValue(option.score),
-      recommended: option.recommended === true,
-    }];
-  });
-  if (!selectionId || !options.length) return null;
-  return {
-    selectionId,
-    message: typeof data.message === "string" ? data.message : "어떤 방식으로 보시겠습니까?",
-    options,
-    status: "idle",
   };
 }
 
@@ -295,9 +173,9 @@ export function ChatbotPanel({
       if (!response.ok) throw new Error(`display selection failed with ${response.status}`);
 
       let selectionError = "";
-      await consumeSse(response, ({ event, data }) => {
+      await consumeA2UISse(response, ({ event, data }) => {
         if (event === "surface") {
-          const surface = surfaceFromEnvelope(data.surface ?? data);
+          const surface = surfaceFromA2UIEnvelope(data);
           if (!surface) return;
           setMessages((current) => current.map((message) => (
             message.id === messageId && message.displaySelection
@@ -316,7 +194,7 @@ export function ChatbotPanel({
           return;
         }
         if (event === "error") {
-          selectionError = errorMessageFromEvent(data);
+          selectionError = a2uiErrorMessage(data);
           setMessages((current) => current.map((message) => (
             message.id === messageId && message.displaySelection
               ? {
@@ -399,7 +277,7 @@ export function ChatbotPanel({
 
         emitFlow("local", "response_open", { status: response.status });
 
-        await consumeSse(response, ({ event, data }) => {
+        await consumeA2UISse(response, ({ event, data }) => {
           const flowTiming = emitFlow("sse", event, data);
 
           if (event === "text" || event === "delta") {
@@ -426,7 +304,7 @@ export function ChatbotPanel({
           }
 
           if (event === "surface") {
-            const surface = surfaceFromEnvelope(data.surface ?? data);
+            const surface = surfaceFromA2UIEnvelope(data);
             if (!surface) return;
             scheduleSurfaceDisplay(
               () => {
@@ -440,7 +318,7 @@ export function ChatbotPanel({
           }
 
           if (event === "display_options") {
-            const displaySelection = displaySelectionFromEvent(data);
+            const displaySelection = displaySelectionFromA2UIEvent(data);
             if (!displaySelection) return;
             setMessages((current) =>
               current.map((message) => (message.id === assistantId ? { ...message, displaySelection } : message)),
@@ -465,7 +343,7 @@ export function ChatbotPanel({
           }
 
           if (event === "error") {
-            const text = errorMessageFromEvent(data);
+            const text = a2uiErrorMessage(data);
             setMessages((current) =>
               current.map((message) => (message.id === assistantId ? { ...message, content: text } : message)),
             );
@@ -572,36 +450,22 @@ export function ChatbotPanel({
               </div>
             ) : null}
             {message.displaySelection ? (
-              <div className={styles.displaySelection} aria-label="A2UI display options">
-                <p className={styles.displaySelectionPrompt}>{message.displaySelection.message}</p>
-                <div className={styles.displayOptionList}>
-                  {message.displaySelection.options.map((option) => {
-                    const selected = message.displaySelection?.selectedTemplateId === option.templateId;
-                    const disabled = message.displaySelection?.status === "loading" || message.displaySelection?.status === "completed";
-                    return (
-                      <button
-                        className={`${styles.displayOptionButton} ${selected ? styles.displayOptionButtonSelected : ""}`}
-                        disabled={disabled || selectingMessageId === message.id}
-                        key={option.templateId}
-                        type="button"
-                        onClick={() => void selectDisplayTemplate(message.id, message.displaySelection!.selectionId, option.templateId)}
-                      >
-                        <span>{option.label}</span>
-                        {option.recommended ? <small>추천</small> : null}
-                      </button>
-                    );
-                  })}
-                </div>
-                {message.displaySelection.status === "loading" ? <span className={styles.displaySelectionStatus}>화면 생성 중…</span> : null}
-                {message.displaySelection.error ? <span className={styles.displaySelectionError}>{message.displaySelection.error}</span> : null}
-              </div>
+              <A2UIDisplaySelection
+                busy={selectingMessageId === message.id}
+                selection={message.displaySelection}
+                onSelect={(templateId) => selectDisplayTemplate(
+                  message.id,
+                  message.displaySelection!.selectionId,
+                  templateId,
+                )}
+              />
             ) : null}
             {message.surface ? (
               <div
                 className={styles.resultFrame}
                 data-latest-surface={index === messages.length - 1 ? "true" : undefined}
               >
-                <A2UIDemoRenderer
+                <A2UISurfaceRenderer
                   data={message.surface.data}
                   profile={message.surface.profile}
                   renderPlan={message.surface.renderPlan}

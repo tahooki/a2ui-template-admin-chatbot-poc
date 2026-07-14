@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
-import styles from "./chat-components.module.css";
+import styles from "./a2ui-chat-kit.module.css";
 import type { CSSProperties } from "react";
-import type { A2UIDataProfile, A2UIRenderPlan, EquipmentApiResponse } from "@/features/a2ui-core/template-types";
+import type { A2UIDataProfile, A2UIRenderPlan } from "./contracts";
 
 type DataRow = Record<string, unknown>;
 
@@ -226,12 +226,12 @@ function flatTreeRows(rows: DataRow[], renderPlan: A2UIRenderPlan) {
   return result.length ? result : rows;
 }
 
-export function A2UIDemoRenderer({
+export function A2UISurfaceRenderer({
   data,
   profile,
   renderPlan,
 }: {
-  data: EquipmentApiResponse<unknown>;
+  data: unknown;
   profile: A2UIDataProfile;
   renderPlan: A2UIRenderPlan;
 }) {

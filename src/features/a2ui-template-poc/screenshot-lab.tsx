@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { A2UIDemoRenderer } from "@/features/a2ui-chat/a2ui-renderer";
+import { A2UISurfaceRenderer } from "@/features/a2ui-chat-kit";
 import styles from "./styles.module.css";
 import type { A2UIDataProfile, A2UIRenderPlan, A2UIViewType, EquipmentApiResponse, FieldMapping, FieldProfile } from "@/features/a2ui-core/template-types";
 
@@ -388,7 +388,7 @@ export function A2UITemplateScreenshotLab({ shotId = null }: { shotId?: string |
               </div>
               {state?.error ? <p className={styles.screenshotError}>{state.error}</p> : null}
               {data ? (
-                <A2UIDemoRenderer
+                <A2UISurfaceRenderer
                   data={data}
                   profile={profileFromData(data)}
                   renderPlan={renderPlanFor(item)}

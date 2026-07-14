@@ -238,14 +238,19 @@ type ChatMessage = {
 
 ### 6.3 Renderer
 
-POC에서는 현재 Renderer를 먼저 그대로 이식한 뒤 기존 챗봇 디자인 시스템에 맞춰 스타일을 조정한다.
+POC에서 검증한 코드 중 이식에 필요한 부분은 `a2ui-chat-kit`으로 분리되어 있다. 대상 챗봇에는 이 폴더 전체를 먼저 복사한 뒤 기존 디자인 시스템에 맞춰 스타일을 조정한다.
 
 이식 대상의 중심 파일은 다음과 같다.
 
-- `src/features/a2ui-template-poc/a2ui-demo-renderer.tsx`
-- `src/features/a2ui-template-poc/template-types.ts`
-- `src/features/a2ui-template-poc/styles.module.css`의 Renderer 및 선택 UI 관련 스타일
-- `src/features/a2ui-template-poc/chatbot-panel.tsx`의 SSE 파서와 선택 처리 로직
+- `src/features/a2ui-chat-kit/a2ui-surface-renderer.tsx`
+- `src/features/a2ui-chat-kit/contracts.ts`
+- `src/features/a2ui-chat-kit/a2ui-chat-kit.module.css`
+- `src/features/a2ui-chat-kit/sse-client.ts`
+- `src/features/a2ui-chat-kit/surface-envelope.ts`
+- `src/features/a2ui-chat-kit/display-selection.tsx`
+- `src/features/a2ui-chat-kit/server/sse-proxy.ts`
+
+세부 복사·연결 절차와 최소 예제는 `src/features/a2ui-chat-kit/README.md`에 정리되어 있다. 현재 POC의 `src/features/a2ui-chat/chatbot-panel.tsx`도 동일한 Kit을 사용하므로 실제 동작 예제로 볼 수 있다.
 
 기존 챗봇의 스타일과 충돌하지 않도록 Renderer 스타일은 별도 CSS Module 또는 기존 디자인 시스템 컴포넌트로 분리한다.
 

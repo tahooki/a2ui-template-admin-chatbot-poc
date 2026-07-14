@@ -9,6 +9,10 @@ const sourceRoot = postcss.parse(sourceCss);
 
 const features = [
   {
+    directory: "src/features/a2ui-chat-kit",
+    output: "src/features/a2ui-chat-kit/a2ui-chat-kit.module.css",
+  },
+  {
     directory: "src/features/a2ui-chat",
     output: "src/features/a2ui-chat/chat-components.module.css",
   },
