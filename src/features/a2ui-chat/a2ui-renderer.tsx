@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
-import styles from "./styles.module.css";
+import styles from "./chat-components.module.css";
 import type { CSSProperties } from "react";
-import type { A2UIDataProfile, A2UIRenderPlan, EquipmentApiResponse } from "./template-types";
+import type { A2UIDataProfile, A2UIRenderPlan, EquipmentApiResponse } from "@/features/a2ui-core/template-types";
 
 type DataRow = Record<string, unknown>;
 

@@ -6,7 +6,7 @@ import type {
   A2UITemplateSlot,
   A2UIMappingDecision,
   FieldMapping,
-} from "@/features/a2ui-template-poc/template-types";
+} from "@/features/a2ui-core/template-types";
 import type { DerivedSchema, DerivedSchemaField } from "./derived-schema-types";
 import { canonicalPath, normalizeText, rendererPath } from "./path-utils";
 

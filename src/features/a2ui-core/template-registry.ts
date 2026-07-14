@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { A2UITemplateRegistration } from "./template-types";
+import type { A2UITemplateRegistration } from "@/features/a2ui-core/template-types";
 
 type TemplateCatalogResponse = {
   templates: A2UITemplateRegistration[];

@@ -1,4 +1,4 @@
-import type { EquipmentApiResponse } from "@/features/a2ui-template-poc/template-types";
+import type { EquipmentApiResponse } from "@/features/a2ui-core/template-types";
 
 type EquipmentRow = Record<string, unknown>;
 type PageOptions = {

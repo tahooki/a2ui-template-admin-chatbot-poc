@@ -2,9 +2,9 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, UIEvent as ReactUIEvent } from "react";
-import styles from "./styles.module.css";
-import type { AgentFlowActor, AgentFlowBranch, AgentFlowEvent, AgentFlowEvidenceKind, AgentFlowPhase } from "./agent-flow-types";
-import type { DataBoundaryScenarioTrace } from "./data-boundary-lab";
+import styles from "./observability.module.css";
+import type { AgentFlowActor, AgentFlowBranch, AgentFlowEvent, AgentFlowEvidenceKind, AgentFlowPhase } from "@/features/a2ui-core/agent-event-types";
+import type { DataBoundaryScenarioTrace } from "@/features/a2ui-observability/data-boundary-lab";
 
 type ActorLane = {
   id: AgentFlowActor;

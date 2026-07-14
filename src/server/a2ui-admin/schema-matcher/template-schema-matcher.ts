@@ -3,7 +3,7 @@ import type {
   A2UITemplateInputSchema,
   A2UITemplateRegistration,
   A2UITemplateSlot,
-} from "@/features/a2ui-template-poc/template-types";
+} from "@/features/a2ui-core/template-types";
 import type { DerivedSchema, DerivedSchemaField } from "./derived-schema-types";
 import { normalizeTemplateInputSchema } from "./template-input-schema-adapter";
 import { buildTemplateMappingDecision, renderPlanFromMapping } from "./template-mapping-builder";

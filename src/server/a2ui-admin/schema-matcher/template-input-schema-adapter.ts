@@ -5,7 +5,7 @@ import type {
   A2UITemplateInputSchema,
   A2UITemplateRegistration,
   A2UITemplateSlot,
-} from "@/features/a2ui-template-poc/template-types";
+} from "@/features/a2ui-core/template-types";
 
 const schemaVersion = "2026-06-11" as const;
 

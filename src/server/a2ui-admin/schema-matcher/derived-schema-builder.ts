@@ -1,5 +1,5 @@
-import type { A2UIDataProfile, FieldProfile } from "@/features/a2ui-template-poc/template-types";
-import { buildA2UIDataProfile } from "@/features/a2ui-template-poc/schema-profiler";
+import type { A2UIDataProfile, FieldProfile } from "@/features/a2ui-core/template-types";
+import { buildA2UIDataProfile } from "@/features/a2ui-core/schema-profiler";
 import type { DerivedSchema, DerivedSchemaCapabilities, DerivedSchemaField, DerivedSchemaShape } from "./derived-schema-types";
 import type { SampleDataPreview } from "./sample-data-preview";
 import { buildSampleDataPreview } from "./sample-data-preview";

@@ -1,4 +1,4 @@
-import type { A2UITemplateRegistration } from "@/features/a2ui-template-poc/template-types";
+import type { A2UITemplateRegistration } from "@/features/a2ui-core/template-types";
 
 export function templateFromRequestBody(body: unknown): A2UITemplateRegistration | null {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;

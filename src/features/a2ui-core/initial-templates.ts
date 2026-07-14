@@ -1,4 +1,4 @@
-import type { A2UITemplateRegistration, A2UITemplateSlot } from "./template-types";
+import type { A2UITemplateRegistration, A2UITemplateSlot } from "@/features/a2ui-core/template-types";
 
 const now = "2026-07-01T00:00:00.000Z";
 const schemaVersion = "2026-06-11" as const;

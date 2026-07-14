@@ -4,7 +4,7 @@ import type {
   AgentFlowEvent,
   AgentFlowPhase,
   ChatFlowSourceEvent,
-} from "./agent-flow-types";
+} from "@/features/a2ui-core/agent-event-types";
 
 function textValue(value: unknown, fallback = "") {
   return typeof value === "string" ? value : fallback;

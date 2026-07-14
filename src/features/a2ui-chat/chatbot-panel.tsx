@@ -2,16 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { A2UIDemoRenderer } from "./a2ui-demo-renderer";
-import styles from "./styles.module.css";
-import type { ChatFlowDisplayTiming, ChatFlowSourceEvent } from "./agent-flow-types";
+import { A2UIDemoRenderer } from "@/features/a2ui-chat/a2ui-renderer";
+import styles from "./chat-components.module.css";
+import type { ChatFlowDisplayTiming, ChatFlowSourceEvent } from "@/features/a2ui-core/agent-event-types";
 import type {
   A2UICandidateTrace,
   A2UIDataProfile,
   A2UIRenderPlan,
   A2UISurfaceEnvelope,
   EquipmentApiResponse,
-} from "./template-types";
+} from "@/features/a2ui-core/template-types";
 
 type ChatSurface = {
   apiTitle: string;
@@ -226,16 +226,18 @@ function displaySelectionFromEvent(data: Record<string, unknown>): ChatDisplaySe
 }
 
 export function ChatbotPanel({
-  registryVersion,
+  registryVersion = 0,
   resetKey,
-  width,
+  width = "100%",
+  height,
   onResizeStart,
   onFlowEvent,
 }: {
-  registryVersion: number;
+  registryVersion?: number;
   resetKey: number;
-  width: number;
-  onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  width?: number | string;
+  height?: number | string;
+  onResizeStart?: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onFlowEvent?: (event: ChatFlowSourceEvent) => ChatFlowDisplayTiming | void;
 }) {
   const [input, setInput] = useState("");
@@ -531,15 +533,15 @@ export function ChatbotPanel({
   }, [messages]);
 
   return (
-    <aside className={styles.chatPanel} style={{ width }} aria-label="A2UI chatbot">
-      <div className={styles.resizeHandle} onPointerDown={onResizeStart} aria-hidden="true" />
+    <aside className={styles.chatPanel} style={{ width, height }} aria-label="A2UI chatbot">
+      {onResizeStart ? <div className={styles.resizeHandle} onPointerDown={onResizeStart} aria-hidden="true" /> : null}
       <div className={styles.chatHeader}>
         <div>
           <p className={styles.eyebrow}>Chat</p>
           <h2>A2UI Chat</h2>
         </div>
         <div className={styles.chatStatusStack}>
-          <span className={styles.liveStatus}>v{registryVersion}</span>
+          <span className={styles.liveStatus}>{registryVersion > 0 ? `v${registryVersion}` : "Proxy live"}</span>
         </div>
       </div>
 

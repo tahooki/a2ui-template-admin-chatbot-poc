@@ -7,9 +7,9 @@ import type {
   A2UISurfaceEnvelope,
   A2UITemplateRegistration,
   EquipmentApiResponse,
-} from "./template-types";
-import type { AgentFlowEvent } from "./agent-flow-types";
-import { INITIAL_TEMPLATES, TELEMETRY_STATUS_TEMPLATE_ID } from "./initial-templates";
+} from "@/features/a2ui-core/template-types";
+import type { AgentFlowEvent } from "@/features/a2ui-core/agent-event-types";
+import { INITIAL_TEMPLATES, TELEMETRY_STATUS_TEMPLATE_ID } from "@/features/a2ui-core/initial-templates";
 
 const STATUS_BOOLEAN_LIST_TEMPLATE_ID = "matrix.statusMatrix";
 

@@ -1,4 +1,4 @@
-import type { A2UIDerivedFieldType, A2UIRole } from "@/features/a2ui-template-poc/template-types";
+import type { A2UIDerivedFieldType, A2UIRole } from "@/features/a2ui-core/template-types";
 
 export type PreprocessorWarning =
   | "empty_dataset"

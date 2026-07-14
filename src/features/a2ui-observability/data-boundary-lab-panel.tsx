@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { dataBoundaryScenarioById, dataBoundaryScenarios } from "./data-boundary-lab";
-import styles from "./styles.module.css";
-import type { DataBoundaryScenarioId, DataBoundaryScenarioTrace } from "./data-boundary-lab";
+import { dataBoundaryScenarioById, dataBoundaryScenarios } from "@/features/a2ui-observability/data-boundary-lab";
+import styles from "./observability.module.css";
+import type { DataBoundaryScenarioId, DataBoundaryScenarioTrace } from "@/features/a2ui-observability/data-boundary-lab";
 
 type ApiTableState = {
   apiRoute?: string;

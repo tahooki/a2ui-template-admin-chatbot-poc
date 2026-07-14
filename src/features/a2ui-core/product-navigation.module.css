@@ -1,0 +1,45 @@
+.navigation {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid rgba(24, 24, 27, 0.12);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.link {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  color: #666a73;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.link:hover {
+  color: #18181b;
+  background: rgba(24, 24, 27, 0.05);
+}
+
+.active {
+  color: #ffffff;
+  background: #18181b;
+}
+
+.active:hover {
+  color: #ffffff;
+  background: #18181b;
+}
+
+@media (max-width: 640px) {
+  .link {
+    min-height: 28px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+}

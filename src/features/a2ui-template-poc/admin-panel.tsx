@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { IMAGE_CARD_REGISTRATION_PRESET } from "./image-card-registration-preset";
 import styles from "./styles.module.css";
-import type { A2UITemplateRegistration } from "./template-types";
+import type { A2UITemplateRegistration } from "@/features/a2ui-core/template-types";
 
 function stringify(value: unknown) {
   return JSON.stringify(value, null, 2);

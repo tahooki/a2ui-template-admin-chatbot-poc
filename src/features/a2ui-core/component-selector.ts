@@ -4,7 +4,7 @@ import type {
   A2UIRole,
   A2UITemplateRegistration,
   FieldMapping,
-} from "./template-types";
+} from "@/features/a2ui-core/template-types";
 
 const roleOrder: A2UIRole[] = [
   "title",

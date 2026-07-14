@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "A2UI Template Admin Chatbot POC",
-  description: "Standalone A2UI template registry and chatbot proof of concept",
+  title: "A2UI Studio",
+  description: "A2UI Template Admin, Proxy Chatbot, and Agent Flow Lab",
 };
 
 export default function RootLayout({
@@ -24,7 +24,7 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="en"
+      lang="ko"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>

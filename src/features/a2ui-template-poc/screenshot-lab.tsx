@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { A2UIDemoRenderer } from "./a2ui-demo-renderer";
+import { A2UIDemoRenderer } from "@/features/a2ui-chat/a2ui-renderer";
 import styles from "./styles.module.css";
-import type { A2UIDataProfile, A2UIRenderPlan, A2UIViewType, EquipmentApiResponse, FieldMapping, FieldProfile } from "./template-types";
+import type { A2UIDataProfile, A2UIRenderPlan, A2UIViewType, EquipmentApiResponse, FieldMapping, FieldProfile } from "@/features/a2ui-core/template-types";
 
 type DataRow = Record<string, unknown>;
 

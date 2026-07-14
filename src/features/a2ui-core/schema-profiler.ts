@@ -1,4 +1,4 @@
-import type { A2UIDataProfile, A2UIRole, FieldProfile } from "./template-types";
+import type { A2UIDataProfile, A2UIRole, FieldProfile } from "@/features/a2ui-core/template-types";
 import { preprocessUnknownApiResponse } from "@/server/a2ui-admin/schema-matcher/unknown-api-response-preprocessor";
 
 function roleCandidates(key: string, type: FieldProfile["type"]): A2UIRole[] {

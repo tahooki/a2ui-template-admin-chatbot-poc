@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { INITIAL_TEMPLATES } from "@/features/a2ui-template-poc/initial-templates";
-import type { A2UITemplateRegistration } from "@/features/a2ui-template-poc/template-types";
+import { INITIAL_TEMPLATES } from "@/features/a2ui-core/initial-templates";
+import type { A2UITemplateRegistration } from "@/features/a2ui-core/template-types";
 import { normalizeTemplateInputSchema } from "./schema-matcher/template-input-schema-adapter";
 
 export type A2UITemplateCatalog = {

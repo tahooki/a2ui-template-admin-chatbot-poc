@@ -1,6 +1,6 @@
 import { deleteTemplate, getTemplate, saveTemplate } from "@/server/a2ui-admin/catalog-store";
 import { templateFromRequestBody, validateTemplateRegistration } from "@/server/a2ui-admin/template-validation";
-import type { A2UITemplateRegistration } from "@/features/a2ui-template-poc/template-types";
+import type { A2UITemplateRegistration } from "@/features/a2ui-core/template-types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

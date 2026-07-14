@@ -2,7 +2,7 @@ import type {
   A2UICandidateTrace,
   A2UIMappingDecision,
   A2UISurfaceEnvelope,
-} from "@/features/a2ui-template-poc/template-types";
+} from "@/features/a2ui-core/template-types";
 import type { EquipmentApiId } from "@/server/a2ui-admin/a2ui-runtime";
 import type { A2UISurfacePlanTrace } from "@/server/a2ui-admin/a2ui-ai-surface-planner";
 import type { DerivedSchema } from "@/server/a2ui-admin/schema-matcher/derived-schema-types";

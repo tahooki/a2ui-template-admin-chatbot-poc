@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import styles from "./styles.module.css";
-import type { AgentFlowEvent } from "./agent-flow-types";
+import styles from "./observability.module.css";
+import type { AgentFlowEvent } from "@/features/a2ui-core/agent-event-types";
 
 function formatTime(value: string) {
   const date = new Date(value);

@@ -1,4 +1,4 @@
-import type { A2UITemplateRegistration } from "./template-types";
+import type { A2UITemplateRegistration } from "@/features/a2ui-core/template-types";
 
 export const IMAGE_CARD_REGISTRATION_PRESET: A2UITemplateRegistration = {
   componentId: "collection.cardGrid.custom",

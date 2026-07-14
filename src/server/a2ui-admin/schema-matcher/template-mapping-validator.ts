@@ -1,4 +1,4 @@
-import type { A2UIMappingDecision } from "@/features/a2ui-template-poc/template-types";
+import type { A2UIMappingDecision } from "@/features/a2ui-core/template-types";
 import type { DerivedSchema } from "./derived-schema-types";
 import { hasMappedPath } from "./template-mapping-builder";
 

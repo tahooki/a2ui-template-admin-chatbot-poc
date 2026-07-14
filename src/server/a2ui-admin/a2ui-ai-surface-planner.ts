@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { buildA2UIDataProfile } from "@/features/a2ui-template-poc/schema-profiler";
+import { buildA2UIDataProfile } from "@/features/a2ui-core/schema-profiler";
 import type {
   A2UICandidateTrace,
   A2UIDataProfile,
@@ -10,7 +10,7 @@ import type {
   A2UITemplateRegistration,
   EquipmentApiResponse,
   FieldMapping,
-} from "@/features/a2ui-template-poc/template-types";
+} from "@/features/a2ui-core/template-types";
 import type { EquipmentApiId } from "./a2ui-runtime";
 import { a2uiApiDefinition, a2uiApiTitle, presentationIntentForQuery } from "./api-registry";
 import { readTemplateCatalog } from "./catalog-store";

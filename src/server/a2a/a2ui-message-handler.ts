@@ -3,7 +3,7 @@ import type {
   A2UICandidateTrace,
   A2UIMappingDecision,
   EquipmentApiResponse,
-} from "@/features/a2ui-template-poc/template-types";
+} from "@/features/a2ui-core/template-types";
 import {
   type A2AActionRequestData,
   type A2ARenderRequestData,

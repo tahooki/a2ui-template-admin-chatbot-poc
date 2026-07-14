@@ -2,16 +2,16 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { agentFlowEventsFromSource } from "./agent-flow-adapter";
-import { AgentTracePanel } from "./agent-trace-panel";
+import { agentFlowEventsFromSource } from "@/features/a2ui-observability/agent-flow-adapter";
+import { AgentTracePanel } from "@/features/a2ui-observability/agent-trace-panel";
 import { AdminPanel } from "./admin-panel";
-import { ChatbotPanel } from "./chatbot-panel";
-import { buildDataBoundaryScenarioTrace } from "./data-boundary-lab";
-import { sequenceDisplayStepIdForEvent } from "./sequence-board";
-import { useTemplateRegistry } from "./template-store";
+import { ChatbotPanel } from "@/features/a2ui-chat/chatbot-panel";
+import { buildDataBoundaryScenarioTrace } from "@/features/a2ui-observability/data-boundary-lab";
+import { sequenceDisplayStepIdForEvent } from "@/features/a2ui-observability/sequence-board";
+import { useTemplateRegistry } from "@/features/a2ui-core/template-registry";
 import styles from "./styles.module.css";
-import type { AgentFlowEvent, ChatFlowDisplayTiming, ChatFlowSourceEvent } from "./agent-flow-types";
-import type { DataBoundaryScenarioId } from "./data-boundary-lab";
+import type { AgentFlowEvent, ChatFlowDisplayTiming, ChatFlowSourceEvent } from "@/features/a2ui-core/agent-event-types";
+import type { DataBoundaryScenarioId } from "@/features/a2ui-observability/data-boundary-lab";
 
 const flowEventDisplayIntervalMs = 1000;
 const flowEventCatchUpIntervalMs = 1000;

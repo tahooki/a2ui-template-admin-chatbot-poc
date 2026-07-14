@@ -1,5 +1,5 @@
-import { buildA2UIDataProfile } from "@/features/a2ui-template-poc/schema-profiler";
-import { selectA2UIComponent } from "@/features/a2ui-template-poc/component-selector";
+import { buildA2UIDataProfile } from "@/features/a2ui-core/schema-profiler";
+import { selectA2UIComponent } from "@/features/a2ui-core/component-selector";
 import type {
   A2UIDataProfile,
   A2UICandidateTrace,
@@ -8,7 +8,7 @@ import type {
   A2UISurfaceEnvelope,
   A2UITemplateRegistration,
   EquipmentApiResponse,
-} from "@/features/a2ui-template-poc/template-types";
+} from "@/features/a2ui-core/template-types";
 import { getTemplate, readTemplateCatalog } from "./catalog-store";
 import { planA2UISurfaceWithAI } from "./a2ui-ai-surface-planner";
 import {

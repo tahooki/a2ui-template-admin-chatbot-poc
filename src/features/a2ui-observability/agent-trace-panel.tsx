@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { DataBoundaryLabPanel } from "./data-boundary-lab-panel";
-import { SequenceBoard } from "./sequence-board";
+import { SequenceBoard } from "@/features/a2ui-observability/sequence-board";
 import { SystemLogPanel } from "./system-log-panel";
-import styles from "./styles.module.css";
-import type { AgentFlowActor, AgentFlowEvent } from "./agent-flow-types";
-import type { DataBoundaryScenarioId, DataBoundaryScenarioTrace } from "./data-boundary-lab";
+import styles from "./observability.module.css";
+import type { AgentFlowActor, AgentFlowEvent } from "@/features/a2ui-core/agent-event-types";
+import type { DataBoundaryScenarioId, DataBoundaryScenarioTrace } from "@/features/a2ui-observability/data-boundary-lab";
 
 export function AgentTracePanel({
   actorLabels,
