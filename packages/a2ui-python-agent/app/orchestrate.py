@@ -81,7 +81,7 @@ def data_result_payload(
 
 
 def data_response_text(api_id: str) -> str:
-    return f"{equipment_api_title(api_id)} 데이터를 조회했습니다. 원하는 화면 형식을 선택할 수 있습니다."
+    return f"{equipment_api_title(api_id)} 데이터를 조회 중입니다. 데이터 조회 후 원하는 화면 형식을 선택할 수 있습니다."
 
 
 async def run_chat_turn(message: str, history: list[dict[str, Any]] | None = None) -> dict[str, Any]:
