@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -43,10 +43,12 @@ async def health() -> dict[str, Any]:
 
 
 @app.post("/chat/stream")
-async def chat_stream(body: ChatRequest) -> StreamingResponse:
+async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
     message = body.normalized_message()
     if not message:
         raise HTTPException(status_code=400, detail="message is required")
+    raw_request_body = (await request.body()).decode("utf-8", errors="replace")
+    logger.info("[a2ui-proxy-agent] chat rawRequestBody=%s", raw_request_body)
     logger.info(
         "[a2ui-proxy-agent] chat request presentationMode=%s messageLength=%s",
         body.presentation_mode,

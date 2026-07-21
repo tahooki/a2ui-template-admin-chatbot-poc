@@ -2,7 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -79,8 +79,10 @@ async def health() -> dict[str, Any]:
 
 
 @app.post("/chat")
-async def chat(body: ChatRequest) -> dict[str, Any]:
+async def chat(request: Request, body: ChatRequest) -> dict[str, Any]:
     message = _message(body)
+    raw_request_body = (await request.body()).decode("utf-8", errors="replace")
+    logger.info("[main-agent] chat rawRequestBody=%s", raw_request_body)
     logger.info(
         "[main-agent] chat request presentationMode=%s messageLength=%s",
         body.presentationMode,
@@ -94,8 +96,10 @@ async def chat(body: ChatRequest) -> dict[str, Any]:
 
 
 @app.post("/chat/stream")
-async def chat_stream(body: ChatRequest) -> StreamingResponse:
+async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
     message = _message(body)
+    raw_request_body = (await request.body()).decode("utf-8", errors="replace")
+    logger.info("[main-agent] chat stream rawRequestBody=%s", raw_request_body)
     logger.info(
         "[main-agent] chat stream request presentationMode=%s messageLength=%s",
         body.presentationMode,
