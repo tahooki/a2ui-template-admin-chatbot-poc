@@ -88,7 +88,7 @@ def data_result_payload(
 
 
 def data_response_text(api_id: str) -> str:
-    return f"{equipment_api_title(api_id)} 데이터를 조회 중입니다. 데이터 조회 후 원하는 화면 형식을 선택할 수 있습니다."
+    return f"{equipment_api_title(api_id)} 데이터 조회를 완료했습니다."
 
 
 def deterministic_data_text_response(tool_result: BusinessToolResult, sample_data_preview: dict[str, Any]) -> str:

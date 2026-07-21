@@ -35,6 +35,8 @@ class OrchestrateDataResultTest(unittest.IsolatedAsyncioTestCase):
             chunks = [chunk async for chunk in stream_chat_turn("장비 상태 보여줘")]
 
         self.assertEqual(result["mode"], "data_result")
+        self.assertEqual(result["text"], "장비 상태 API 데이터 조회를 완료했습니다.")
+        self.assertNotIn("화면 형식", result["text"])
         self.assertEqual(result["data_result"]["data"], business_result.data)
         events = [parse_sse_chunk(chunk) for chunk in chunks]
         event_names = [event for event, _data in events]
@@ -84,6 +86,8 @@ class OrchestrateDataResultTest(unittest.IsolatedAsyncioTestCase):
         event_names = [event for event, _data in events]
         self.assertIn("text", event_names)
         self.assertNotIn("data_result", event_names)
+        text_response = "".join(data.get("text", "") for event, data in events if event in {"text", "delta"})
+        self.assertNotIn("화면 형식", text_response)
         self.assertEqual(next(data for event, data in events if event == "done")["presentationMode"], "text")
         preview_text = json.dumps(captured["sample_data_preview"], ensure_ascii=False)
         self.assertIn("[masked]", preview_text)
