@@ -44,43 +44,43 @@ const introMessage: ChatMessage = {
 const quickPrompts = [
   {
     label: "목록",
-    prompt: "work-items API를 목록으로 보여줘",
+    prompt: "작업 항목 API를 목록으로 보여줘",
   },
   {
     label: "카드 그리드",
-    prompt: "resources API를 카드로 보여줘",
+    prompt: "리소스 API를 카드로 보여줘",
   },
   {
     label: "상세",
-    prompt: "resources API를 상세로 보여줘",
+    prompt: "리소스 API를 상세로 보여줘",
   },
   {
     label: "데이터 테이블",
-    prompt: "work-items API를 테이블로 보여줘",
+    prompt: "작업 항목 API를 테이블로 보여줘",
   },
   {
     label: "상태 매트릭스",
-    prompt: "status-checks API를 상태표로 보여줘",
+    prompt: "상태 체크 API를 상태표로 보여줘",
   },
   {
     label: "지표 카드",
-    prompt: "summary API를 숫자 카드로 보여줘",
+    prompt: "지표 API를 숫자 카드로 보여줘",
   },
   {
     label: "진행률 목록",
-    prompt: "work-items API를 진행률로 보여줘",
+    prompt: "작업 항목 API를 진행률로 보여줘",
   },
   {
     label: "타임라인",
-    prompt: "work-items API를 일정 타임라인으로 보여줘",
+    prompt: "작업 항목 API를 일정 타임라인으로 보여줘",
   },
   {
     label: "처리 대기열",
-    prompt: "work-items API를 처리 큐처럼 보여줘",
+    prompt: "작업 항목 API를 처리 큐처럼 보여줘",
   },
   {
     label: "계층 트리",
-    prompt: "hierarchy API를 트리로 보여줘",
+    prompt: "계층 API를 트리로 보여줘",
   },
 ];
 

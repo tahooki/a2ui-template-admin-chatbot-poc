@@ -31,7 +31,7 @@ export function ChatPage() {
             <div><dt>02</dt><dd>응답 모드 적용</dd></div>
             <div><dt>03</dt><dd>텍스트 또는 Surface 응답</dd></div>
           </dl>
-          <p className={styles.hint}>예: “work-items API를 테이블로 보여줘”</p>
+          <p className={styles.hint}>예: “작업 항목 API를 테이블로 보여줘”</p>
         </section>
 
         <section className={styles.chatMount} aria-label="Chatbot workspace">

@@ -19,12 +19,12 @@ class IntentRoutingTest(unittest.IsolatedAsyncioTestCase):
             "장비 목록 보여줘": "equipment-catalog",
             "컬럼이 많은 장비 상태 목록 보여줘": "equipment-status-wide-columns",
             "데이터가 많은 장비 상태 목록 보여줘": "equipment-status-large-rows",
-            "work-items API를 진행률로 보여줘": "work-items",
-            "work-items API를 처리 큐처럼 보여줘": "work-items",
-            "resources API를 카드로 보여줘": "resources",
-            "status-checks API를 상태표로 보여줘": "status-checks",
-            "summary API를 숫자 카드로 보여줘": "summary",
-            "hierarchy API를 트리로 보여줘": "hierarchy",
+            "작업 항목 API를 진행률로 보여줘": "work-items",
+            "작업 항목 API를 처리 큐처럼 보여줘": "work-items",
+            "리소스 API를 카드로 보여줘": "resources",
+            "상태 체크 API를 상태표로 보여줘": "status-checks",
+            "지표 API를 숫자 카드로 보여줘": "summary",
+            "계층 API를 트리로 보여줘": "hierarchy",
         }
 
         for prompt, expected_api_id in cases.items():
