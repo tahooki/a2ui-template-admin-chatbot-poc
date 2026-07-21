@@ -80,8 +80,14 @@ async def health() -> dict[str, Any]:
 
 @app.post("/chat")
 async def chat(body: ChatRequest) -> dict[str, Any]:
+    message = _message(body)
+    logger.info(
+        "[main-agent] chat request presentationMode=%s messageLength=%s",
+        body.presentationMode,
+        len(message),
+    )
     try:
-        return await run_chat_turn(_message(body), body.history, presentation_mode=body.presentationMode)
+        return await run_chat_turn(message, body.history, presentation_mode=body.presentationMode)
     except AgentRuntimeError as exc:
         logger.exception("[main-agent] chat request failed detail=%s", exc)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -89,8 +95,14 @@ async def chat(body: ChatRequest) -> dict[str, Any]:
 
 @app.post("/chat/stream")
 async def chat_stream(body: ChatRequest) -> StreamingResponse:
+    message = _message(body)
+    logger.info(
+        "[main-agent] chat stream request presentationMode=%s messageLength=%s",
+        body.presentationMode,
+        len(message),
+    )
     return StreamingResponse(
-        stream_chat_turn(_message(body), body.history, presentation_mode=body.presentationMode),
+        stream_chat_turn(message, body.history, presentation_mode=body.presentationMode),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )

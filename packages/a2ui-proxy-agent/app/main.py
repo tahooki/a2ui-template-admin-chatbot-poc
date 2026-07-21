@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -7,6 +8,9 @@ from fastapi.responses import StreamingResponse
 from .config import settings
 from .contracts import ChatRequest, DisplaySelectionRequest
 from .orchestrate import stream_chat_turn, stream_display_selection
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 app = FastAPI(title="A2UI Proxy Agent", version="0.1.0")
@@ -43,6 +47,11 @@ async def chat_stream(body: ChatRequest) -> StreamingResponse:
     message = body.normalized_message()
     if not message:
         raise HTTPException(status_code=400, detail="message is required")
+    logger.info(
+        "[a2ui-proxy-agent] chat request presentationMode=%s messageLength=%s",
+        body.presentation_mode,
+        len(message),
+    )
     return stream_response(stream_chat_turn(message, body.history, presentation_mode=body.presentation_mode))
 
 
