@@ -396,6 +396,52 @@ async def generate_general_response_with_llm(
     )
 
 
+async def generate_equipment_text_response_with_llm(
+    *,
+    message: str,
+    api_id: EquipmentApiId,
+    sample_data_preview: dict[str, Any],
+    profile: dict[str, Any],
+) -> str:
+    preview_data = sample_data_preview.get("data")
+    bounded_data = preview_data if isinstance(preview_data, dict) else {}
+    rows, detected_total = _fallback_rows_and_total(bounded_data)
+    total_rows = sample_data_preview.get("rowCount")
+    if not isinstance(total_rows, int):
+        total_rows = detected_total
+    sample_rows = _compact_fallback_rows(rows)
+    compact_profile = _compact_fallback_profile(profile)
+
+    return await _chat_completion(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You are a Korean equipment chat agent. Answer from bounded, masked metadata and sample rows only. "
+                    "Do not mention UI rendering, A2UI, templates, or internal modes. Do not invent counts, statuses, "
+                    "URLs, or fields. Keep the answer useful even when only a sample is available."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"User request: {message}\n"
+                    f"Selected API: {api_id}\n"
+                    f"Total rows: {total_rows}\n"
+                    f"Preview sample size: {sample_data_preview.get('sampleSize', len(rows))}\n"
+                    f"Profile summary: {_compact_json(compact_profile, 1400)}\n"
+                    f"Masked sample rows: {_compact_json(sample_rows, 1800)}\n"
+                    "Write a direct Korean chat answer in 2-4 short bullet points, 420 Korean characters or fewer. "
+                    "Mention the total once. When the preview is smaller than the total, say the details are sample-based."
+                ),
+            },
+        ],
+        stage="equipment_text_response",
+        temperature=0.2,
+        max_tokens=420,
+    )
+
+
 def _value_at_path(data: Any, path: tuple[str, ...]) -> Any:
     current = data
     for key in path:

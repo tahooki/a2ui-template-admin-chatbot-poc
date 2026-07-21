@@ -4,6 +4,8 @@
 
 이 문서는 현재 프로젝트에서 검증한 A2UI 화면 선택 UI와 Renderer를 다른 React 챗봇 코드에 옮기는 방법을 설명한다.
 
+A2UI 응답을 켜고 끄는 사용자 토글까지 함께 이식할 때는 `20260721_external-chatbot-a2ui-text-toggle-guide.md`의 요청 계약과 서버 분기를 추가로 적용한다.
+
 이번 이식에서는 다음 서비스는 현재 실행 환경의 것을 그대로 사용한다.
 
 - Main Agent

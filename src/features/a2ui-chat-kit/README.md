@@ -185,4 +185,20 @@ export async function POST(request: Request) {
 5. 선택 만료와 Proxy 오류가 기존 오류 UI에 표시되는지 확인
 6. 브라우저 Network에서 `data_result`가 노출되지 않는지 확인
 
+## 10. A2UI / 텍스트 응답 토글
+
+Kit은 `A2UIPresentationMode` 타입을 제공한다. 채팅 요청에 `presentationMode: "a2ui" | "text"`를 포함한다.
+
+```tsx
+const [presentationMode, setPresentationMode] = useState<A2UIPresentationMode>("a2ui");
+
+await fetch("/api/chat", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ message, history, presentationMode }),
+});
+```
+
+`text` 모드는 프론트에서 Surface만 숨기는 기능이 아니다. Proxy와 Main Agent가 해당 값을 받아 A2UI Agent 호출을 생략하고 조회 결과를 텍스트로 반환해야 한다. 전체 서버 계약과 외부 챗봇 적용 순서는 `../../../docs/20260721_external-chatbot-a2ui-text-toggle-guide.md`를 참고한다.
+
 현재 POC에서 Kit 사용 예시는 `../a2ui-chat/chatbot-panel.tsx`, BFF 사용 예시는 `../../app/api/chat/route.ts`와 `../../app/api/chat/display-selection/route.ts`를 참고한다.

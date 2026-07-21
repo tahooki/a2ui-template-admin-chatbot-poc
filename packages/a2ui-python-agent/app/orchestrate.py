@@ -1,17 +1,24 @@
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 from uuid import uuid4
 
-from .ai.llm_client import LLMClientError, generate_general_response_with_llm
+from .ai.llm_client import (
+    LLMClientError,
+    generate_equipment_text_response_with_llm,
+    generate_general_response_with_llm,
+)
 from .business_tools import BusinessToolResult, run_business_tool
-from .equipment_tools import equipment_api_title
+from .equipment_tools import build_data_profile, equipment_api_title
 from .intent_router import choose_api_by_regex
+from .schema import build_sample_data_preview
 from .tool_router import business_tool_for_api
 
 
 logger = logging.getLogger("uvicorn.error")
+
+PresentationMode = Literal["a2ui", "text"]
 
 
 class AgentRuntimeError(RuntimeError):
@@ -84,7 +91,39 @@ def data_response_text(api_id: str) -> str:
     return f"{equipment_api_title(api_id)} 데이터를 조회 중입니다. 데이터 조회 후 원하는 화면 형식을 선택할 수 있습니다."
 
 
-async def run_chat_turn(message: str, history: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def deterministic_data_text_response(tool_result: BusinessToolResult, sample_data_preview: dict[str, Any]) -> str:
+    row_count = sample_data_preview.get("rowCount")
+    if not isinstance(row_count, int):
+        row_count = tool_result.metadata.get("sourceRowCount", 0)
+    return f"{equipment_api_title(tool_result.api_id)} 조회를 완료했습니다. 총 {row_count}건을 확인했습니다."
+
+
+async def data_text_response(message: str, tool_result: BusinessToolResult) -> str:
+    profile = build_data_profile(tool_result.data)
+    sample_data_preview = build_sample_data_preview(tool_result.data, source_id=tool_result.api_id)
+    try:
+        text = await generate_equipment_text_response_with_llm(
+            message=message,
+            api_id=tool_result.api_id,
+            sample_data_preview=sample_data_preview,
+            profile=profile,
+        )
+    except LLMClientError as exc:
+        logger.warning(
+            "[main-agent] text response generation failed; using deterministic summary apiId=%s detail=%s",
+            tool_result.api_id,
+            exc,
+        )
+        return deterministic_data_text_response(tool_result, sample_data_preview)
+    return text or deterministic_data_text_response(tool_result, sample_data_preview)
+
+
+async def run_chat_turn(
+    message: str,
+    history: list[dict[str, Any]] | None = None,
+    *,
+    presentation_mode: PresentationMode = "a2ui",
+) -> dict[str, Any]:
     api_id, intent_source = await _choose_api(message, history)
     if not api_id:
         return {
@@ -96,6 +135,14 @@ async def run_chat_turn(message: str, history: list[dict[str, Any]] | None = Non
 
     business_tool_name = business_tool_for_api(api_id)
     business_tool_result = await run_business_tool(business_tool_name)
+    if presentation_mode == "text":
+        return {
+            "text": await data_text_response(message, business_tool_result),
+            "data_result": None,
+            "mode": "text",
+            "presentation_mode": "text",
+            "intent_source": intent_source,
+        }
     return {
         "text": data_response_text(api_id),
         "data_result": data_result_payload(
@@ -108,10 +155,21 @@ async def run_chat_turn(message: str, history: list[dict[str, Any]] | None = Non
     }
 
 
-async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = None) -> AsyncIterator[str]:
+async def stream_chat_turn(
+    message: str,
+    history: list[dict[str, Any]] | None = None,
+    *,
+    presentation_mode: PresentationMode = "a2ui",
+) -> AsyncIterator[str]:
     turn_id = f"turn-{uuid4()}"
     try:
-        yield sse_event("state", trace_payload(turn_id, {"status": "planning", "label": "요청 해석"}))
+        yield sse_event(
+            "state",
+            trace_payload(
+                turn_id,
+                {"status": "planning", "label": "요청 해석", "presentationMode": presentation_mode},
+            ),
+        )
         api_id, intent_source = await _choose_api(message, history)
         yield sse_event(
             "state",
@@ -183,6 +241,46 @@ async def stream_chat_turn(message: str, history: list[dict[str, Any]] | None = 
                 "data",
             ),
         )
+
+        if presentation_mode == "text":
+            yield sse_event(
+                "state",
+                trace_payload(
+                    turn_id,
+                    {
+                        "status": "text_response_generation",
+                        "label": "조회 결과 텍스트 요약",
+                        "apiId": api_id,
+                        "presentationMode": "text",
+                    },
+                    "data",
+                ),
+            )
+            yield sse_event(
+                "text",
+                trace_payload(
+                    turn_id,
+                    {"text": await data_text_response(message, business_tool_result)},
+                    "data",
+                ),
+            )
+            yield sse_event(
+                "done",
+                trace_payload(
+                    turn_id,
+                    {
+                        "mode": "text",
+                        "branch": "data",
+                        "presentationMode": "text",
+                        "apiId": api_id,
+                        "sourceToolName": business_tool_result.tool_name,
+                        "sourceToolResultId": business_tool_result.metadata.get("sourceToolResultId"),
+                    },
+                    "data",
+                ),
+            )
+            return
+
         yield sse_event(
             "text",
             trace_payload(turn_id, {"text": data_response_text(api_id)}, "data"),

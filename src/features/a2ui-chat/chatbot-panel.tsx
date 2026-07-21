@@ -13,6 +13,7 @@ import {
 import type {
   A2UIChatSurface,
   A2UIDisplaySelectionState,
+  A2UIPresentationMode,
 } from "@/features/a2ui-chat-kit";
 import styles from "./chat-components.module.css";
 import type { ChatFlowDisplayTiming, ChatFlowSourceEvent } from "@/features/a2ui-core/agent-event-types";
@@ -37,7 +38,7 @@ type ChatMessage = {
 const introMessage: ChatMessage = {
   id: "intro",
   role: "assistant",
-  content: "보고 싶은 장비 데이터를 말하면 Agent가 API를 조회하고 등록된 A2UI로 정리합니다.",
+  content: "보고 싶은 장비 데이터를 말해 주세요. A2UI 응답을 켜면 화면으로, 끄면 텍스트로 정리합니다.",
 };
 
 const quickPrompts = [
@@ -121,6 +122,7 @@ export function ChatbotPanel({
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([introMessage]);
   const [isRunning, setIsRunning] = useState(false);
+  const [presentationMode, setPresentationMode] = useState<A2UIPresentationMode>("a2ui");
   const [selectingMessageId, setSelectingMessageId] = useState<string | null>(null);
   const resetKeyRef = useRef(resetKey);
   const messageListRef = useRef<HTMLDivElement | null>(null);
@@ -242,6 +244,7 @@ export function ChatbotPanel({
       const turnId = `turn-${assistantId}`;
       const assistantMessage: ChatMessage = { id: assistantId, role: "assistant", content: pendingText };
       const history = messages.map(({ role, content }) => ({ role, content }));
+      const requestPresentationMode = presentationMode;
       let hasText = false;
       let emittedError = false;
 
@@ -259,13 +262,13 @@ export function ChatbotPanel({
 
       setIsRunning(true);
       setMessages((current) => [...current, userMessage, assistantMessage]);
-      emitFlow("local", "request_start", { message: trimmed });
+      emitFlow("local", "request_start", { message: trimmed, presentationMode: requestPresentationMode });
 
       try {
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: trimmed, history }),
+          body: JSON.stringify({ message: trimmed, history, presentationMode: requestPresentationMode }),
         });
 
         if (!response.ok) {
@@ -304,6 +307,7 @@ export function ChatbotPanel({
           }
 
           if (event === "surface") {
+            if (requestPresentationMode !== "a2ui") return;
             const surface = surfaceFromA2UIEnvelope(data);
             if (!surface) return;
             scheduleSurfaceDisplay(
@@ -318,6 +322,7 @@ export function ChatbotPanel({
           }
 
           if (event === "display_options") {
+            if (requestPresentationMode !== "a2ui") return;
             const displaySelection = displaySelectionFromA2UIEvent(data);
             if (!displaySelection) return;
             setMessages((current) =>
@@ -369,7 +374,7 @@ export function ChatbotPanel({
         setIsRunning(false);
       }
     },
-    [clearSurfaceDisplayTimers, messages, onFlowEvent, registryVersion, scheduleSurfaceDisplay],
+    [clearSurfaceDisplayTimers, messages, onFlowEvent, presentationMode, registryVersion, scheduleSurfaceDisplay],
   );
 
   useEffect(() => {
@@ -420,6 +425,20 @@ export function ChatbotPanel({
         </div>
         <div className={styles.chatStatusStack}>
           <span className={styles.liveStatus}>{registryVersion > 0 ? `v${registryVersion}` : "Proxy live"}</span>
+          <label className={styles.presentationModeControl}>
+            <span className={styles.presentationModeLabel}>A2UI</span>
+            <span className={styles.presentationModeSwitch}>
+              <input
+                type="checkbox"
+                checked={presentationMode === "a2ui"}
+                disabled={isRunning}
+                onChange={(event) => setPresentationMode(event.target.checked ? "a2ui" : "text")}
+                aria-label="A2UI 응답 사용"
+              />
+              <span className={styles.presentationModeTrack} aria-hidden="true"><span /></span>
+            </span>
+            <span className={styles.presentationModeValue}>{presentationMode === "a2ui" ? "ON" : "OFF"}</span>
+          </label>
         </div>
       </div>
 

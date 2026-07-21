@@ -13,6 +13,7 @@ export type {
   A2UIDisplayOption,
   A2UIDisplaySelectionState,
   A2UIFieldMapping,
+  A2UIPresentationMode,
   A2UIRenderPlan,
   A2UISseEvent,
   A2UISurfaceEnvelope,

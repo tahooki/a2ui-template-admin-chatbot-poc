@@ -10,6 +10,7 @@ from .a2ui_agent_client import (
     completed_task_from_stream_event,
     extract_a2ui_result,
 )
+from .contracts import PresentationMode
 from .main_agent_client import MainAgentClient
 from .selection_store import SelectionStore, selection_store
 
@@ -165,6 +166,7 @@ async def stream_chat_turn(
     message: str,
     history: list[dict[str, Any]] | None = None,
     *,
+    presentation_mode: PresentationMode = "a2ui",
     main_agent_client: MainAgentClient | None = None,
     a2ui_agent_client: A2UIAgentClient | None = None,
     store: SelectionStore = selection_store,
@@ -179,12 +181,20 @@ async def stream_chat_turn(
         yield sse_event(
             "state",
             proxy_payload(
-                {"status": "proxy_main_agent_call", "label": "Main Agent 호출"},
+                {
+                    "status": "proxy_main_agent_call",
+                    "label": "Main Agent 호출",
+                    "presentationMode": presentation_mode,
+                },
                 turn_id=turn_id,
             ),
         )
 
-        async for event, data in main_client.stream_chat(message=message, history=history):
+        async for event, data in main_client.stream_chat(
+            message=message,
+            history=history,
+            presentation_mode=presentation_mode,
+        ):
             if event == "data_result":
                 data_result = data
                 yield sse_event(
@@ -213,6 +223,29 @@ async def stream_chat_turn(
                 continue
             if event in {"state", "text", "delta", "error"}:
                 yield sse_event(event, data)
+
+        if presentation_mode == "text":
+            if isinstance(main_done, dict) and main_done.get("mode") == "error":
+                yield sse_event("done", main_done)
+                return
+            branch = (
+                main_done.get("branch")
+                if isinstance(main_done, dict) and isinstance(main_done.get("branch"), str)
+                else "data" if data_result else "general"
+            )
+            yield sse_event(
+                "done",
+                proxy_payload(
+                    {
+                        "mode": "text",
+                        "branch": branch,
+                        "presentationMode": "text",
+                    },
+                    turn_id=turn_id,
+                    branch=branch,
+                ),
+            )
+            return
 
         if not data_result:
             yield sse_event(

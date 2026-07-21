@@ -168,12 +168,94 @@
 
 .chatStatusStack {
   display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 7px;
   justify-content: flex-end;
 }
 
 .liveStatus {
   background: var(--a2ui-teal-soft);
   color: var(--a2ui-teal);
+}
+
+.presentationModeControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--a2ui-ink);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+  user-select: none;
+}
+
+.presentationModeLabel {
+  letter-spacing: 0.04em;
+}
+
+.presentationModeSwitch {
+  position: relative;
+  display: inline-flex;
+}
+
+.presentationModeSwitch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.presentationModeTrack {
+  width: 34px;
+  height: 19px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--a2ui-line);
+  border-radius: 999px;
+  padding: 2px;
+  background: #d8dee7;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.presentationModeTrack > span {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
+  transform: translateX(0);
+  transition: transform 160ms ease;
+}
+
+.presentationModeSwitch input:checked + .presentationModeTrack {
+  border-color: var(--a2ui-teal);
+  background: var(--a2ui-teal);
+}
+
+.presentationModeSwitch input:checked + .presentationModeTrack > span {
+  transform: translateX(15px);
+}
+
+.presentationModeSwitch input:focus-visible + .presentationModeTrack {
+  outline: 2px solid var(--a2ui-teal);
+  outline-offset: 2px;
+}
+
+.presentationModeSwitch input:disabled + .presentationModeTrack {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.presentationModeValue {
+  min-width: 20px;
+  color: var(--a2ui-muted);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
 }
 
 .scenarioControls {

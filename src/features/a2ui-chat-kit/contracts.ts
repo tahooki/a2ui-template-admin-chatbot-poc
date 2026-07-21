@@ -5,6 +5,8 @@
  * whole a2ui-chat-kit directory can be copied into another React chatbot.
  */
 
+export type A2UIPresentationMode = "a2ui" | "text";
+
 export type A2UIFieldMapping = {
   title?: string;
   content?: string;

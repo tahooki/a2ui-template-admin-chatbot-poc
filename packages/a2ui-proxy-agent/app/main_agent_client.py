@@ -16,13 +16,14 @@ class MainAgentClient:
         *,
         message: str,
         history: list[dict[str, Any]] | None = None,
+        presentation_mode: str = "a2ui",
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         timeout = httpx.Timeout(settings.main_agent_timeout_seconds, connect=5)
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream(
                 "POST",
                 f"{self.server_url}/chat/stream",
-                json={"message": message, "history": history or []},
+                json={"message": message, "history": history or [], "presentationMode": presentation_mode},
                 headers={"Accept": "text/event-stream", "Content-Type": "application/json"},
             ) as response:
                 response.raise_for_status()

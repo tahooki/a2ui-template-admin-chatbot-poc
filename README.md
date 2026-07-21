@@ -124,6 +124,8 @@ state -> text -> data_result -> done
 
 `data_result` contains the raw business data and source integrity metadata. The Proxy Agent keeps that event server-side, sends the data to the A2UI Agent, and exposes only `display_options` to the browser. After the user chooses a template, the Proxy returns the selected `surface` event.
 
+Chat requests also accept `presentationMode: "a2ui" | "text"` and default to `a2ui`. In `text` mode the Main Agent returns a bounded, masked data summary and the Proxy does not call the A2UI Agent. See `docs/20260721_external-chatbot-a2ui-text-toggle-guide.md` for the external chatbot integration steps.
+
 For local development the selection context is stored in Proxy Agent memory for five minutes. Restarting the Proxy invalidates pending choices.
 
 Check the Next app:

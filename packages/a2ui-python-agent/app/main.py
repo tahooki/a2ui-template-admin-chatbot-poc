@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +19,7 @@ class ChatRequest(BaseModel):
     message: str | None = None
     input: str | None = None
     history: list[dict[str, Any]] = Field(default_factory=list)
+    presentationMode: Literal["a2ui", "text"] = "a2ui"
 
 
 async def log_llm_startup_check() -> None:
@@ -80,7 +81,7 @@ async def health() -> dict[str, Any]:
 @app.post("/chat")
 async def chat(body: ChatRequest) -> dict[str, Any]:
     try:
-        return await run_chat_turn(_message(body), body.history)
+        return await run_chat_turn(_message(body), body.history, presentation_mode=body.presentationMode)
     except AgentRuntimeError as exc:
         logger.exception("[main-agent] chat request failed detail=%s", exc)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -89,7 +90,7 @@ async def chat(body: ChatRequest) -> dict[str, Any]:
 @app.post("/chat/stream")
 async def chat_stream(body: ChatRequest) -> StreamingResponse:
     return StreamingResponse(
-        stream_chat_turn(_message(body), body.history),
+        stream_chat_turn(_message(body), body.history, presentation_mode=body.presentationMode),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )

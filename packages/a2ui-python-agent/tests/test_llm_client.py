@@ -75,6 +75,46 @@ class LLMClientFallbackPromptTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["kwargs"]["max_tokens"], 360)
         self.assertIn("1,000건", text)
 
+    async def test_equipment_text_response_uses_masked_bounded_preview(self) -> None:
+        captured = {}
+
+        async def fake_chat_completion(messages, **kwargs):
+            captured["messages"] = messages
+            captured["kwargs"] = kwargs
+            return "- 장비 상태 1건을 확인했습니다."
+
+        with patch("app.ai.llm_client._chat_completion", fake_chat_completion):
+            text = await llm_client.generate_equipment_text_response_with_llm(
+                message="장비 상태 알려줘",
+                api_id="equipment-status",
+                sample_data_preview={
+                    "rowCount": 1,
+                    "sampleSize": 1,
+                    "data": {
+                        "items": [{"id": "eq-1", "name": "CNC-01", "secretToken": "[masked]"}],
+                        "total": 1,
+                    },
+                },
+                profile={
+                    "shape": "array<object>",
+                    "rowCount": 1,
+                    "booleanFieldCount": 0,
+                    "hasImageField": False,
+                    "fields": [
+                        {"key": "name", "type": "string", "roleCandidates": ["title"]},
+                        {"key": "secretToken", "type": "string", "roleCandidates": []},
+                    ],
+                },
+            )
+
+        prompt = captured["messages"][1]["content"]
+        self.assertIn("[masked]", prompt)
+        self.assertNotIn("raw-secret", prompt)
+        self.assertNotIn("A2UI", prompt)
+        self.assertEqual(captured["kwargs"]["stage"], "equipment_text_response")
+        self.assertEqual(captured["kwargs"]["max_tokens"], 420)
+        self.assertIn("1건", text)
+
 
 if __name__ == "__main__":
     unittest.main()

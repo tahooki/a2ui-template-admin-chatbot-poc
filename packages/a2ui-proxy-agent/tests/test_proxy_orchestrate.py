@@ -41,8 +41,10 @@ def completed_surface_task(surface: dict, candidates: list[dict] | None = None) 
 class FakeMainAgentClient:
     def __init__(self, with_data: bool = True) -> None:
         self.with_data = with_data
+        self.presentation_modes: list[str] = []
 
-    async def stream_chat(self, *, message, history=None):
+    async def stream_chat(self, *, message, history=None, presentation_mode="a2ui"):
+        self.presentation_modes.append(presentation_mode)
         yield "state", {"status": "intent", "label": "equipment-status"}
         yield "text", {"text": "장비 상태 데이터를 조회했습니다."}
         if self.with_data:
@@ -97,6 +99,12 @@ class FakeA2UIAgentClient:
         return completed_surface_task({"templateId": template_id, "payload": {"data": data}})
 
 
+class FakeFailingMainAgentClient:
+    async def stream_chat(self, *, message, history=None, presentation_mode="a2ui"):
+        yield "error", {"message": "Main Agent failed"}
+        yield "done", {"mode": "error", "branch": "error"}
+
+
 class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
     async def test_proxy_keeps_data_result_server_side_and_returns_display_options(self) -> None:
         store = SelectionStore(ttl_seconds=30)
@@ -141,6 +149,49 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
         events = [parse_sse_chunk(chunk) for chunk in chunks]
         self.assertNotIn("display_options", [event for event, _data in events])
         self.assertEqual(a2ui.recommendation_calls, 0)
+
+    async def test_text_mode_never_calls_a2ui_for_data_request(self) -> None:
+        store = SelectionStore(ttl_seconds=30)
+        main_agent = FakeMainAgentClient()
+        a2ui = FakeA2UIAgentClient()
+        chunks = [
+            chunk
+            async for chunk in stream_chat_turn(
+                "장비 상태 보여줘",
+                presentation_mode="text",
+                main_agent_client=main_agent,
+                a2ui_agent_client=a2ui,
+                store=store,
+            )
+        ]
+        events = [parse_sse_chunk(chunk) for chunk in chunks]
+        event_names = [event for event, _data in events]
+
+        self.assertIn("text", event_names)
+        self.assertNotIn("data_result", event_names)
+        self.assertNotIn("display_options", event_names)
+        self.assertNotIn("surface", event_names)
+        self.assertEqual(a2ui.recommendation_calls, 0)
+        self.assertEqual(main_agent.presentation_modes, ["text"])
+        done = next(data for event, data in events if event == "done")
+        self.assertEqual(done["mode"], "text")
+        self.assertEqual(done["presentationMode"], "text")
+
+    async def test_text_mode_preserves_main_agent_error_completion(self) -> None:
+        chunks = [
+            chunk
+            async for chunk in stream_chat_turn(
+                "장비 상태 보여줘",
+                presentation_mode="text",
+                main_agent_client=FakeFailingMainAgentClient(),
+                a2ui_agent_client=FakeA2UIAgentClient(),
+            )
+        ]
+        events = [parse_sse_chunk(chunk) for chunk in chunks]
+        done = next(data for event, data in events if event == "done")
+
+        self.assertEqual(done["mode"], "error")
+        self.assertEqual(done["branch"], "error")
 
     async def test_prepared_recommended_surface_is_returned_after_selection(self) -> None:
         store = SelectionStore(ttl_seconds=30)

@@ -60,7 +60,25 @@ async function main() {
   expect(surface?.templateId === selected.templateId, "selected Surface must match the chosen template");
   expect(selectionEvents.some((item) => item.event === "done" && item.data.mode === "render_surface"), "selection stream must complete with render_surface");
 
-  console.log(`[ok] Proxy kept data_result server-side and rendered selected template=${selected.templateId}`);
+  const textEvents = await readSse(await fetch(`${baseUrl}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message: "work-items API 데이터를 요약해줘",
+      presentationMode: "text",
+    }),
+  }));
+  const textEventNames = textEvents.map((item) => item.event);
+  expect(textEventNames.includes("text"), "text mode must include text");
+  expect(!textEventNames.includes("data_result"), "text mode must not expose data_result");
+  expect(!textEventNames.includes("display_options"), "text mode must not include display_options");
+  expect(!textEventNames.includes("surface"), "text mode must not include a Surface");
+  expect(
+    textEvents.some((item) => item.event === "done" && item.data.mode === "text"),
+    "text mode must complete without A2UI",
+  );
+
+  console.log(`[ok] Proxy rendered template=${selected.templateId} and kept text mode free of A2UI events`);
 }
 
 main().catch((error) => {

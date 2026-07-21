@@ -43,7 +43,7 @@ async def chat_stream(body: ChatRequest) -> StreamingResponse:
     message = body.normalized_message()
     if not message:
         raise HTTPException(status_code=400, detail="message is required")
-    return stream_response(stream_chat_turn(message, body.history))
+    return stream_response(stream_chat_turn(message, body.history, presentation_mode=body.presentation_mode))
 
 
 @app.post("/display-selection/stream")

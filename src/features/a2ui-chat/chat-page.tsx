@@ -21,15 +21,15 @@ export function ChatPage() {
           <div className={styles.contextIndex}>01 / CONVERSATION</div>
           <div>
             <p className={styles.eyebrow}>Data to interface</p>
-            <h1>질문하고,<br />보는 방식을 선택하세요.</h1>
+            <h1>질문하고,<br />답변 방식을 고르세요.</h1>
             <p className={styles.description}>
-              Proxy Agent가 Main Agent의 조회 데이터와 메타데이터를 받아 최대 세 가지 A2UI 표시 방식을 제안합니다.
+              A2UI 응답을 켜면 화면 형식을 제안하고, 끄면 조회 결과를 텍스트로 요약합니다.
             </p>
           </div>
           <dl className={styles.flowList}>
             <div><dt>01</dt><dd>질문 및 데이터 조회</dd></div>
-            <div><dt>02</dt><dd>표시 방식 추천</dd></div>
-            <div><dt>03</dt><dd>선택한 Surface 생성</dd></div>
+            <div><dt>02</dt><dd>응답 모드 적용</dd></div>
+            <div><dt>03</dt><dd>텍스트 또는 Surface 응답</dd></div>
           </dl>
           <p className={styles.hint}>예: “work-items API를 테이블로 보여줘”</p>
         </section>
