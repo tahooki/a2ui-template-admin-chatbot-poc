@@ -1,7 +1,7 @@
 # A2UI Proxy Agent 고정 3종 템플릿 직접 생성 수정 계획
 
 작성일: 2026-07-22
-상태: 구현 완료
+상태: Proxy 구현 완료 / 서버 배포 구성 계획 수립
 
 ## 1. 목표
 
@@ -162,7 +162,107 @@ npm run build
 - production build에서 `/admin`, `/api/admin/*`, `/api/a2a/*`, `/lab/agent-flow` route 유지 확인
 - 실행 중 `/api/admin/templates`가 기존 템플릿 카탈로그를 정상 반환하는지 확인
 
-## 8. 완료 조건
+## 8. 서버 배포 구성 계획
+
+### 8.1 현재 상태와 배포 목표
+
+현재 Proxy 폴더는 Python 3.10 이상이 설치된 환경에서 `python3 run.py`만 실행하면 전용 `.venv` 생성, `requirements.txt` 설치, Uvicorn 실행까지 자동 처리한다. 이 방식은 로컬 개발과 일반 VM에서 바로 실행하기 위한 구성이다.
+
+실제 서버에 배포할 때는 Proxy를 독립 Docker 서비스로 패키징한다. Python과 모든 모듈을 이미지 빌드 시점에 포함하여, 배포 서버에서 별도로 가상환경을 만들거나 `pip install`을 실행하지 않도록 한다.
+
+```text
+Chatbot API
+→ A2UI Proxy 컨테이너:8200
+→ MAIN_AGENT_URL
+→ Main Agent 서버
+```
+
+Proxy 배포 서버에는 Redis, MCP 서버, 템플릿 Admin, A2A 서버가 필요하지 않다. 단, `MAIN_AGENT_URL`로 지정한 Main Agent의 `POST /chat/stream` SSE endpoint에 네트워크로 접근할 수 있어야 한다.
+
+### 8.2 추가할 배포 파일
+
+후속 서버 배포 작업에서는 Proxy 패키지 안에 다음 파일을 추가한다.
+
+```text
+packages/a2ui-proxy-agent/
+├─ Dockerfile       # Python runtime과 requirements를 포함한 실행 이미지
+└─ .dockerignore    # .venv, cache, test 산출물을 이미지에서 제외
+```
+
+Docker 이미지는 다음 원칙으로 구성한다.
+
+1. Python 3.12 slim 이미지를 기반으로 한다.
+2. `requirements.txt`를 먼저 복사하고 이미지 빌드 중 의존성을 설치한다.
+3. Proxy 소스만 이미지에 복사한다.
+4. 컨테이너에서는 `python run.py --no-install`로 실행한다.
+5. `0.0.0.0`과 배포 환경이 주입한 `PORT`에 bind한다.
+6. `/health`를 load balancer와 container health check에 사용한다.
+
+예상 Dockerfile은 다음과 같다.
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV A2UI_PROXY_HOST=0.0.0.0
+ENV A2UI_PROXY_PORT=8200
+
+EXPOSE 8200
+
+CMD ["python", "run.py", "--no-install"]
+```
+
+### 8.3 배포 환경 변수
+
+| 환경 변수 | 필수 여부 | 기본값 | 설명 |
+| --- | --- | --- | --- |
+| `MAIN_AGENT_URL` | 배포 시 필수 | `http://localhost:8000` | Main Agent base URL |
+| `PORT` | 플랫폼에 따라 필요 | `8200` | Proxy 공개 포트 |
+| `A2UI_PROXY_HOST` | 선택 | `0.0.0.0` | Proxy bind host |
+| `MAIN_AGENT_TIMEOUT_SECONDS` | 선택 | `45` | Main Agent 응답 timeout |
+| `A2UI_SELECTION_TTL_SECONDS` | 선택 | `300` | 메모리 선택 컨텍스트 유지 시간 |
+
+민감한 값이 생기더라도 Docker 이미지나 `.env.local`을 이미지에 포함하지 않고, 배포 플랫폼의 환경 변수 또는 secret 기능으로 주입한다.
+
+### 8.4 Redis 없는 운영 제약
+
+`SelectionStore`는 Proxy 프로세스 메모리를 사용한다. 따라서 Redis 없이 운영하는 첫 배포는 다음 조건을 따른다.
+
+- Proxy replica를 1개로 운영한다.
+- Proxy 재시작 시 진행 중인 선택 컨텍스트가 사라지는 것을 허용한다.
+- 여러 worker process를 사용하지 않는다.
+- 다중 replica가 꼭 필요하면 load balancer sticky session을 적용하거나, 이후 별도 공유 저장소를 도입한다.
+
+단일 replica에서는 현재 구조 그대로 Redis 없이 동작한다. 다중 replica에 일반 round-robin을 사용하면 표시 방식 선택 요청이 다른 프로세스로 전달되어 `selectionId`를 찾지 못할 수 있다.
+
+### 8.5 배포 절차와 검증
+
+```bash
+docker build -t a2ui-proxy-agent packages/a2ui-proxy-agent
+docker run --rm \
+  -p 8200:8200 \
+  -e MAIN_AGENT_URL=http://main-agent:8000 \
+  a2ui-proxy-agent
+curl http://localhost:8200/health
+```
+
+서버 배포 완료 조건은 다음과 같다.
+
+- [ ] `Dockerfile`과 `.dockerignore` 추가
+- [ ] 이미지 빌드 중 requirements 설치 확인
+- [ ] 컨테이너 시작 시 runtime `pip install`이 실행되지 않는지 확인
+- [ ] `/health` container 및 load balancer health check 연결
+- [ ] 배포 환경의 `MAIN_AGENT_URL`로 Main Agent SSE 연결 확인
+- [ ] 단일 replica에서 표시 방식 선택과 Surface 생성 E2E 확인
+- [ ] 재시작 시 진행 중 선택이 만료될 수 있음을 운영 문서에 명시
+
+## 9. 완료 조건
 
 - 변경 파일이 문서와 `packages/a2ui-proxy-agent` 아래에만 존재한다.
 - Proxy가 Main Agent 외의 Agent, MCP, Admin API를 호출하지 않는다.
