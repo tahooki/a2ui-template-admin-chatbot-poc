@@ -12,10 +12,20 @@ class SelectionStoreTest(unittest.TestCase):
             data={"items": []},
             metadata={},
             allowed_template_ids=["matrix.table"],
-            prepared_surface=None,
         )
         self.assertEqual(store.get(context.selection_id), context)
         store.delete(context.selection_id)
+        self.assertIsNone(store.get(context.selection_id))
+
+    def test_expired_context_is_removed(self) -> None:
+        store = SelectionStore(ttl_seconds=-1)
+        context = store.put(
+            query="query",
+            api_id="equipment-status",
+            data={"items": [{"name": "장비 1"}]},
+            metadata={},
+            allowed_template_ids=["matrix.table"],
+        )
         self.assertIsNone(store.get(context.selection_id))
 
 

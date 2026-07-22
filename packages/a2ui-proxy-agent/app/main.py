@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from .config import settings
 from .contracts import ChatRequest, DisplaySelectionRequest
 from .orchestrate import stream_chat_turn, stream_display_selection
+from .static_templates import STATIC_TEMPLATE_IDS, STATIC_TEMPLATE_VERSION
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -37,8 +38,10 @@ async def health() -> dict[str, Any]:
         "ok": True,
         "name": "a2ui-proxy-agent",
         "mainAgentUrl": settings.main_agent_url,
-        "a2aUrl": settings.a2a_url,
         "selectionTtlSeconds": settings.selection_ttl_seconds,
+        "templateMode": "static",
+        "templateVersion": STATIC_TEMPLATE_VERSION,
+        "templateIds": STATIC_TEMPLATE_IDS,
     }
 
 

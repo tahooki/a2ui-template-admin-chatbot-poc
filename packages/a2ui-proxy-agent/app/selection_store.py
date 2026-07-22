@@ -14,13 +14,12 @@ class SelectionContext:
     data: Any
     metadata: dict[str, Any]
     allowed_template_ids: tuple[str, ...]
-    prepared_surface: dict[str, Any] | None
     expires_at: float
 
 
 class SelectionStore:
     def __init__(self, ttl_seconds: float | None = None) -> None:
-        self.ttl_seconds = ttl_seconds or settings.selection_ttl_seconds
+        self.ttl_seconds = settings.selection_ttl_seconds if ttl_seconds is None else ttl_seconds
         self._items: dict[str, SelectionContext] = {}
 
     def put(
@@ -31,7 +30,6 @@ class SelectionStore:
         data: Any,
         metadata: dict[str, Any],
         allowed_template_ids: list[str],
-        prepared_surface: dict[str, Any] | None,
     ) -> SelectionContext:
         self._delete_expired()
         selection_id = f"selection-{uuid4()}"
@@ -42,7 +40,6 @@ class SelectionStore:
             data=data,
             metadata=metadata,
             allowed_template_ids=tuple(allowed_template_ids),
-            prepared_surface=prepared_surface,
             expires_at=monotonic() + self.ttl_seconds,
         )
         self._items[selection_id] = context

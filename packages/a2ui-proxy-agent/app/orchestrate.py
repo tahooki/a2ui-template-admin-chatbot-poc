@@ -5,52 +5,13 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from .a2ui_agent_client import (
-    A2UIAgentClient,
-    completed_task_from_stream_event,
-    extract_a2ui_result,
-)
 from .contracts import PresentationMode
 from .main_agent_client import MainAgentClient
 from .selection_store import SelectionStore, selection_store
+from .surface_builder import SurfaceBuildError, build_surface, display_options
 
 
 logger = logging.getLogger("uvicorn.error")
-
-TEMPLATE_LABELS = {
-    "collection.list": "목록",
-    "collection.cardGrid": "카드 그리드",
-    "record.detail": "상세",
-    "matrix.table": "데이터 테이블",
-    "matrix.statusMatrix": "상태 매트릭스",
-    "metric.statCards": "지표 카드",
-    "metric.progressList": "진행률 목록",
-    "time.timeline": "타임라인",
-    "process.queue": "처리 대기열",
-    "relation.tree": "계층 트리",
-}
-
-SAFE_A2UI_PROGRESS_KEYS = {
-    "mode",
-    "templateId",
-    "strategy",
-    "score",
-    "candidateCount",
-    "fieldMappingCount",
-    "slotMappingCount",
-    "renderRowCount",
-    "rowCount",
-    "previewRowCount",
-    "previewSampleSize",
-    "sourceShape",
-    "sourceArrayPath",
-    "sourceFieldCount",
-    "registryVersion",
-    "templateCount",
-    "validation",
-    "diagnostic",
-}
-
 
 def sse_event(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -68,112 +29,16 @@ def proxy_payload(data: dict[str, Any], *, turn_id: str, branch: str | None = No
     return payload
 
 
-def _rows_from_data(data: Any) -> list[dict[str, Any]]:
-    if isinstance(data, list):
-        return [item for item in data if isinstance(item, dict)]
-    if not isinstance(data, dict):
-        return []
-    for key in ("items", "rows", "list"):
-        value = data.get(key)
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
-    for parent_key in ("result", "data", "payload"):
-        parent = data.get(parent_key)
-        if not isinstance(parent, dict):
-            continue
-        rows = _rows_from_data(parent)
-        if rows:
-            return rows
-    return [data]
-
-
-def _is_template_compatible(template_id: str, data: Any) -> bool:
-    rows = _rows_from_data(data)
-    if not rows:
-        return False
-    keys = {key.lower() for row in rows[:5] for key in row}
-    numeric_keys = {
-        key.lower()
-        for row in rows[:5]
-        for key, value in row.items()
-        if isinstance(value, (int, float)) and not isinstance(value, bool)
-    }
-    has_title = bool(keys & {"title", "name", "label", "displayname", "eqp_nm"})
-    has_status = bool(keys & {"status", "state", "isrunning", "isonline", "hasalarm", "operation_yn", "running_code"})
-
-    if template_id == "record.detail":
-        return len(rows) == 1 and has_title
-    if template_id in {"collection.list", "collection.cardGrid"}:
-        return has_title
-    if template_id == "matrix.table":
-        return len(keys) >= 2
-    if template_id == "matrix.statusMatrix":
-        return has_title and has_status
-    if template_id == "metric.statCards":
-        return bool(numeric_keys)
-    if template_id == "metric.progressList":
-        return has_title and bool(numeric_keys & {"progress", "percent", "percentage", "completion"})
-    if template_id == "time.timeline":
-        return has_title and bool(keys & {"startat", "endat", "dueat", "updatedat", "timestamp", "time"})
-    if template_id == "process.queue":
-        return has_title and has_status
-    if template_id == "relation.tree":
-        return has_title and bool(keys & {"parentid", "children", "parent_id"})
-    return True
-
-
-def _template_options(result: dict[str, Any], data: Any, max_candidates: int = 3) -> list[dict[str, Any]]:
-    selected_template_id = result.get("templateId")
-    raw_candidates = result.get("candidates") if isinstance(result.get("candidates"), list) else []
-    by_id: dict[str, dict[str, Any]] = {}
-
-    if isinstance(selected_template_id, str) and selected_template_id:
-        by_id[selected_template_id] = {
-            "templateId": selected_template_id,
-            "label": TEMPLATE_LABELS.get(selected_template_id, selected_template_id),
-            "score": result.get("score"),
-            "recommended": True,
-        }
-
-    sorted_candidates = sorted(
-        [item for item in raw_candidates if isinstance(item, dict)],
-        key=lambda item: float(item.get("score") or 0),
-        reverse=True,
-    )
-    for candidate in sorted_candidates:
-        template_id = candidate.get("templateId")
-        if not isinstance(template_id, str) or not template_id or template_id in by_id:
-            continue
-        if not _is_template_compatible(template_id, data):
-            continue
-        ai = candidate.get("ai") if isinstance(candidate.get("ai"), dict) else {}
-        missing_slots = ai.get("missingRequiredSlots") if isinstance(ai.get("missingRequiredSlots"), list) else []
-        if missing_slots:
-            continue
-        by_id[template_id] = {
-            "templateId": template_id,
-            "label": TEMPLATE_LABELS.get(template_id, template_id),
-            "score": candidate.get("score"),
-            "recommended": False,
-        }
-        if len(by_id) >= max_candidates:
-            break
-
-    return list(by_id.values())[:max_candidates]
-
-
 async def stream_chat_turn(
     message: str,
     history: list[dict[str, Any]] | None = None,
     *,
     presentation_mode: PresentationMode = "a2ui",
     main_agent_client: MainAgentClient | None = None,
-    a2ui_agent_client: A2UIAgentClient | None = None,
     store: SelectionStore = selection_store,
 ) -> AsyncIterator[str]:
     turn_id = f"proxy-turn-{uuid4()}"
     main_client = main_agent_client or MainAgentClient()
-    a2ui_client = a2ui_agent_client or A2UIAgentClient()
     data_result: dict[str, Any] | None = None
     main_done: dict[str, Any] | None = None
 
@@ -206,9 +71,6 @@ async def stream_chat_turn(
                             "apiId": data.get("apiId"),
                             "sourceToolName": data.get("sourceToolName"),
                             "sourceToolResultId": data.get("sourceToolResultId"),
-                            "sourceDataHash": (data.get("metadata") or {}).get("sourceDataHash")
-                            if isinstance(data.get("metadata"), dict)
-                            else None,
                             "sourceRowCount": (data.get("metadata") or {}).get("sourceRowCount")
                             if isinstance(data.get("metadata"), dict)
                             else None,
@@ -266,53 +128,20 @@ async def stream_chat_turn(
             "state",
             proxy_payload(
                 {
-                    "status": "proxy_a2ui_call",
-                    "label": "조회 데이터로 A2UI Agent 호출",
+                    "status": "proxy_template_options",
+                    "label": "고정 A2UI 표시 방식 준비",
                     "apiId": api_id,
                     "sourceToolResultId": data_result.get("sourceToolResultId"),
+                    "strategy": "proxy_static_templates",
                 },
                 turn_id=turn_id,
                 branch="data",
             ),
         )
 
-        completed_task: dict[str, Any] | None = None
-        async for a2a_event in a2ui_client.stream_recommendation(
-            query=query,
-            api_id=api_id,
-            data=raw_data,
-            metadata=metadata,
-        ):
-            progress = a2a_event.get("progressUpdate") if isinstance(a2a_event.get("progressUpdate"), dict) else None
-            if progress:
-                progress_data = progress.get("data") if isinstance(progress.get("data"), dict) else {}
-                safe_progress_data = {
-                    key: value for key, value in progress_data.items() if key in SAFE_A2UI_PROGRESS_KEYS
-                }
-                yield sse_event(
-                    "state",
-                    proxy_payload(
-                        {
-                            **safe_progress_data,
-                            "status": progress.get("status") or "a2ui_progress",
-                            "label": progress.get("label") or "A2UI 처리",
-                            "detail": progress.get("detail"),
-                            "physicalSource": "a2ui-agent",
-                            "a2aTaskId": progress.get("taskId"),
-                        },
-                        turn_id=turn_id,
-                        branch="data",
-                    ),
-                )
-            task = completed_task_from_stream_event(a2a_event)
-            if task:
-                completed_task = task
-
-        if not completed_task:
-            raise RuntimeError("A2UI Agent stream completed without a final task.")
-
-        result = extract_a2ui_result(completed_task)
-        if result.get("type") != "surface" or not isinstance(result.get("surface"), dict):
+        try:
+            options = display_options(query, raw_data)
+        except SurfaceBuildError as build_error:
             yield sse_event(
                 "state",
                 proxy_payload(
@@ -320,8 +149,9 @@ async def stream_chat_turn(
                         "status": "matcher",
                         "label": "적용 가능한 A2UI 템플릿 없음",
                         "mode": "text_fallback",
-                        "reason": result.get("reason"),
+                        "reason": str(build_error),
                         "candidateCount": 0,
+                        "strategy": "proxy_static_templates",
                     },
                     turn_id=turn_id,
                     branch="no_template",
@@ -330,23 +160,19 @@ async def stream_chat_turn(
             yield sse_event(
                 "done",
                 proxy_payload(
-                    {"mode": "text_fallback", "branch": "no_template", "reason": result.get("reason")},
+                    {"mode": "text_fallback", "branch": "no_template", "reason": str(build_error)},
                     turn_id=turn_id,
                     branch="no_template",
                 ),
             )
             return
 
-        options = _template_options(result, raw_data)
-        if not options:
-            raise RuntimeError("A2UI Agent returned a Surface without a selectable template.")
         context = store.put(
             query=query,
             api_id=api_id,
             data=raw_data,
             metadata=metadata,
             allowed_template_ids=[option["templateId"] for option in options],
-            prepared_surface=result["surface"],
         )
 
         yield sse_event(
@@ -356,11 +182,8 @@ async def stream_chat_turn(
                     "status": "matcher",
                     "label": "A2UI 표시 방식 후보 준비",
                     "mode": "display_options",
-                    "strategy": result.get("strategy"),
-                    "score": result.get("score"),
+                    "strategy": "proxy_static_templates",
                     "candidateCount": len(options),
-                    "candidates": result.get("candidates"),
-                    "dataIntegrity": result.get("dataIntegrity"),
                 },
                 turn_id=turn_id,
                 branch="matched",
@@ -415,11 +238,9 @@ async def stream_display_selection(
     selection_id: str,
     template_id: str,
     *,
-    a2ui_agent_client: A2UIAgentClient | None = None,
     store: SelectionStore = selection_store,
 ) -> AsyncIterator[str]:
     turn_id = f"proxy-selection-{uuid4()}"
-    client = a2ui_agent_client or A2UIAgentClient()
     try:
         context = store.get(selection_id)
         if not context:
@@ -441,24 +262,13 @@ async def stream_display_selection(
             ),
         )
 
-        prepared_template_id = context.prepared_surface.get("templateId") if context.prepared_surface else None
-        if prepared_template_id == template_id:
-            surface = context.prepared_surface
-        else:
-            payload = await client.render_selected(
-                query=context.query,
-                api_id=context.api_id,
-                data=context.data,
-                metadata=context.metadata,
-                template_id=template_id,
-            )
-            result = extract_a2ui_result(payload)
-            surface = result.get("surface") if result.get("type") == "surface" else None
-            if not isinstance(surface, dict) or surface.get("templateId") != template_id:
-                raise RuntimeError(result.get("reason") or "선택한 템플릿으로 Surface를 생성하지 못했습니다.")
-
-        if not isinstance(surface, dict):
-            raise RuntimeError("선택한 A2UI Surface가 없습니다.")
+        surface = build_surface(
+            query=context.query,
+            api_id=context.api_id,
+            data=context.data,
+            metadata=context.metadata,
+            template_id=template_id,
+        )
         store.delete(selection_id)
         yield sse_event(
             "surface",
@@ -482,7 +292,10 @@ async def stream_display_selection(
             ),
         )
     except Exception as exc:
-        logger.exception("[a2ui-proxy-agent] display selection failed turnId=%s detail=%s", turn_id, exc)
+        if isinstance(exc, (ValueError, SurfaceBuildError)):
+            logger.warning("[a2ui-proxy-agent] display selection rejected turnId=%s detail=%s", turn_id, exc)
+        else:
+            logger.exception("[a2ui-proxy-agent] display selection failed turnId=%s detail=%s", turn_id, exc)
         yield sse_event(
             "error",
             proxy_payload(

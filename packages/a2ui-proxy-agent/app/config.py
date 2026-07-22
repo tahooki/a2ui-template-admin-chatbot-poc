@@ -38,10 +38,7 @@ def _float_env(name: str, default: float) -> float:
 @dataclass(frozen=True)
 class Settings:
     main_agent_url: str = _env("MAIN_AGENT_URL", "http://localhost:8000")
-    a2a_url: str = _env("A2UI_A2A_URL", "http://localhost:3001/api/a2a")
-    a2a_token: str = _env("A2UI_A2A_TOKEN")
     main_agent_timeout_seconds: float = _float_env("MAIN_AGENT_TIMEOUT_SECONDS", 45)
-    a2a_timeout_seconds: float = _float_env("A2UI_A2A_TIMEOUT_SECONDS", 45)
     selection_ttl_seconds: float = _float_env("A2UI_SELECTION_TTL_SECONDS", 300)
 
 
