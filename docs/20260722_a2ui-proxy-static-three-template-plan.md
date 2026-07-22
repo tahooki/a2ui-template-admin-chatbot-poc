@@ -17,7 +17,7 @@ Main Agent는 기존처럼 업무 의도 판단과 데이터 조회만 담당한
 
 ## 2. 범위 원칙
 
-이번 작업은 `packages/a2ui-proxy-agent`만 수정한다.
+핵심 런타임 작업은 `packages/a2ui-proxy-agent`에 한정한다. 저장소의 Proxy 개발·테스트 명령이 동일한 standalone runtime을 사용하도록 Proxy 전용 root script만 함께 수정한다.
 
 다음 구성은 삭제하거나 수정하지 않는다.
 
@@ -27,7 +27,7 @@ Main Agent는 기존처럼 업무 의도 판단과 데이터 조회만 담당한
 - Agent Flow와 Data Boundary Lab
 - Main Agent의 기존 코드와 테스트
 - Chatbot UI, Renderer, 내비게이션, 기본 진입점
-- root README, `.env.example`, root 실행/E2E script
+- root README, root `.env.example`, Proxy 외 실행/E2E script
 
 Admin과 기존 10종 템플릿은 향후 다시 사용할 수 있도록 그대로 보존한다. 활성 Chatbot 요청에서 Proxy만 Admin/A2A 경로를 우회한다.
 
@@ -102,7 +102,9 @@ Proxy가 호출하는 Agent는 Main Agent 하나뿐이다. 템플릿 추천과 S
 
 ```text
 packages/a2ui-proxy-agent/
+├─ .env.example                 # 신규. 독립 서버 설정 예시
 ├─ README.md
+├─ run.py                       # 신규. venv/requirements 자동 준비 및 실행
 ├─ app/
 │  ├─ a2ui_agent_client.py       # 삭제
 │  ├─ config.py
@@ -113,8 +115,13 @@ packages/a2ui-proxy-agent/
 │  └─ surface_builder.py         # 신규
 └─ tests/
    ├─ test_proxy_orchestrate.py
+   ├─ test_run.py               # 신규. standalone runner 검증
    ├─ test_selection_store.py
    └─ test_surface_builder.py    # 신규
+
+scripts/
+├─ proxy-agent-dev.mjs          # standalone runner 호출로 변경
+└─ proxy-agent-test.mjs         # Proxy 전용 venv 준비 후 테스트
 ```
 
 ## 6. 완료 체크리스트
@@ -129,8 +136,11 @@ packages/a2ui-proxy-agent/
 - [x] 잘못되거나 만료된 선택 거부
 - [x] 텍스트 모드의 A2UI 우회 유지
 - [x] Proxy health에 static template mode와 3개 ID 표시
-- [x] Proxy 단위 테스트 22개 통과
+- [x] Proxy 단위 테스트 25개 통과
 - [x] Admin, A2A, Main Agent, Chatbot 코드는 원래 상태로 보존
+- [x] Proxy 폴더만 복사해 `python3 run.py`로 실행 가능
+- [x] Proxy 전용 `.venv` 생성과 requirements 설치 자동화
+- [x] Main Agent venv에 대한 Proxy 실행 의존성 제거
 
 ## 7. 검증 명령
 
@@ -145,7 +155,7 @@ npm run build
 
 검증 결과:
 
-- Proxy Agent 단위 테스트 22개 통과
+- Proxy Agent 단위 테스트 25개 통과
 - 기존 Main Agent 단위 테스트 42개 통과
 - lint와 production build 통과
 - 기존 `e2e:proxy-flow` 통과

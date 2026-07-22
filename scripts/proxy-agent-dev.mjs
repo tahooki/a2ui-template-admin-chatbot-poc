@@ -1,29 +1,36 @@
-import { existsSync } from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const root = process.cwd();
-const mainAgentDir = path.join(root, "packages", "a2ui-python-agent");
 const proxyAgentDir = path.join(root, "packages", "a2ui-proxy-agent");
-const venvPython = path.join(mainAgentDir, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+const runnerPath = path.join(proxyAgentDir, "run.py");
 
-if (!existsSync(venvPython)) {
-  console.error("[proxy-agent:dev] Python virtualenv is missing.");
-  console.error("[proxy-agent:dev] Run `npm run setup:agent` first.");
-  process.exit(1);
+function canRun(command, args) {
+  const result = spawnSync(command, args, { stdio: "ignore", shell: false });
+  return !result.error && result.status === 0;
 }
 
-const env = {
-  ...process.env,
-  PYTHONPATH: [proxyAgentDir, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
-};
+function findPython() {
+  if (process.env.PYTHON && canRun(process.env.PYTHON, ["--version"])) {
+    return { command: process.env.PYTHON, prefixArgs: [] };
+  }
+  if (process.platform === "win32" && canRun("py", ["-3", "--version"])) {
+    return { command: "py", prefixArgs: ["-3"] };
+  }
+  for (const command of ["python3", "python"]) {
+    if (canRun(command, ["--version"])) return { command, prefixArgs: [] };
+  }
+  throw new Error("Python 3 was not found. Install Python 3 or set PYTHON to its executable path.");
+}
+
+const python = findPython();
 
 const child = spawn(
-  venvPython,
-  ["-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", proxyAgentDir, "--port", "8200", "--app-dir", proxyAgentDir],
+  python.command,
+  [...python.prefixArgs, runnerPath, "--reload"],
   {
-    cwd: root,
-    env,
+    cwd: proxyAgentDir,
+    env: process.env,
     stdio: "inherit",
     shell: false,
   },
