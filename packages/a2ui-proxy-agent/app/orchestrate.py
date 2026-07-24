@@ -11,6 +11,7 @@ from .derived_schema import (
     build_derived_schema,
     build_sample_data_preview,
 )
+from .flow_logging import log_flow
 from .main_agent_client import MainAgentClient
 from .selection_store import SelectionStore, selection_store
 from .static_templates import STATIC_TEMPLATE_BY_ID
@@ -83,6 +84,20 @@ async def stream_chat_turn(
     main_done: dict[str, Any] | None = None
 
     try:
+        log_flow(
+            "01_before_main_agent_call",
+            turn_id=turn_id,
+            previous_result={
+                "message": message,
+                "history": history or [],
+                "presentationMode": presentation_mode,
+                "mainAgentUrl": getattr(
+                    main_client,
+                    "server_url",
+                    None,
+                ),
+            },
+        )
         yield sse_event(
             "state",
             proxy_payload(
@@ -100,6 +115,14 @@ async def stream_chat_turn(
             history=history,
             presentation_mode=presentation_mode,
         ):
+            log_flow(
+                "02_main_agent_event_received",
+                turn_id=turn_id,
+                result={
+                    "event": event,
+                    "data": data,
+                },
+            )
             if event == "data_result":
                 data_result = data
                 yield sse_event(
@@ -127,6 +150,15 @@ async def stream_chat_turn(
                 yield sse_event(event, data)
 
         if presentation_mode == "text":
+            log_flow(
+                "03_text_mode_completed",
+                turn_id=turn_id,
+                previous_result={
+                    "mainDone": main_done,
+                    "dataResultReceived": data_result
+                    is not None,
+                },
+            )
             if isinstance(main_done, dict) and main_done.get("mode") == "error":
                 yield sse_event("done", main_done)
                 return
@@ -150,6 +182,13 @@ async def stream_chat_turn(
             return
 
         if not data_result:
+            log_flow(
+                "03_no_data_result_completed",
+                turn_id=turn_id,
+                previous_result={
+                    "mainDone": main_done,
+                },
+            )
             yield sse_event(
                 "done",
                 main_done
@@ -164,6 +203,13 @@ async def stream_chat_turn(
         if not isinstance(api_id, str) or raw_data is None:
             raise RuntimeError("Main Agent data_result requires apiId and data.")
 
+        log_flow(
+            "03_before_schema_derivation",
+            turn_id=turn_id,
+            previous_result={
+                "dataResult": data_result,
+            },
+        )
         try:
             sample_data_preview = build_sample_data_preview(
                 raw_data,
@@ -182,6 +228,16 @@ async def stream_chat_turn(
                     "A2UI 화면으로 표시할 row 또는 field가 없습니다."
                 )
         except SurfaceBuildError as build_error:
+            log_flow(
+                "04_schema_derivation_failed",
+                turn_id=turn_id,
+                previous_result={
+                    "dataResult": data_result,
+                },
+                result={
+                    "error": str(build_error),
+                },
+            )
             yield sse_event(
                 "state",
                 proxy_payload(
@@ -207,6 +263,14 @@ async def stream_chat_turn(
             )
             return
 
+        log_flow(
+            "04_schema_derived",
+            turn_id=turn_id,
+            result={
+                "sampleDataPreview": sample_data_preview,
+                "derivedSchema": derived_schema,
+            },
+        )
         yield sse_event(
             "state",
             proxy_payload(
@@ -230,6 +294,19 @@ async def stream_chat_turn(
                 branch="data",
             ),
         )
+        log_flow(
+            "05_before_ai_template_selection",
+            turn_id=turn_id,
+            previous_result={
+                "query": query,
+                "apiId": api_id,
+                "sampleDataPreview": sample_data_preview,
+                "derivedSchema": derived_schema,
+                "templateIds": list(
+                    STATIC_TEMPLATE_BY_ID
+                ),
+            },
+        )
         yield sse_event(
             "state",
             proxy_payload(
@@ -252,6 +329,11 @@ async def stream_chat_turn(
             derived_schema=derived_schema,
             sample_data_preview=sample_data_preview,
         )
+        log_flow(
+            "06_ai_template_selection_completed",
+            turn_id=turn_id,
+            result=recommendation,
+        )
         options = _template_options(recommendation)
 
         context = store.put(
@@ -267,6 +349,17 @@ async def stream_chat_turn(
             },
         )
 
+        log_flow(
+            "07_display_options_ready",
+            turn_id=turn_id,
+            selection_id=context.selection_id,
+            previous_result={
+                "recommendation": recommendation,
+            },
+            result={
+                "options": options,
+            },
+        )
         yield sse_event(
             "state",
             proxy_payload(
@@ -311,6 +404,14 @@ async def stream_chat_turn(
             ),
         )
     except Exception as exc:
+        log_flow(
+            "99_chat_flow_failed",
+            turn_id=turn_id,
+            result={
+                "errorType": exc.__class__.__name__,
+                "details": str(exc),
+            },
+        )
         logger.exception("[a2ui-proxy-agent] chat stream failed turnId=%s detail=%s", turn_id, exc)
         yield sse_event(
             "error",
@@ -366,6 +467,19 @@ async def stream_display_selection(
                 "선택 정보에 AI 플래닝 컨텍스트가 없습니다. 데이터를 다시 조회해 주세요."
             )
 
+        log_flow(
+            "09_before_ai_slot_mapping",
+            turn_id=turn_id,
+            selection_id=selection_id,
+            previous_result={
+                "query": context.query,
+                "apiId": context.api_id,
+                "selectedTemplateId": template_id,
+                "recommendation": recommendation,
+                "sampleDataPreview": sample_data_preview,
+                "derivedSchema": derived_schema,
+            },
+        )
         yield sse_event(
             "state",
             proxy_payload(
@@ -401,6 +515,23 @@ async def stream_display_selection(
             derived_schema=derived_schema,
             sample_data_preview=sample_data_preview,
         )
+        log_flow(
+            "10_ai_slot_mapping_completed",
+            turn_id=turn_id,
+            selection_id=selection_id,
+            result=ai_mapping,
+        )
+        log_flow(
+            "11_before_surface_build",
+            turn_id=turn_id,
+            selection_id=selection_id,
+            previous_result={
+                "selectedTemplateId": template_id,
+                "aiRecommendation": recommendation,
+                "aiMapping": ai_mapping,
+                "sourceMetadata": context.metadata,
+            },
+        )
         surface = build_surface(
             query=context.query,
             api_id=context.api_id,
@@ -410,6 +541,12 @@ async def stream_display_selection(
             derived_schema=derived_schema,
             ai_recommendation=recommendation,
             ai_mapping=ai_mapping,
+        )
+        log_flow(
+            "12_surface_built",
+            turn_id=turn_id,
+            selection_id=selection_id,
+            result=surface,
         )
         store.delete(selection_id)
         yield sse_event(
@@ -434,6 +571,16 @@ async def stream_display_selection(
             ),
         )
     except Exception as exc:
+        log_flow(
+            "99_display_selection_flow_failed",
+            turn_id=turn_id,
+            selection_id=selection_id,
+            result={
+                "templateId": template_id,
+                "errorType": exc.__class__.__name__,
+                "details": str(exc),
+            },
+        )
         if isinstance(exc, (ValueError, SurfaceBuildError)):
             logger.warning("[a2ui-proxy-agent] display selection rejected turnId=%s detail=%s", turn_id, exc)
         else:

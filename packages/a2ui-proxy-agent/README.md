@@ -57,6 +57,7 @@ Available runtime settings:
 | `OPENAI_MODEL` | `gpt-4.1-mini` | Template selection and field-mapping model |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible API base URL |
 | `A2UI_AI_TIMEOUT_SECONDS` | `100` | Timeout for each AI planning call |
+| `A2UI_FLOW_LOG_MAX_CHARS` | `50000` | Maximum characters per structured flow log |
 | `A2UI_PROXY_HOST` | `0.0.0.0` | Proxy bind host |
 | `A2UI_PROXY_PORT` or `PORT` | `8200` | Proxy bind port |
 | `A2UI_PROXY_RELOAD` | unset | Enable development reload |
@@ -71,3 +72,29 @@ python3 run.py --no-install
 
 The repository-level `npm run proxy-agent:dev` command delegates to this same standalone runner with reload enabled.
 `npm run proxy-agent:test` also prepares and uses the Proxy-owned `.venv`; neither command depends on the Main Agent virtualenv.
+
+## Flow logs
+
+Every A2UI request writes ordered flow logs to the Proxy server output. Each line starts with `[a2ui-proxy-agent][flow]` and includes a `step`, `turnId` or `selectionId`, and either `previousResult` or `result`.
+
+```text
+00_proxy_request_received
+01_before_main_agent_call
+02_main_agent_event_received
+03_before_schema_derivation
+04_schema_derived
+05_before_ai_template_selection
+openai_structured_request_sent
+openai_structured_response_received
+06_ai_template_selection_completed
+07_display_options_ready
+08_display_selection_request_received
+09_before_ai_slot_mapping
+openai_structured_request_sent
+openai_structured_response_received
+10_ai_slot_mapping_completed
+11_before_surface_build
+12_surface_built
+```
+
+The incoming HTTP body is also logged as `rawRequestBody`. Flow values are JSON, sensitive key names such as token, password, authorization, email, phone, and API key are masked, and exceptionally large lines are marked with `<truncated ... chars>`.

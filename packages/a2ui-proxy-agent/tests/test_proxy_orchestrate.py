@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest.mock import patch
 
 from app.derived_schema import (
     build_derived_schema,
@@ -207,6 +208,88 @@ def planning_fixture(
 
 
 class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
+    async def test_logs_previous_and_result_for_each_ai_flow_step(
+        self,
+    ) -> None:
+        store = SelectionStore(ttl_seconds=30)
+        ai_planner = FakeAIPlanner()
+        with patch(
+            "app.orchestrate.log_flow"
+        ) as flow_log:
+            chunks = [
+                chunk
+                async for chunk in stream_chat_turn(
+                    "장비 목록을 보고 싶어",
+                    main_agent_client=FakeMainAgentClient(),
+                    ai_planner=ai_planner,
+                    store=store,
+                )
+            ]
+            events = [
+                parse_sse_chunk(chunk) for chunk in chunks
+            ]
+            options_event = next(
+                data
+                for event, data in events
+                if event == "display_options"
+            )
+            selection_chunks = [
+                chunk
+                async for chunk in stream_display_selection(
+                    options_event["selectionId"],
+                    "matrix.table",
+                    ai_planner=ai_planner,
+                    store=store,
+                )
+            ]
+            self.assertTrue(selection_chunks)
+
+        steps = [
+            call.args[0]
+            for call in flow_log.call_args_list
+        ]
+        self.assertEqual(
+            steps,
+            [
+                "01_before_main_agent_call",
+                "02_main_agent_event_received",
+                "02_main_agent_event_received",
+                "02_main_agent_event_received",
+                "02_main_agent_event_received",
+                "03_before_schema_derivation",
+                "04_schema_derived",
+                "05_before_ai_template_selection",
+                "06_ai_template_selection_completed",
+                "07_display_options_ready",
+                "09_before_ai_slot_mapping",
+                "10_ai_slot_mapping_completed",
+                "11_before_surface_build",
+                "12_surface_built",
+            ],
+        )
+        before_schema = next(
+            call
+            for call in flow_log.call_args_list
+            if call.args[0]
+            == "03_before_schema_derivation"
+        )
+        self.assertIn(
+            "dataResult",
+            before_schema.kwargs["previous_result"],
+        )
+        mapping_completed = next(
+            call
+            for call in flow_log.call_args_list
+            if call.args[0]
+            == "10_ai_slot_mapping_completed"
+        )
+        self.assertEqual(
+            mapping_completed.kwargs["result"][
+                "selectedTemplateId"
+            ],
+            "matrix.table",
+        )
+
     async def test_proxy_keeps_data_server_side_and_returns_ai_scored_options(self) -> None:
         store = SelectionStore(ttl_seconds=30)
         ai_planner = FakeAIPlanner()

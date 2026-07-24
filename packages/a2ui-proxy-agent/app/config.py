@@ -35,6 +35,13 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(_env(name, str(default)))
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class Settings:
     main_agent_url: str = _env("MAIN_AGENT_URL", "http://localhost:8000")
@@ -44,6 +51,7 @@ class Settings:
     openai_model: str = _env("OPENAI_MODEL", "gpt-4.1-mini")
     openai_base_url: str = _env("OPENAI_BASE_URL", "https://api.openai.com/v1")
     ai_timeout_seconds: float = _float_env("A2UI_AI_TIMEOUT_SECONDS", 100)
+    flow_log_max_chars: int = _int_env("A2UI_FLOW_LOG_MAX_CHARS", 50_000)
 
 
 settings = Settings()

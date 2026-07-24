@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 
 from .config import settings
 from .contracts import ChatRequest, DisplaySelectionRequest
+from .flow_logging import log_flow
 from .orchestrate import stream_chat_turn, stream_display_selection
 from .static_templates import STATIC_TEMPLATE_IDS, STATIC_TEMPLATE_VERSION
 
@@ -43,6 +44,7 @@ async def health() -> dict[str, Any]:
         "aiPlanner": "openai-structured-output",
         "aiConfigured": bool(settings.openai_api_key),
         "openaiModel": settings.openai_model,
+        "flowLogMaxChars": settings.flow_log_max_chars,
         "templateVersion": STATIC_TEMPLATE_VERSION,
         "templateIds": STATIC_TEMPLATE_IDS,
     }
@@ -55,6 +57,15 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
         raise HTTPException(status_code=400, detail="message is required")
     raw_request_body = (await request.body()).decode("utf-8", errors="replace")
     logger.info("[a2ui-proxy-agent] chat rawRequestBody=%s", raw_request_body)
+    log_flow(
+        "00_proxy_request_received",
+        result={
+            "rawRequestBody": raw_request_body,
+            "message": message,
+            "history": body.history,
+            "presentationMode": body.presentation_mode,
+        },
+    )
     logger.info(
         "[a2ui-proxy-agent] chat request presentationMode=%s messageLength=%s",
         body.presentation_mode,
@@ -64,7 +75,26 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
 
 
 @app.post("/display-selection/stream")
-async def display_selection_stream(body: DisplaySelectionRequest) -> StreamingResponse:
+async def display_selection_stream(
+    request: Request,
+    body: DisplaySelectionRequest,
+) -> StreamingResponse:
     if not body.selection_id or not body.template_id:
         raise HTTPException(status_code=400, detail="selectionId and templateId are required")
+    raw_request_body = (await request.body()).decode(
+        "utf-8",
+        errors="replace",
+    )
+    logger.info(
+        "[a2ui-proxy-agent] display selection rawRequestBody=%s",
+        raw_request_body,
+    )
+    log_flow(
+        "08_display_selection_request_received",
+        selection_id=body.selection_id,
+        result={
+            "rawRequestBody": raw_request_body,
+            "templateId": body.template_id,
+        },
+    )
     return stream_response(stream_display_selection(body.selection_id, body.template_id))

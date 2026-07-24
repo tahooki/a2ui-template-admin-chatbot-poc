@@ -217,6 +217,9 @@ class ProxyAIPlannerTest(unittest.IsolatedAsyncioTestCase):
                 for request in requests
             )
         )
+        self.assertTrue(
+            all(request["max_tokens"] == 6000 for request in requests)
+        )
         selection_prompt = json.loads(
             requests[0]["messages"][1]["content"]
         )
@@ -224,6 +227,237 @@ class ProxyAIPlannerTest(unittest.IsolatedAsyncioTestCase):
             len(selection_prompt["templates"]),
             3,
         )
+
+    async def test_accepts_text_array_and_json_code_fence(
+        self,
+    ) -> None:
+        schema, preview = schema_fixture()
+        result = recommendation_fixture()
+
+        async def handler(
+            _request: httpx.Request,
+        ) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": (
+                                            "```json\n"
+                                            + json.dumps(
+                                                result,
+                                                ensure_ascii=False,
+                                            )
+                                            + "\n```"
+                                        ),
+                                    }
+                                ]
+                            },
+                        }
+                    ]
+                },
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            planner = ProxyAIPlanner(
+                api_key="test-key",
+                base_url="https://openai.test/v1",
+                client=client,
+            )
+            selection = await planner.recommend(
+                query="장비 보여줘",
+                api_id="equipment-status",
+                derived_schema=schema,
+                sample_data_preview=preview,
+            )
+
+        self.assertEqual(
+            selection["selectedTemplateId"],
+            "matrix.table",
+        )
+
+    async def test_extracts_json_object_from_wrapped_text(
+        self,
+    ) -> None:
+        schema, preview = schema_fixture()
+        result = recommendation_fixture()
+
+        async def handler(
+            _request: httpx.Request,
+        ) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "content": (
+                                    "structured result follows:\n"
+                                    + json.dumps(
+                                        result,
+                                        ensure_ascii=False,
+                                    )
+                                    + "\nend"
+                                )
+                            },
+                        }
+                    ]
+                },
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            planner = ProxyAIPlanner(
+                api_key="test-key",
+                base_url="https://openai.test/v1",
+                client=client,
+            )
+            selection = await planner.recommend(
+                query="장비 보여줘",
+                api_id="equipment-status",
+                derived_schema=schema,
+                sample_data_preview=preview,
+            )
+
+        self.assertEqual(
+            selection["selectedTemplateId"],
+            "matrix.table",
+        )
+
+    async def test_retries_when_first_response_is_not_valid_json(
+        self,
+    ) -> None:
+        schema, preview = schema_fixture()
+        result = recommendation_fixture()
+        request_count = 0
+
+        async def handler(
+            _request: httpx.Request,
+        ) -> httpx.Response:
+            nonlocal request_count
+            request_count += 1
+            content = (
+                "not-json"
+                if request_count == 1
+                else json.dumps(result, ensure_ascii=False)
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {"content": content},
+                        }
+                    ]
+                },
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            planner = ProxyAIPlanner(
+                api_key="test-key",
+                base_url="https://openai.test/v1",
+                client=client,
+            )
+            selection = await planner.recommend(
+                query="장비 보여줘",
+                api_id="equipment-status",
+                derived_schema=schema,
+                sample_data_preview=preview,
+            )
+
+        self.assertEqual(request_count, 2)
+        self.assertEqual(
+            selection["selectedTemplateId"],
+            "matrix.table",
+        )
+
+    async def test_reports_token_truncated_response(
+        self,
+    ) -> None:
+        schema, preview = schema_fixture()
+
+        async def handler(
+            _request: httpx.Request,
+        ) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {
+                                "content": '{"selectedTemplateId":'
+                            },
+                        }
+                    ]
+                },
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            planner = ProxyAIPlanner(
+                api_key="test-key",
+                base_url="https://openai.test/v1",
+                client=client,
+            )
+            with self.assertRaisesRegex(
+                AIPlannerError,
+                "finish_reason=length",
+            ):
+                await planner.recommend(
+                    query="장비 보여줘",
+                    api_id="equipment-status",
+                    derived_schema=schema,
+                    sample_data_preview=preview,
+                )
+
+    async def test_reports_responses_api_shape_from_gateway(
+        self,
+    ) -> None:
+        schema, preview = schema_fixture()
+
+        async def handler(
+            _request: httpx.Request,
+        ) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "object": "response",
+                    "output": [],
+                },
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            planner = ProxyAIPlanner(
+                api_key="test-key",
+                base_url="https://openai.test/v1",
+                client=client,
+            )
+            with self.assertRaisesRegex(
+                AIPlannerError,
+                "Responses API 형태",
+            ):
+                await planner.recommend(
+                    query="장비 보여줘",
+                    api_id="equipment-status",
+                    derived_schema=schema,
+                    sample_data_preview=preview,
+                )
 
 
 if __name__ == "__main__":

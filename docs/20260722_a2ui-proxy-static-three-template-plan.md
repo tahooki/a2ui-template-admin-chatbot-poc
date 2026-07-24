@@ -145,6 +145,7 @@ OPENAI_API_KEY=...
 | `OPENAI_MODEL` | 선택 | `gpt-4.1-mini` | 템플릿 평가와 필드 매핑 모델 |
 | `OPENAI_BASE_URL` | 선택 | `https://api.openai.com/v1` | OpenAI-compatible `/v1` base URL |
 | `A2UI_AI_TIMEOUT_SECONDS` | 선택 | `100` | 각 AI 호출 timeout |
+| `A2UI_FLOW_LOG_MAX_CHARS` | 선택 | `50000` | 단계별 flow log 최대 문자 수 |
 | `MAIN_AGENT_TIMEOUT_SECONDS` | 선택 | `45` | Main Agent SSE timeout |
 | `A2UI_SELECTION_TTL_SECONDS` | 선택 | `300` | 선택 컨텍스트 유지 시간 |
 | `A2UI_PROXY_HOST` | 선택 | `0.0.0.0` | bind host |
@@ -174,6 +175,27 @@ OPENAI_API_KEY=...
 - Proxy 재시작 시 진행 중인 `selectionId`가 사라지는 것을 허용
 
 다중 replica가 필요하면 sticky session 또는 공유 저장소가 필요하다. Redis는 Python 모듈 설치에 필요한 것이 아니라 다중 인스턴스가 선택 상태를 공유할 때만 필요한 선택 사항이다.
+
+### 단계별 서버 로그
+
+Proxy 표준 출력에는 `[a2ui-proxy-agent][flow]` 접두사의 JSON 로그가 순서대로 기록된다.
+
+```text
+요청 원문 수신
+→ Main Agent 호출 직전 입력
+→ Main Agent에서 받은 각 SSE 이벤트
+→ schema 변환 직전 data_result
+→ sample/derived schema 결과
+→ AI 템플릿 비교 직전 입력과 완료 결과
+→ OpenAI structured request와 원본 response
+→ display options
+→ 사용자 선택 원문
+→ AI slot mapping 직전 입력과 완료 결과
+→ OpenAI structured request와 원본 response
+→ Surface 생성 직전 입력과 완료 결과
+```
+
+각 처리 직전 로그는 `previousResult`, 처리 완료 로그는 `result`에 값을 담는다. 민감 필드는 마스킹하며 큰 로그는 `A2UI_FLOW_LOG_MAX_CHARS`에서 자르고 잘린 문자 수를 표시한다.
 
 ## 8. 수정 파일
 
