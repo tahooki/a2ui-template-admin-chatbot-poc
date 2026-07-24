@@ -14,6 +14,7 @@ class SelectionContext:
     data: Any
     metadata: dict[str, Any]
     allowed_template_ids: tuple[str, ...]
+    planning: dict[str, Any]
     expires_at: float
 
 
@@ -30,6 +31,7 @@ class SelectionStore:
         data: Any,
         metadata: dict[str, Any],
         allowed_template_ids: list[str],
+        planning: dict[str, Any] | None = None,
     ) -> SelectionContext:
         self._delete_expired()
         selection_id = f"selection-{uuid4()}"
@@ -40,6 +42,7 @@ class SelectionStore:
             data=data,
             metadata=metadata,
             allowed_template_ids=tuple(allowed_template_ids),
+            planning=planning or {},
             expires_at=monotonic() + self.ttl_seconds,
         )
         self._items[selection_id] = context

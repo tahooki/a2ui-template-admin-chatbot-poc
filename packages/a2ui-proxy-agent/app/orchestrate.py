@@ -5,13 +5,20 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from .ai_planner import AIPlanner, ProxyAIPlanner
 from .contracts import PresentationMode
+from .derived_schema import (
+    build_derived_schema,
+    build_sample_data_preview,
+)
 from .main_agent_client import MainAgentClient
 from .selection_store import SelectionStore, selection_store
-from .surface_builder import SurfaceBuildError, build_surface, display_options
+from .static_templates import STATIC_TEMPLATE_BY_ID
+from .surface_builder import SurfaceBuildError, build_surface
 
 
 logger = logging.getLogger("uvicorn.error")
+
 
 def sse_event(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -29,16 +36,49 @@ def proxy_payload(data: dict[str, Any], *, turn_id: str, branch: str | None = No
     return payload
 
 
+def _template_options(
+    recommendation: dict[str, Any],
+) -> list[dict[str, Any]]:
+    selected_template_id = recommendation[
+        "selectedTemplateId"
+    ]
+    candidates = sorted(
+        recommendation["candidates"],
+        key=lambda candidate: (
+            candidate["templateId"]
+            != selected_template_id,
+            -candidate["score"],
+        ),
+    )
+    return [
+        {
+            "templateId": candidate["templateId"],
+            "label": STATIC_TEMPLATE_BY_ID[
+                candidate["templateId"]
+            ].label,
+            "score": candidate["score"],
+            "schemaFit": candidate["schemaFit"],
+            "intentFit": candidate["intentFit"],
+            "reason": candidate["reason"],
+            "recommended": candidate["templateId"]
+            == selected_template_id,
+        }
+        for candidate in candidates
+    ]
+
+
 async def stream_chat_turn(
     message: str,
     history: list[dict[str, Any]] | None = None,
     *,
     presentation_mode: PresentationMode = "a2ui",
     main_agent_client: MainAgentClient | None = None,
+    ai_planner: AIPlanner | None = None,
     store: SelectionStore = selection_store,
 ) -> AsyncIterator[str]:
     turn_id = f"proxy-turn-{uuid4()}"
     main_client = main_agent_client or MainAgentClient()
+    planner = ai_planner or ProxyAIPlanner()
     data_result: dict[str, Any] | None = None
     main_done: dict[str, Any] | None = None
 
@@ -124,23 +164,23 @@ async def stream_chat_turn(
         if not isinstance(api_id, str) or raw_data is None:
             raise RuntimeError("Main Agent data_result requires apiId and data.")
 
-        yield sse_event(
-            "state",
-            proxy_payload(
-                {
-                    "status": "proxy_template_options",
-                    "label": "고정 A2UI 표시 방식 준비",
-                    "apiId": api_id,
-                    "sourceToolResultId": data_result.get("sourceToolResultId"),
-                    "strategy": "proxy_static_templates",
-                },
-                turn_id=turn_id,
-                branch="data",
-            ),
-        )
-
         try:
-            options = display_options(query, raw_data)
+            sample_data_preview = build_sample_data_preview(
+                raw_data,
+                source_id=api_id,
+            )
+            derived_schema = build_derived_schema(
+                raw_data,
+                source_id=api_id,
+                sample_data_preview=sample_data_preview,
+            )
+            if (
+                not derived_schema.get("rowCount")
+                or not derived_schema.get("fields")
+            ):
+                raise SurfaceBuildError(
+                    "A2UI 화면으로 표시할 row 또는 field가 없습니다."
+                )
         except SurfaceBuildError as build_error:
             yield sse_event(
                 "state",
@@ -151,7 +191,7 @@ async def stream_chat_turn(
                         "mode": "text_fallback",
                         "reason": str(build_error),
                         "candidateCount": 0,
-                        "strategy": "proxy_static_templates",
+                        "strategy": "proxy_ai_schema_planner",
                     },
                     turn_id=turn_id,
                     branch="no_template",
@@ -167,12 +207,64 @@ async def stream_chat_turn(
             )
             return
 
+        yield sse_event(
+            "state",
+            proxy_payload(
+                {
+                    "status": "proxy_schema_derived",
+                    "label": "업무 데이터 스키마 추출",
+                    "apiId": api_id,
+                    "sourceToolResultId": data_result.get(
+                        "sourceToolResultId"
+                    ),
+                    "shape": derived_schema.get("shape"),
+                    "fieldCount": len(
+                        derived_schema.get("fields") or []
+                    ),
+                    "sampleSize": derived_schema.get(
+                        "sampleSize"
+                    ),
+                    "strategy": "proxy_ai_schema_planner",
+                },
+                turn_id=turn_id,
+                branch="data",
+            ),
+        )
+        yield sse_event(
+            "state",
+            proxy_payload(
+                {
+                    "status": "proxy_ai_template_selection",
+                    "label": "AI가 데이터 스키마와 템플릿 비교",
+                    "apiId": api_id,
+                    "candidateCount": len(
+                        STATIC_TEMPLATE_BY_ID
+                    ),
+                    "strategy": "proxy_ai_schema_planner",
+                },
+                turn_id=turn_id,
+                branch="data",
+            ),
+        )
+        recommendation = await planner.recommend(
+            query=query,
+            api_id=api_id,
+            derived_schema=derived_schema,
+            sample_data_preview=sample_data_preview,
+        )
+        options = _template_options(recommendation)
+
         context = store.put(
             query=query,
             api_id=api_id,
             data=raw_data,
             metadata=metadata,
             allowed_template_ids=[option["templateId"] for option in options],
+            planning={
+                "sampleDataPreview": sample_data_preview,
+                "derivedSchema": derived_schema,
+                "recommendation": recommendation,
+            },
         )
 
         yield sse_event(
@@ -182,8 +274,12 @@ async def stream_chat_turn(
                     "status": "matcher",
                     "label": "A2UI 표시 방식 후보 준비",
                     "mode": "display_options",
-                    "strategy": "proxy_static_templates",
+                    "strategy": "proxy_ai_schema_planner",
                     "candidateCount": len(options),
+                    "recommendedTemplateId": recommendation[
+                        "selectedTemplateId"
+                    ],
+                    "reason": recommendation["reason"],
                 },
                 turn_id=turn_id,
                 branch="matched",
@@ -238,6 +334,7 @@ async def stream_display_selection(
     selection_id: str,
     template_id: str,
     *,
+    ai_planner: AIPlanner | None = None,
     store: SelectionStore = selection_store,
 ) -> AsyncIterator[str]:
     turn_id = f"proxy-selection-{uuid4()}"
@@ -247,6 +344,27 @@ async def stream_display_selection(
             raise ValueError("선택 정보가 만료되었거나 존재하지 않습니다. 데이터를 다시 조회해 주세요.")
         if template_id not in context.allowed_template_ids:
             raise ValueError("선택할 수 없는 템플릿입니다.")
+        planner = ai_planner or ProxyAIPlanner()
+        derived_schema = context.planning.get(
+            "derivedSchema"
+        )
+        sample_data_preview = context.planning.get(
+            "sampleDataPreview"
+        )
+        recommendation = context.planning.get(
+            "recommendation"
+        )
+        if not all(
+            isinstance(value, dict)
+            for value in (
+                derived_schema,
+                sample_data_preview,
+                recommendation,
+            )
+        ):
+            raise ValueError(
+                "선택 정보에 AI 플래닝 컨텍스트가 없습니다. 데이터를 다시 조회해 주세요."
+            )
 
         yield sse_event(
             "state",
@@ -262,12 +380,36 @@ async def stream_display_selection(
             ),
         )
 
+        yield sse_event(
+            "state",
+            proxy_payload(
+                {
+                    "status": "proxy_ai_slot_mapping",
+                    "label": "AI가 선택 템플릿에 데이터 필드 매핑",
+                    "selectionId": selection_id,
+                    "templateId": template_id,
+                    "strategy": "proxy_ai_schema_planner",
+                },
+                turn_id=turn_id,
+                branch="matched",
+            ),
+        )
+        ai_mapping = await planner.map_fields(
+            query=context.query,
+            api_id=context.api_id,
+            template_id=template_id,
+            derived_schema=derived_schema,
+            sample_data_preview=sample_data_preview,
+        )
         surface = build_surface(
             query=context.query,
             api_id=context.api_id,
             data=context.data,
             metadata=context.metadata,
             template_id=template_id,
+            derived_schema=derived_schema,
+            ai_recommendation=recommendation,
+            ai_mapping=ai_mapping,
         )
         store.delete(selection_id)
         yield sse_event(

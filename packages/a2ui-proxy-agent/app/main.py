@@ -39,7 +39,10 @@ async def health() -> dict[str, Any]:
         "name": "a2ui-proxy-agent",
         "mainAgentUrl": settings.main_agent_url,
         "selectionTtlSeconds": settings.selection_ttl_seconds,
-        "templateMode": "static",
+        "templateMode": "proxy-ai",
+        "aiPlanner": "openai-structured-output",
+        "aiConfigured": bool(settings.openai_api_key),
+        "openaiModel": settings.openai_model,
         "templateVersion": STATIC_TEMPLATE_VERSION,
         "templateIds": STATIC_TEMPLATE_IDS,
     }

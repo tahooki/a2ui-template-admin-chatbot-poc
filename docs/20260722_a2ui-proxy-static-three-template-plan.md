@@ -1,287 +1,238 @@
-# A2UI Proxy Agent 고정 3종 템플릿 직접 생성 수정 계획
+# A2UI Proxy Agent 3종 템플릿 AI 플래닝 구성
 
 작성일: 2026-07-22
-상태: Proxy 구현 완료 / 서버 배포 구성 계획 수립
+수정일: 2026-07-24
+상태: Proxy 구현 및 Main → Proxy 실제 연동 검증 완료
 
 ## 1. 목표
 
-A2UI Proxy Agent가 별도 MCP 또는 A2A A2UI Agent를 호출하지 않고 다음 고정 템플릿 3종을 직접 제공한다.
+Main Agent가 전달한 업무 데이터를 바탕으로 A2UI 화면을 판단하고 만드는 핵심 기능을 Python Proxy Agent 안에서 수행한다.
+
+활성 템플릿은 다음 세 개다.
 
 | 템플릿 ID | 라벨 | 용도 |
 | --- | --- | --- |
-| `collection.list` | 목록 | 간단한 항목 목록 |
-| `collection.cardGrid` | 카드 | 이미지와 설명 중심 카드 |
-| `matrix.table` | 데이터 테이블 | 여러 필드 비교 |
+| `collection.list` | 목록 | 제목과 설명 중심의 단순 목록 |
+| `collection.cardGrid` | 카드 그리드 | 이미지와 메타데이터 중심 카드 |
+| `matrix.table` | 데이터 테이블 | 여러 scalar 컬럼의 행 단위 비교 |
 
-Main Agent는 업무 의도 판단과 내부 데모 데이터 생성을 담당한다. Proxy Agent는 `data_result`를 서버 내부에 보관하고, 표시 방식 선택과 SurfaceEnvelope 생성을 직접 처리한다.
+Admin, MCP, A2A A2UI Agent, 별도 Surface Planner 서버는 실행하지 않아도 된다. 기존 Admin과 A2A 코드는 나중에 다시 사용할 수 있도록 삭제하거나 변경하지 않는다.
 
-## 2. 범위 원칙
+## 2. 최종 책임 분리
 
-초기 핵심 런타임 작업은 `packages/a2ui-proxy-agent`에 한정했다. 후속 독립 실행 개선에서는 Main Agent의 HTTP 업무 데이터 호출만 내부 데이터 제공자로 교체하고, 관련 설정·테스트·문서를 함께 정리한다.
+### Main Agent
 
-다음 구성은 삭제하거나 수정하지 않는다.
+- 사용자 요청에서 업무 데이터 의도를 찾는다.
+- 현재는 내부 로컬 데이터 제공자를 사용한다.
+- 텍스트 이벤트와 원본 `data_result`를 Proxy에 전달한다.
+- A2UI 템플릿 선택, 점수 계산, 필드 매핑을 하지 않는다.
 
-- 기존 템플릿 Admin UI와 `/admin` route
-- `/api/admin/templates`와 파일 기반 템플릿 카탈로그
-- Next A2A route와 A2A server 코드
-- Agent Flow와 Data Boundary Lab
-- Main Agent의 LLM, intent routing, SSE 및 `data_result` 계약
-- Chatbot UI, Renderer, 내비게이션, 기본 진입점
-- root README, Proxy 외 실행/E2E script
+### Proxy Agent
 
-Admin과 기존 10종 템플릿은 향후 다시 사용할 수 있도록 그대로 보존한다. 활성 Chatbot 요청에서 Proxy만 Admin/A2A 경로를 우회한다.
+- `data_result`에서 반복 row와 필드를 찾는다.
+- AI에 전달할 최대 10개 row, 20KB의 샘플을 만든다.
+- secret, token, password, authorization, cookie, phone, email 계열 필드를 마스킹한다.
+- 해당 민감 필드는 AI가 화면에 매핑하지 못하도록 derived schema의 field 후보에서도 제외한다.
+- 데이터 타입, format, 역할, capability를 포함한 derived schema를 만든다.
+- 세 템플릿 계약을 모두 OpenAI에 보내 스키마 적합도와 사용자 의도 적합도를 평가한다.
+- 세 후보의 점수와 이유, 추천 하나를 `display_options`로 반환한다.
+- 사용자가 실제로 선택한 템플릿에 대해 두 번째 OpenAI 호출로 source path와 template slot을 매핑한다.
+- AI 응답을 코드에서 재검증한 뒤 원본 row를 선택 템플릿용 canonical schema로 변환한다.
+- 최종 Surface를 만든다.
 
-## 3. 목표 흐름
-
-```text
-Chatbot UI
-→ Next /api/chat
-→ A2UI Proxy Agent
-→ Main Agent
-→ Main Agent 내부 업무 데이터
-→ Main Agent data_result
-→ Proxy가 데이터를 정규화하고 고정 3종 선택지 생성
-→ display_options
-→ 사용자 선택
-→ Proxy가 SurfaceEnvelope 직접 생성
-→ surface
-→ 기존 Chatbot Renderer
-```
-
-Proxy가 호출하는 Agent는 Main Agent 하나뿐이다. Main Agent의 데모 데이터 조회와 Proxy의 템플릿 추천·Surface 생성 과정에서는 외부 업무 API, MCP, A2A A2UI Agent, Admin API를 호출하지 않는다.
-
-## 4. Proxy 구현 내용
-
-### 4.1 고정 템플릿
-
-`app/static_templates.py`에서 템플릿 ID, 라벨, `viewType`, 최대 표시 행을 정의한다. 허용 가능한 템플릿 ID는 세 개로 제한한다.
-
-### 4.2 데이터 정규화 및 필드 매핑
-
-`app/surface_builder.py`에서 다음 작업을 수행한다.
-
-- object 배열과 `items`, `rows`, `list` 응답 정규화
-- `result`, `data`, `payload` 내부 중첩 응답 탐색
-- 최대 20개 row를 이용한 scalar field 프로파일링
-- title, content, image, category, status 역할 추론
-- 목록, 카드, 테이블별 field mapping 생성
-- `{ items, total }` 형태의 표시 데이터 생성
-- 빈 배열, primitive 데이터, 매핑 불가 데이터의 text fallback
-
-### 4.3 결정적 추천
-
-추천에는 LLM을 사용하지 않는다.
-
-1. 질문의 `카드`, `목록`, `테이블` 등 명시적 표현 우선
-2. 이미지 필드가 있으면 카드
-3. scalar field가 3개 이하면 목록
-4. 그 외에는 테이블
-
-세 템플릿은 모두 선택지로 반환하며 추천은 정확히 하나만 지정한다.
-
-### 4.4 선택 컨텍스트
-
-기존 메모리 기반 `SelectionStore`와 TTL을 유지한다.
-
-- 선택 전 원본 `data_result`는 브라우저에 전달하지 않는다.
-- `selectionId`와 허용된 세 템플릿 ID만 브라우저에 전달한다.
-- 사용자가 선택하면 Proxy가 해당 시점에 Surface를 생성한다.
-- 잘못되거나 만료된 선택은 거부한다.
-- 성공한 선택 컨텍스트는 삭제한다.
-
-### 4.5 제거하는 Proxy 내부 의존성
-
-- `app/a2ui_agent_client.py`
-- Proxy의 `A2UI_A2A_URL`, token, timeout 설정
-- A2A progress/candidate 변환 로직
-- 추천 Surface 사전 생성과 `prepared_surface`
-
-이는 Proxy 패키지 내부 정리이며, Next의 A2A/Admin 구현 자체는 보존한다.
-
-## 5. 변경 파일
+## 3. 런타임 흐름
 
 ```text
-packages/a2ui-proxy-agent/
-├─ .env.example                 # 신규. 독립 서버 설정 예시
-├─ README.md
-├─ run.py                       # 신규. venv/requirements 자동 준비 및 실행
-├─ app/
-│  ├─ a2ui_agent_client.py       # 삭제
-│  ├─ config.py
-│  ├─ main.py
-│  ├─ orchestrate.py
-│  ├─ selection_store.py
-│  ├─ static_templates.py        # 신규
-│  └─ surface_builder.py         # 신규
-└─ tests/
-   ├─ test_proxy_orchestrate.py
-   ├─ test_run.py               # 신규. standalone runner 검증
-   ├─ test_selection_store.py
-   └─ test_surface_builder.py    # 신규
-
-scripts/
-├─ proxy-agent-dev.mjs          # standalone runner 호출로 변경
-└─ proxy-agent-test.mjs         # Proxy 전용 venv 준비 후 테스트
-
-packages/a2ui-python-agent/
-├─ README.md
-├─ app/
-│  ├─ business_tools.py         # 내부 데이터 제공자 호출
-│  ├─ config.py                 # Next 업무 API 설정 제거
-│  ├─ equipment_tools.py        # HTTP fetch 제거
-│  ├─ local_business_data.py    # 신규. 9개 로컬 데이터셋
-│  ├─ main.py                   # health에 local source 표시
-│  └─ tool_router.py            # 내부 데이터 설명으로 정리
-└─ tests/
-   └─ test_business_tools.py    # 실제 로컬 데이터 검증
+Chatbot
+  → Proxy /chat/stream
+    → Main Agent /chat/stream
+      → data_result
+    → bounded/masked sample 생성
+    → derived schema 생성
+    → OpenAI 1차 호출
+      → 3개 템플릿 모두 schemaFit, intentFit, score 평가
+      → 추천 템플릿 1개 선택
+    → display_options
+  → 사용자 템플릿 선택
+  → Proxy /display-selection/stream
+    → OpenAI 2차 호출
+      → 선택 템플릿의 required/optional slot에 source path 매핑
+    → 매핑 검증
+    → canonical data 변환
+    → Surface 생성
 ```
 
-## 6. 완료 체크리스트
+두 AI 단계 모두 Proxy 프로세스가 OpenAI Chat Completions API를 직접 호출한다. `response_format.type=json_schema`와 `strict=true`를 사용하며, AI 출력이 구조 또는 데이터 스키마 검증을 통과하지 못하면 한 번 교정 요청한다.
 
-- [x] 고정 템플릿 3종 정의
-- [x] 응답 데이터 정규화와 필드 프로파일링 구현
-- [x] 목록, 카드, 테이블 field mapping 구현
-- [x] 결정적 추천 규칙 구현
-- [x] Proxy 직접 SurfaceEnvelope 생성 구현
-- [x] Proxy의 A2A A2UI Agent 호출 제거
-- [x] 선택 전 원본 업무 데이터 미노출 유지
-- [x] 잘못되거나 만료된 선택 거부
-- [x] 텍스트 모드의 A2UI 우회 유지
-- [x] Proxy health에 static template mode와 3개 ID 표시
-- [x] Proxy 단위 테스트 25개 통과
-- [x] Admin, A2A, Chatbot 코드는 원래 상태로 보존
-- [x] Proxy 폴더만 복사해 `python3 run.py`로 실행 가능
-- [x] Proxy 전용 `.venv` 생성과 requirements 설치 자동화
-- [x] Main Agent venv에 대한 Proxy 실행 의존성 제거
-- [x] Main Agent의 Next 업무 API 호출 제거
-- [x] Main Agent 내부 9개 데이터셋으로 기존 `data_result` 계약 유지
+## 4. AI 판단과 검증 규칙
 
-## 7. 검증 명령
+### 4.1 템플릿 평가
+
+AI는 다음 값을 세 템플릿 모두에 반환해야 한다.
+
+- `decision`: `select` 또는 `reject`
+- `score`: 종합 점수
+- `schemaFit`: derived schema와 템플릿 required slot의 적합도
+- `intentFit`: 사용자 요청과 화면 방식의 적합도
+- `reason`: 데이터에 근거한 평가 이유
+
+Proxy는 다음을 검증한다.
+
+- 정확히 세 템플릿이 한 번씩 평가되었는가
+- 정확히 한 후보가 `select`인가
+- `selectedTemplateId`와 `select` 후보가 같은가
+- 모든 점수가 0~1 범위인가
+- 선택 후보가 최고 종합 점수인가
+- 모든 후보에 평가 이유가 있는가
+
+### 4.2 필드 및 슬롯 매핑
+
+AI는 사용자가 선택한 템플릿을 바꿀 수 없다. derived schema의 `fields[].path`에 존재하는 정확한 path만 사용할 수 있다.
+
+- 공통 required mapping: `titleSourcePath`
+- optional mapping: content, image, category, status
+- table mapping: title 외 scalar column 2~6개
+
+Proxy는 path 존재 여부, slot별 허용 타입, 이미지 URI 역할, 중복 컬럼, 테이블 최소 컬럼 수를 검증한다.
+
+검증 후 Proxy가 source row를 다음 canonical field로 변환한다.
+
+```text
+title, content, image, category, status
+```
+
+테이블의 추가 컬럼은 source path를 기반으로 충돌 없는 canonical field 이름을 만들고 `fieldMapping.fields`에 연결한다.
+
+## 5. 실패 처리
+
+AI는 이 기능의 핵심이므로 다음 상황에서 기존의 필드명 별칭/컬럼 수 기반 추천으로 조용히 우회하지 않는다.
+
+- `OPENAI_API_KEY`가 없음
+- OpenAI 요청 실패
+- 구조화 출력 파싱 실패
+- 세 후보 평가 계약 위반
+- 선택 템플릿 변경
+- derived schema에 없는 path 매핑
+- template slot 타입 불일치
+
+이 경우 Proxy는 SSE `error`와 `done(mode=error)`를 반환한다. 빈 데이터나 표시 가능한 field가 없는 데이터만 `text_fallback`으로 처리한다.
+
+## 6. 서버 구성
+
+Proxy 폴더만 복사한 환경에서는 다음과 같이 실행한다.
 
 ```bash
-npm run proxy-agent:test
-npm run main-agent:test
-npm run lint
-npm run build
+cd a2ui-proxy-agent
+cp .env.example .env.local
+python3 run.py
 ```
 
-통합 확인 시 기존 Admin/A2A 서비스의 존재 여부와 관계없이 Chatbot의 `/api/chat` 요청이 Proxy의 고정 3종 선택지를 받고, 선택 후 Proxy가 만든 Surface를 수신하는지 확인한다.
+`run.py`는 `.venv` 생성, `requirements.txt` 설치, Uvicorn 실행을 자동 처리한다. 모듈을 별도로 수동 설치할 필요가 없다.
 
-검증 결과:
+필수 설정은 다음 두 값이다.
 
-- Proxy Agent 단위 테스트 25개 통과
-- 기존 Main Agent 단위 테스트 42개 통과
-- lint와 production build 통과
-- 기존 `e2e:proxy-flow` 통과
-- production build에서 `/admin`, `/api/admin/*`, `/api/a2a/*`, `/lab/agent-flow` route 유지 확인
-- 실행 중 `/api/admin/templates`가 기존 템플릿 카탈로그를 정상 반환하는지 확인
-
-## 8. 서버 배포 구성 계획
-
-### 8.1 현재 상태와 배포 목표
-
-현재 Proxy 폴더는 Python 3.10 이상이 설치된 환경에서 `python3 run.py`만 실행하면 전용 `.venv` 생성, `requirements.txt` 설치, Uvicorn 실행까지 자동 처리한다. 이 방식은 로컬 개발과 일반 VM에서 바로 실행하기 위한 구성이다.
-
-실제 서버에 배포할 때는 Proxy를 독립 Docker 서비스로 패키징한다. Python과 모든 모듈을 이미지 빌드 시점에 포함하여, 배포 서버에서 별도로 가상환경을 만들거나 `pip install`을 실행하지 않도록 한다.
-
-```text
-Chatbot API
-→ A2UI Proxy 컨테이너:8200
-→ MAIN_AGENT_URL
-→ 로컬 업무 데이터를 포함한 Main Agent 서버
+```env
+MAIN_AGENT_URL=http://main-agent-host:8000
+OPENAI_API_KEY=...
 ```
 
-Proxy 배포 서버에는 Redis, MCP 서버, 템플릿 Admin, A2A 서버, 별도 업무 데이터 API가 필요하지 않다. 단, `MAIN_AGENT_URL`로 지정한 Main Agent의 `POST /chat/stream` SSE endpoint에 네트워크로 접근할 수 있어야 한다.
-
-### 8.2 추가할 배포 파일
-
-후속 서버 배포 작업에서는 Proxy 패키지 안에 다음 파일을 추가한다.
-
-```text
-packages/a2ui-proxy-agent/
-├─ Dockerfile       # Python runtime과 requirements를 포함한 실행 이미지
-└─ .dockerignore    # .venv, cache, test 산출물을 이미지에서 제외
-```
-
-Docker 이미지는 다음 원칙으로 구성한다.
-
-1. Python 3.12 slim 이미지를 기반으로 한다.
-2. `requirements.txt`를 먼저 복사하고 이미지 빌드 중 의존성을 설치한다.
-3. Proxy 소스만 이미지에 복사한다.
-4. 컨테이너에서는 `python run.py --no-install`로 실행한다.
-5. `0.0.0.0`과 배포 환경이 주입한 `PORT`에 bind한다.
-6. `/health`를 load balancer와 container health check에 사용한다.
-
-예상 Dockerfile은 다음과 같다.
-
-```dockerfile
-FROM python:3.12-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-ENV A2UI_PROXY_HOST=0.0.0.0
-ENV A2UI_PROXY_PORT=8200
-
-EXPOSE 8200
-
-CMD ["python", "run.py", "--no-install"]
-```
-
-### 8.3 배포 환경 변수
+전체 설정:
 
 | 환경 변수 | 필수 여부 | 기본값 | 설명 |
 | --- | --- | --- | --- |
 | `MAIN_AGENT_URL` | 배포 시 필수 | `http://localhost:8000` | Main Agent base URL |
-| `PORT` | 플랫폼에 따라 필요 | `8200` | Proxy 공개 포트 |
-| `A2UI_PROXY_HOST` | 선택 | `0.0.0.0` | Proxy bind host |
-| `MAIN_AGENT_TIMEOUT_SECONDS` | 선택 | `45` | Main Agent 응답 timeout |
-| `A2UI_SELECTION_TTL_SECONDS` | 선택 | `300` | 메모리 선택 컨텍스트 유지 시간 |
+| `OPENAI_API_KEY` | 필수 | 없음 | Proxy 내부 AI 플래너 인증 |
+| `OPENAI_MODEL` | 선택 | `gpt-4.1-mini` | 템플릿 평가와 필드 매핑 모델 |
+| `OPENAI_BASE_URL` | 선택 | `https://api.openai.com/v1` | OpenAI-compatible `/v1` base URL |
+| `A2UI_AI_TIMEOUT_SECONDS` | 선택 | `100` | 각 AI 호출 timeout |
+| `MAIN_AGENT_TIMEOUT_SECONDS` | 선택 | `45` | Main Agent SSE timeout |
+| `A2UI_SELECTION_TTL_SECONDS` | 선택 | `300` | 선택 컨텍스트 유지 시간 |
+| `A2UI_PROXY_HOST` | 선택 | `0.0.0.0` | bind host |
+| `A2UI_PROXY_PORT` 또는 `PORT` | 선택 | `8200` | bind port |
 
-민감한 값이 생기더라도 Docker 이미지나 `.env.local`을 이미지에 포함하지 않고, 배포 플랫폼의 환경 변수 또는 secret 기능으로 주입한다.
+`/health`에서는 다음 상태를 확인할 수 있다.
 
-### 8.4 Redis 없는 운영 제약
+```json
+{
+  "templateMode": "proxy-ai",
+  "aiPlanner": "openai-structured-output",
+  "aiConfigured": true,
+  "templateIds": [
+    "matrix.table",
+    "collection.cardGrid",
+    "collection.list"
+  ]
+}
+```
 
-`SelectionStore`는 Proxy 프로세스 메모리를 사용한다. 따라서 Redis 없이 운영하는 첫 배포는 다음 조건을 따른다.
+## 7. Redis 없는 운영
 
-- Proxy replica를 1개로 운영한다.
-- Proxy 재시작 시 진행 중인 선택 컨텍스트가 사라지는 것을 허용한다.
-- 여러 worker process를 사용하지 않는다.
-- 다중 replica가 꼭 필요하면 load balancer sticky session을 적용하거나, 이후 별도 공유 저장소를 도입한다.
+선택 전 원본 데이터, derived schema, AI 추천 결과는 Proxy의 메모리 `SelectionStore`에 보관한다. Redis 없이 동작하지만 첫 배포는 다음 조건을 따른다.
 
-단일 replica에서는 현재 구조 그대로 Redis 없이 동작한다. 다중 replica에 일반 round-robin을 사용하면 표시 방식 선택 요청이 다른 프로세스로 전달되어 `selectionId`를 찾지 못할 수 있다.
+- 단일 Proxy replica
+- 단일 worker process
+- Proxy 재시작 시 진행 중인 `selectionId`가 사라지는 것을 허용
 
-### 8.5 배포 절차와 검증
+다중 replica가 필요하면 sticky session 또는 공유 저장소가 필요하다. Redis는 Python 모듈 설치에 필요한 것이 아니라 다중 인스턴스가 선택 상태를 공유할 때만 필요한 선택 사항이다.
+
+## 8. 수정 파일
+
+```text
+packages/a2ui-proxy-agent/
+├─ .env.example
+├─ README.md
+├─ app/
+│  ├─ ai_planner.py          # OpenAI 2단계 structured-output planner
+│  ├─ config.py              # OpenAI runtime 설정
+│  ├─ derived_schema.py      # bounded preview와 데이터 스키마
+│  ├─ main.py                # AI planner health 정보
+│  ├─ orchestrate.py         # Main → schema → AI → 선택 → AI → Surface
+│  ├─ selection_store.py     # AI planning context 보관
+│  ├─ static_templates.py    # 정확히 3개 템플릿 전체 계약
+│  └─ surface_builder.py     # AI mapping 기반 canonical 변환과 Surface
+└─ tests/
+   ├─ test_ai_planner.py
+   ├─ test_derived_schema.py
+   ├─ test_proxy_orchestrate.py
+   ├─ test_selection_store.py
+   ├─ test_surface_builder.py
+   └─ test_run.py
+```
+
+Admin, MCP, Next A2A 관련 파일은 이번 수정 범위에 포함하지 않는다.
+
+## 9. 검증 결과
+
+- Proxy 단위 테스트 28개 통과
+- 실제 OpenAI 1차 호출에서 세 템플릿 점수와 추천 결과 확인
+- 실제 OpenAI 2차 호출에서 title/image source path 매핑 확인
+- Main Agent와 Proxy만 실행한 SSE 통합 검증 통과
+- 통합 요청 결과:
+  - `proxy_schema_derived`
+  - `proxy_ai_template_selection`
+  - 후보 3개와 각각의 점수
+  - `proxy_ai_slot_mapping`
+  - `strategy=proxy_ai_schema_planner` Surface
+- Admin, MCP, A2A 서버를 실행하지 않은 상태에서 동작 확인
+
+검증 명령:
 
 ```bash
-docker build -t a2ui-proxy-agent packages/a2ui-proxy-agent
-docker run --rm \
-  -p 8200:8200 \
-  -e MAIN_AGENT_URL=http://main-agent:8000 \
-  a2ui-proxy-agent
+npm run proxy-agent:test
 curl http://localhost:8200/health
 ```
 
-서버 배포 완료 조건은 다음과 같다.
+## 10. 완료 조건
 
-- [ ] `Dockerfile`과 `.dockerignore` 추가
-- [ ] 이미지 빌드 중 requirements 설치 확인
-- [ ] 컨테이너 시작 시 runtime `pip install`이 실행되지 않는지 확인
-- [ ] `/health` container 및 load balancer health check 연결
-- [ ] 배포 환경의 `MAIN_AGENT_URL`로 Main Agent SSE 연결 확인
-- [ ] 단일 replica에서 표시 방식 선택과 Surface 생성 E2E 확인
-- [ ] 재시작 시 진행 중 선택이 만료될 수 있음을 운영 문서에 명시
-
-## 9. 완료 조건
-
-- 런타임 변경은 `packages/a2ui-proxy-agent`와 Main Agent의 로컬 데이터 제공 경로에 한정한다.
-- Proxy가 Main Agent 외의 Agent, MCP, Admin API를 호출하지 않는다.
-- Main Agent가 데이터 요청을 처리할 때 외부 업무 API를 호출하지 않는다.
-- 데이터 요청에 정확히 세 개의 표시 방식이 제공된다.
-- 세 템플릿 모두 Proxy가 직접 SurfaceEnvelope를 생성한다.
-- 선택 전 원본 업무 데이터가 브라우저에 노출되지 않는다.
-- 기존 Admin과 A2A 관련 파일 및 route가 그대로 남아 있다.
+- [x] 세 템플릿 전체 계약을 Proxy에 내장
+- [x] bounded preview와 민감정보 마스킹
+- [x] derived schema 생성
+- [x] AI가 세 템플릿 모두 비교하고 점수화
+- [x] AI 추천 이유와 후보별 이유 반환
+- [x] 사용자 선택 후 AI가 필드와 슬롯 매핑
+- [x] AI mapping을 코드로 검증
+- [x] 원본 데이터를 선택 템플릿 schema로 변환
+- [x] 고정 규칙 fallback 제거
+- [x] Admin, MCP, A2A 서버 없는 실행
+- [x] Redis 없는 단일 인스턴스 실행
+- [x] 실제 OpenAI와 Main → Proxy 통합 검증

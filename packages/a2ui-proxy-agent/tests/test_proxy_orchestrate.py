@@ -1,6 +1,10 @@
 import json
 import unittest
 
+from app.derived_schema import (
+    build_derived_schema,
+    build_sample_data_preview,
+)
 from app.orchestrate import stream_chat_turn, stream_display_selection
 from app.selection_store import SelectionStore
 from app.static_templates import STATIC_TEMPLATE_IDS
@@ -72,14 +76,146 @@ class FakeFailingMainAgentClient:
         yield "done", {"mode": "error", "branch": "error"}
 
 
+class FakeAIPlanner:
+    def __init__(self) -> None:
+        self.recommend_calls: list[dict] = []
+        self.mapping_calls: list[dict] = []
+
+    async def recommend(
+        self,
+        *,
+        query,
+        api_id,
+        derived_schema,
+        sample_data_preview,
+    ):
+        self.recommend_calls.append(
+            {
+                "query": query,
+                "apiId": api_id,
+                "derivedSchema": derived_schema,
+                "sampleDataPreview": sample_data_preview,
+            }
+        )
+        selected = (
+            "collection.cardGrid"
+            if "카드" in query
+            else "matrix.table"
+        )
+        candidates = []
+        for template_id in STATIC_TEMPLATE_IDS:
+            is_selected = template_id == selected
+            candidates.append(
+                {
+                    "templateId": template_id,
+                    "decision": (
+                        "select"
+                        if is_selected
+                        else "reject"
+                    ),
+                    "score": 0.95 if is_selected else 0.5,
+                    "schemaFit": (
+                        0.95 if is_selected else 0.6
+                    ),
+                    "intentFit": (
+                        0.95 if is_selected else 0.4
+                    ),
+                    "reason": f"{template_id} AI 평가",
+                }
+            )
+        return {
+            "selectedTemplateId": selected,
+            "reason": "AI가 요청과 데이터 스키마를 비교했습니다.",
+            "candidates": candidates,
+        }
+
+    async def map_fields(
+        self,
+        *,
+        query,
+        api_id,
+        template_id,
+        derived_schema,
+        sample_data_preview,
+    ):
+        self.mapping_calls.append(
+            {
+                "query": query,
+                "apiId": api_id,
+                "templateId": template_id,
+                "derivedSchema": derived_schema,
+                "sampleDataPreview": sample_data_preview,
+            }
+        )
+        return {
+            "selectedTemplateId": template_id,
+            "reason": "AI가 선택 템플릿 슬롯에 필드를 매핑했습니다.",
+            "titleSourcePath": "items.name",
+            "contentSourcePath": "items.description",
+            "imageSourcePath": None,
+            "categorySourcePath": "items.location",
+            "statusSourcePath": "items.status",
+            "fieldSourcePaths": (
+                [
+                    "items.id",
+                    "items.status",
+                    "items.location",
+                ]
+                if template_id == "matrix.table"
+                else []
+            ),
+        }
+
+
+def planning_fixture(
+    data: dict,
+    ai_planner: FakeAIPlanner,
+) -> dict:
+    preview = build_sample_data_preview(
+        data,
+        source_id="equipment-status",
+    )
+    schema = build_derived_schema(
+        data,
+        source_id="equipment-status",
+        sample_data_preview=preview,
+    )
+    candidates = []
+    for template_id in STATIC_TEMPLATE_IDS:
+        selected = template_id == "matrix.table"
+        candidates.append(
+            {
+                "templateId": template_id,
+                "decision": (
+                    "select" if selected else "reject"
+                ),
+                "score": 0.95 if selected else 0.5,
+                "schemaFit": 0.95 if selected else 0.6,
+                "intentFit": 0.8 if selected else 0.4,
+                "reason": f"{template_id} AI 평가",
+            }
+        )
+    return {
+        "sampleDataPreview": preview,
+        "derivedSchema": schema,
+        "recommendation": {
+            "selectedTemplateId": "matrix.table",
+            "reason": "AI가 데이터 스키마를 비교했습니다.",
+            "candidates": candidates,
+        },
+    }
+
+
 class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
-    async def test_proxy_keeps_data_result_server_side_and_returns_static_options(self) -> None:
+    async def test_proxy_keeps_data_server_side_and_returns_ai_scored_options(self) -> None:
         store = SelectionStore(ttl_seconds=30)
+        ai_planner = FakeAIPlanner()
         chunks = [
             chunk
             async for chunk in stream_chat_turn(
                 "장비 상태 보여줘",
                 main_agent_client=FakeMainAgentClient(),
+                ai_planner=ai_planner,
                 store=store,
             )
         ]
@@ -97,16 +233,28 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
             set(STATIC_TEMPLATE_IDS),
         )
         self.assertEqual(sum(option["recommended"] for option in options_event["options"]), 1)
+        self.assertTrue(
+            all(
+                "score" in option
+                and "schemaFit" in option
+                and "intentFit" in option
+                and "reason" in option
+                for option in options_event["options"]
+            )
+        )
+        self.assertEqual(len(ai_planner.recommend_calls), 1)
         self.assertNotIn("장비 1", "".join(chunks))
         self.assertNotIn("hash-1", "".join(chunks))
         self.assertIsNotNone(store.get(options_event["selectionId"]))
 
     async def test_explicit_display_query_controls_recommendation(self) -> None:
+        ai_planner = FakeAIPlanner()
         chunks = [
             chunk
             async for chunk in stream_chat_turn(
                 "장비를 카드로 보여줘",
                 main_agent_client=FakeMainAgentClient(),
+                ai_planner=ai_planner,
                 store=SelectionStore(ttl_seconds=30),
             )
         ]
@@ -121,6 +269,7 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
             async for chunk in stream_chat_turn(
                 "안녕",
                 main_agent_client=FakeMainAgentClient(with_data=False),
+                ai_planner=FakeAIPlanner(),
                 store=SelectionStore(ttl_seconds=30),
             )
         ]
@@ -134,6 +283,7 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
             async for chunk in stream_chat_turn(
                 "빈 데이터",
                 main_agent_client=FakeEmptyDataMainAgentClient(),
+                ai_planner=FakeAIPlanner(),
                 store=SelectionStore(ttl_seconds=30),
             )
         ]
@@ -152,6 +302,7 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
                 "장비 상태 보여줘",
                 presentation_mode="text",
                 main_agent_client=main_agent,
+                ai_planner=FakeAIPlanner(),
                 store=store,
             )
         ]
@@ -174,6 +325,7 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
                 "장비 상태 보여줘",
                 presentation_mode="text",
                 main_agent_client=FakeFailingMainAgentClient(),
+                ai_planner=FakeAIPlanner(),
             )
         ]
         events = [parse_sse_chunk(chunk) for chunk in chunks]
@@ -188,6 +340,7 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
             async for chunk in stream_chat_turn(
                 "장비 상태 보여줘",
                 main_agent_client=FakeFailingMainAgentClient(),
+                ai_planner=FakeAIPlanner(),
             )
         ]
         events = [parse_sse_chunk(chunk) for chunk in chunks]
@@ -197,22 +350,39 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(done["mode"], "error")
         self.assertEqual(done["branch"], "error")
 
-    async def test_each_static_template_is_rendered_directly_and_consumes_selection(self) -> None:
+    async def test_each_template_uses_ai_mapping_and_consumes_selection(self) -> None:
         for template_id in STATIC_TEMPLATE_IDS:
             with self.subTest(template_id=template_id):
                 store = SelectionStore(ttl_seconds=30)
+                ai_planner = FakeAIPlanner()
+                data = {
+                    "items": [
+                        {
+                            "id": "eq-1",
+                            "name": "장비 1",
+                            "description": "프레스",
+                            "status": "RUNNING",
+                            "location": "A동",
+                        }
+                    ]
+                }
                 context = store.put(
                     query="장비 상태 보여줘",
                     api_id="equipment-status",
-                    data={"items": [{"id": "eq-1", "name": "장비 1", "status": "RUNNING"}]},
+                    data=data,
                     metadata={"sourceDataHash": "hash-1"},
                     allowed_template_ids=list(STATIC_TEMPLATE_IDS),
+                    planning=planning_fixture(
+                        data,
+                        ai_planner,
+                    ),
                 )
                 chunks = [
                     chunk
                     async for chunk in stream_display_selection(
                         context.selection_id,
                         template_id,
+                        ai_planner=ai_planner,
                         store=store,
                     )
                 ]
@@ -222,7 +392,13 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(surface_event["templateId"], template_id)
                 self.assertEqual(surface["templateId"], template_id)
                 self.assertEqual(surface["payload"]["profile"]["rowCount"], 1)
-                self.assertEqual(surface["payload"]["renderPlan"]["strategy"], "proxy_static_templates")
+                self.assertEqual(surface["payload"]["renderPlan"]["strategy"], "proxy_ai_schema_planner")
+                self.assertEqual(
+                    ai_planner.mapping_calls[0][
+                        "templateId"
+                    ],
+                    template_id,
+                )
                 self.assertIsNone(store.get(context.selection_id))
 
     async def test_disallowed_template_is_rejected_without_consuming_selection(self) -> None:
@@ -239,6 +415,7 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
             async for chunk in stream_display_selection(
                 context.selection_id,
                 "record.detail",
+                ai_planner=FakeAIPlanner(),
                 store=store,
             )
         ]
@@ -253,6 +430,7 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
             async for chunk in stream_display_selection(
                 "selection-missing",
                 "matrix.table",
+                ai_planner=FakeAIPlanner(),
                 store=SelectionStore(ttl_seconds=30),
             )
         ]
