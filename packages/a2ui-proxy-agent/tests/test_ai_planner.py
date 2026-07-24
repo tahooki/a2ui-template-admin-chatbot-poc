@@ -130,7 +130,7 @@ class ProxyAIPlannerTest(unittest.IsolatedAsyncioTestCase):
                 sample_data_preview=preview,
             )
 
-    async def test_calls_openai_with_strict_schema_for_both_stages(
+    async def test_calls_openai_without_response_format_for_both_stages(
         self,
     ) -> None:
         schema, preview = schema_fixture()
@@ -141,10 +141,10 @@ class ProxyAIPlannerTest(unittest.IsolatedAsyncioTestCase):
         ) -> httpx.Response:
             payload = json.loads(request.content)
             requests.append(payload)
-            schema_name = payload["response_format"][
-                "json_schema"
-            ]["name"]
-            if schema_name == "a2ui_template_selection":
+            prompt = json.loads(
+                payload["messages"][1]["content"]
+            )
+            if "templates" in prompt:
                 result = recommendation_fixture()
             else:
                 result = {
@@ -211,9 +211,7 @@ class ProxyAIPlannerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(requests), 2)
         self.assertTrue(
             all(
-                request["response_format"]["json_schema"][
-                    "strict"
-                ]
+                "response_format" not in request
                 for request in requests
             )
         )
@@ -226,6 +224,21 @@ class ProxyAIPlannerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             len(selection_prompt["templates"]),
             3,
+        )
+        self.assertEqual(
+            selection_prompt["outputJsonSchema"]["type"],
+            "object",
+        )
+        self.assertIn(
+            "Return exactly one JSON object",
+            requests[0]["messages"][0]["content"],
+        )
+        mapping_prompt = json.loads(
+            requests[1]["messages"][1]["content"]
+        )
+        self.assertEqual(
+            mapping_prompt["outputJsonSchema"]["type"],
+            "object",
         )
 
     async def test_accepts_text_array_and_json_code_fence(

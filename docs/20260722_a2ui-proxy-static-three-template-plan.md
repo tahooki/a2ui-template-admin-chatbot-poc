@@ -62,7 +62,7 @@ Chatbot
     → Surface 생성
 ```
 
-두 AI 단계 모두 Proxy 프로세스가 OpenAI Chat Completions API를 직접 호출한다. `response_format.type=json_schema`와 `strict=true`를 사용하며, AI 출력이 구조 또는 데이터 스키마 검증을 통과하지 못하면 한 번 교정 요청한다.
+두 AI 단계 모두 Proxy 프로세스가 OpenAI Chat Completions API를 직접 호출한다. OpenAI API의 `response_format`은 사용하지 않는다. 대신 프롬프트에 출력 JSON 스키마와 JSON 객체 하나만 반환하라는 규칙을 포함한다. AI 출력이 구조 또는 데이터 스키마 검증을 통과하지 못하면 한 번 교정 요청한다.
 
 ## 4. AI 판단과 검증 규칙
 
