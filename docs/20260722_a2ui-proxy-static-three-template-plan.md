@@ -13,11 +13,11 @@ A2UI Proxy Agent가 별도 MCP 또는 A2A A2UI Agent를 호출하지 않고 다�
 | `collection.cardGrid` | 카드 | 이미지와 설명 중심 카드 |
 | `matrix.table` | 데이터 테이블 | 여러 필드 비교 |
 
-Main Agent는 기존처럼 업무 의도 판단과 데이터 조회만 담당한다. Proxy Agent는 `data_result`를 서버 내부에 보관하고, 표시 방식 선택과 SurfaceEnvelope 생성을 직접 처리한다.
+Main Agent는 업무 의도 판단과 내부 데모 데이터 생성을 담당한다. Proxy Agent는 `data_result`를 서버 내부에 보관하고, 표시 방식 선택과 SurfaceEnvelope 생성을 직접 처리한다.
 
 ## 2. 범위 원칙
 
-핵심 런타임 작업은 `packages/a2ui-proxy-agent`에 한정한다. 저장소의 Proxy 개발·테스트 명령이 동일한 standalone runtime을 사용하도록 Proxy 전용 root script만 함께 수정한다.
+초기 핵심 런타임 작업은 `packages/a2ui-proxy-agent`에 한정했다. 후속 독립 실행 개선에서는 Main Agent의 HTTP 업무 데이터 호출만 내부 데이터 제공자로 교체하고, 관련 설정·테스트·문서를 함께 정리한다.
 
 다음 구성은 삭제하거나 수정하지 않는다.
 
@@ -25,9 +25,9 @@ Main Agent는 기존처럼 업무 의도 판단과 데이터 조회만 담당한
 - `/api/admin/templates`와 파일 기반 템플릿 카탈로그
 - Next A2A route와 A2A server 코드
 - Agent Flow와 Data Boundary Lab
-- Main Agent의 기존 코드와 테스트
+- Main Agent의 LLM, intent routing, SSE 및 `data_result` 계약
 - Chatbot UI, Renderer, 내비게이션, 기본 진입점
-- root README, root `.env.example`, Proxy 외 실행/E2E script
+- root README, Proxy 외 실행/E2E script
 
 Admin과 기존 10종 템플릿은 향후 다시 사용할 수 있도록 그대로 보존한다. 활성 Chatbot 요청에서 Proxy만 Admin/A2A 경로를 우회한다.
 
@@ -38,7 +38,7 @@ Chatbot UI
 → Next /api/chat
 → A2UI Proxy Agent
 → Main Agent
-→ Business API
+→ Main Agent 내부 업무 데이터
 → Main Agent data_result
 → Proxy가 데이터를 정규화하고 고정 3종 선택지 생성
 → display_options
@@ -48,7 +48,7 @@ Chatbot UI
 → 기존 Chatbot Renderer
 ```
 
-Proxy가 호출하는 Agent는 Main Agent 하나뿐이다. 템플릿 추천과 Surface 생성 과정에서는 MCP, A2A A2UI Agent, Admin API를 호출하지 않는다.
+Proxy가 호출하는 Agent는 Main Agent 하나뿐이다. Main Agent의 데모 데이터 조회와 Proxy의 템플릿 추천·Surface 생성 과정에서는 외부 업무 API, MCP, A2A A2UI Agent, Admin API를 호출하지 않는다.
 
 ## 4. Proxy 구현 내용
 
@@ -122,6 +122,18 @@ packages/a2ui-proxy-agent/
 scripts/
 ├─ proxy-agent-dev.mjs          # standalone runner 호출로 변경
 └─ proxy-agent-test.mjs         # Proxy 전용 venv 준비 후 테스트
+
+packages/a2ui-python-agent/
+├─ README.md
+├─ app/
+│  ├─ business_tools.py         # 내부 데이터 제공자 호출
+│  ├─ config.py                 # Next 업무 API 설정 제거
+│  ├─ equipment_tools.py        # HTTP fetch 제거
+│  ├─ local_business_data.py    # 신규. 9개 로컬 데이터셋
+│  ├─ main.py                   # health에 local source 표시
+│  └─ tool_router.py            # 내부 데이터 설명으로 정리
+└─ tests/
+   └─ test_business_tools.py    # 실제 로컬 데이터 검증
 ```
 
 ## 6. 완료 체크리스트
@@ -137,10 +149,12 @@ scripts/
 - [x] 텍스트 모드의 A2UI 우회 유지
 - [x] Proxy health에 static template mode와 3개 ID 표시
 - [x] Proxy 단위 테스트 25개 통과
-- [x] Admin, A2A, Main Agent, Chatbot 코드는 원래 상태로 보존
+- [x] Admin, A2A, Chatbot 코드는 원래 상태로 보존
 - [x] Proxy 폴더만 복사해 `python3 run.py`로 실행 가능
 - [x] Proxy 전용 `.venv` 생성과 requirements 설치 자동화
 - [x] Main Agent venv에 대한 Proxy 실행 의존성 제거
+- [x] Main Agent의 Next 업무 API 호출 제거
+- [x] Main Agent 내부 9개 데이터셋으로 기존 `data_result` 계약 유지
 
 ## 7. 검증 명령
 
@@ -174,10 +188,10 @@ npm run build
 Chatbot API
 → A2UI Proxy 컨테이너:8200
 → MAIN_AGENT_URL
-→ Main Agent 서버
+→ 로컬 업무 데이터를 포함한 Main Agent 서버
 ```
 
-Proxy 배포 서버에는 Redis, MCP 서버, 템플릿 Admin, A2A 서버가 필요하지 않다. 단, `MAIN_AGENT_URL`로 지정한 Main Agent의 `POST /chat/stream` SSE endpoint에 네트워크로 접근할 수 있어야 한다.
+Proxy 배포 서버에는 Redis, MCP 서버, 템플릿 Admin, A2A 서버, 별도 업무 데이터 API가 필요하지 않다. 단, `MAIN_AGENT_URL`로 지정한 Main Agent의 `POST /chat/stream` SSE endpoint에 네트워크로 접근할 수 있어야 한다.
 
 ### 8.2 추가할 배포 파일
 
@@ -264,8 +278,9 @@ curl http://localhost:8200/health
 
 ## 9. 완료 조건
 
-- 변경 파일이 문서와 `packages/a2ui-proxy-agent` 아래에만 존재한다.
+- 런타임 변경은 `packages/a2ui-proxy-agent`와 Main Agent의 로컬 데이터 제공 경로에 한정한다.
 - Proxy가 Main Agent 외의 Agent, MCP, Admin API를 호출하지 않는다.
+- Main Agent가 데이터 요청을 처리할 때 외부 업무 API를 호출하지 않는다.
 - 데이터 요청에 정확히 세 개의 표시 방식이 제공된다.
 - 세 템플릿 모두 Proxy가 직접 SurfaceEnvelope를 생성한다.
 - 선택 전 원본 업무 데이터가 브라우저에 노출되지 않는다.

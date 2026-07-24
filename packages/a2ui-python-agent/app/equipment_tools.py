@@ -1,10 +1,6 @@
 import re
 from typing import Any, Literal
 
-import httpx
-
-from .config import settings
-
 EquipmentApiId = Literal[
     "equipment-catalog",
     "equipment-status",
@@ -16,9 +12,6 @@ EquipmentApiId = Literal[
     "summary",
     "hierarchy",
 ]
-
-FIXTURE_API_IDS: set[EquipmentApiId] = {"work-items", "resources", "status-checks", "summary", "hierarchy"}
-
 
 def equipment_api_title(api_id: EquipmentApiId) -> str:
     titles: dict[EquipmentApiId, str] = {
@@ -33,17 +26,6 @@ def equipment_api_title(api_id: EquipmentApiId) -> str:
         "hierarchy": "계층 구조 Fixture API",
     }
     return titles[api_id]
-
-
-async def fetch_equipment_data(api_id: EquipmentApiId) -> dict[str, Any]:
-    route = f"a2ui-fixtures/{api_id}" if api_id in FIXTURE_API_IDS else api_id
-    url = f"{settings.next_api_base_url.rstrip('/')}/api/{route}"
-    async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
-        response = await client.get(url, params={"pageSize": "44"})
-        response.raise_for_status()
-        return response.json()
-
-
 def _field_type(key: str, examples: list[Any]) -> str:
     first = next((value for value in examples if value is not None), None)
     if isinstance(first, bool):

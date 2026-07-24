@@ -3,7 +3,8 @@ from typing import Any
 from uuid import uuid4
 
 from .data_integrity import build_data_integrity_snapshot
-from .equipment_tools import EquipmentApiId, fetch_equipment_data
+from .equipment_tools import EquipmentApiId
+from .local_business_data import load_local_business_data
 from .tool_router import BusinessToolName, api_id_for_business_tool, business_tool_definition
 
 
@@ -18,10 +19,10 @@ class BusinessToolResult:
 async def run_business_tool(tool_name: str) -> BusinessToolResult:
     api_id = api_id_for_business_tool(tool_name)
     definition = business_tool_definition(tool_name)
-    data = await fetch_equipment_data(api_id)
+    data = load_local_business_data(api_id)
     integrity = build_data_integrity_snapshot(data)
     metadata = {
-        "source": "main_agent_business_tool",
+        "source": "main_agent_local_data",
         "operation": tool_name,
         "description": definition["description"],
         "inputSchema": definition["input_schema"],

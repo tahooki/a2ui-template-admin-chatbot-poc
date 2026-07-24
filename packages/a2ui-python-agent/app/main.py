@@ -71,7 +71,7 @@ async def health() -> dict[str, Any]:
     return {
         "ok": True,
         "name": "template-data-main-agent",
-        "nextApiBaseUrl": settings.next_api_base_url,
+        "businessDataSource": "local",
         "intentRouter": "regex",
         "llmConfigured": bool(settings.openai_api_key),
         "openaiModel": settings.openai_model,
