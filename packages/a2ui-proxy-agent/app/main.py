@@ -18,10 +18,10 @@ logger = logging.getLogger("uvicorn.error")
 app = FastAPI(title="A2UI Proxy Agent", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=list(settings.allowed_origins),
+    allow_credentials=settings.allow_credentials,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Accept", "Authorization", "Content-Type"],
 )
 
 
@@ -38,15 +38,26 @@ async def health() -> dict[str, Any]:
     return {
         "ok": True,
         "name": "a2ui-proxy-agent",
-        "mainAgentUrl": settings.main_agent_url,
         "selectionTtlSeconds": settings.selection_ttl_seconds,
+        "selectionMaxEntries": settings.selection_max_entries,
         "templateMode": "proxy-ai",
-        "aiPlanner": "openai-structured-output",
+        "aiPlanner": "openai-json-with-validation",
         "aiConfigured": bool(settings.openai_api_key),
-        "openaiModel": settings.openai_model,
-        "flowLogMaxChars": settings.flow_log_max_chars,
         "templateVersion": STATIC_TEMPLATE_VERSION,
         "templateIds": STATIC_TEMPLATE_IDS,
+    }
+
+
+@app.get("/ready")
+async def ready() -> dict[str, Any]:
+    if not settings.openai_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENAI_API_KEY is not configured",
+        )
+    return {
+        "ready": True,
+        "name": "a2ui-proxy-agent",
     }
 
 
@@ -55,14 +66,12 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
     message = body.normalized_message()
     if not message:
         raise HTTPException(status_code=400, detail="message is required")
-    raw_request_body = (await request.body()).decode("utf-8", errors="replace")
-    logger.info("[a2ui-proxy-agent] chat rawRequestBody=%s", raw_request_body)
+    history = body.normalized_history()
     log_flow(
         "00_proxy_request_received",
         result={
-            "rawRequestBody": raw_request_body,
-            "message": message,
-            "history": body.history,
+            "messageLength": len(message),
+            "historyCount": len(history),
             "presentationMode": body.presentation_mode,
         },
     )
@@ -71,29 +80,31 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
         body.presentation_mode,
         len(message),
     )
-    return stream_response(stream_chat_turn(message, body.history, presentation_mode=body.presentation_mode))
+    authorization = (
+        request.headers.get("authorization")
+        if settings.forward_authorization
+        else None
+    )
+    return stream_response(
+        stream_chat_turn(
+            message,
+            history,
+            presentation_mode=body.presentation_mode,
+            upstream_authorization=authorization,
+        )
+    )
 
 
 @app.post("/display-selection/stream")
 async def display_selection_stream(
-    request: Request,
     body: DisplaySelectionRequest,
 ) -> StreamingResponse:
     if not body.selection_id or not body.template_id:
         raise HTTPException(status_code=400, detail="selectionId and templateId are required")
-    raw_request_body = (await request.body()).decode(
-        "utf-8",
-        errors="replace",
-    )
-    logger.info(
-        "[a2ui-proxy-agent] display selection rawRequestBody=%s",
-        raw_request_body,
-    )
     log_flow(
         "08_display_selection_request_received",
         selection_id=body.selection_id,
         result={
-            "rawRequestBody": raw_request_body,
             "templateId": body.template_id,
         },
     )

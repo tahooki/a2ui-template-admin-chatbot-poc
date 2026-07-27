@@ -41,7 +41,7 @@ test("capture chatbot-generated A2UI surfaces", async ({ page }) => {
     await expect(surface).toBeVisible({ timeout: 45_000 });
     await expect(surface).toContainText(scenario.title);
     await expect(chat.getByText("Agent가 장비 데이터를 조회하거나 처리하지 못했습니다.")).toHaveCount(0);
-    await expect(chat.getByText("/api/chat failed")).toHaveCount(0);
+    await expect(chat.getByText("Proxy Agent chat failed")).toHaveCount(0);
 
     const number = String(index + 1).padStart(2, "0");
     await page.screenshot({

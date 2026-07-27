@@ -85,6 +85,13 @@ const quickPrompts = [
 ];
 
 const pendingText = "조회 중입니다.";
+const proxyAgentUrl = (
+  process.env.NEXT_PUBLIC_A2UI_PROXY_AGENT_URL ?? "http://localhost:8200"
+).replace(/\/+$/, "");
+
+function proxyAgentEndpoint(path: "/chat/stream" | "/display-selection/stream") {
+  return `${proxyAgentUrl}${path}`;
+}
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -167,9 +174,12 @@ export function ChatbotPanel({
     )));
 
     try {
-      const response = await fetch("/api/chat/display-selection", {
+      const response = await fetch(proxyAgentEndpoint("/display-selection/stream"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          Accept: "text/event-stream",
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ selectionId, templateId }),
       });
       if (!response.ok) throw new Error(`display selection failed with ${response.status}`);
@@ -265,15 +275,18 @@ export function ChatbotPanel({
       emitFlow("local", "request_start", { message: trimmed, presentationMode: requestPresentationMode });
 
       try {
-        const response = await fetch("/api/chat", {
+        const response = await fetch(proxyAgentEndpoint("/chat/stream"), {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            Accept: "text/event-stream",
+            "Content-Type": "application/json",
+          },
           body: JSON.stringify({ message: trimmed, history, presentationMode: requestPresentationMode }),
         });
 
         if (!response.ok) {
           emittedError = true;
-          const message = `/api/chat failed with ${response.status}`;
+          const message = `Proxy Agent chat failed with ${response.status}`;
           emitFlow("local", "response_error", { message, status: response.status });
           throw new Error(message);
         }

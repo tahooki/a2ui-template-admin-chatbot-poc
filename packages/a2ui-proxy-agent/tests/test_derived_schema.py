@@ -17,6 +17,8 @@ class DerivedSchemaTest(unittest.TestCase):
                         "status": "RUNNING",
                         "count": 3,
                         "email": "hidden@example.com",
+                        "apiKey": "hidden-key",
+                        "api_key": "hidden-key-two",
                     }
                     for _index in range(20)
                 ],
@@ -42,6 +44,14 @@ class DerivedSchemaTest(unittest.TestCase):
             "[masked]",
         )
         self.assertEqual(
+            preview["data"]["result"]["rows"][0]["apiKey"],
+            "[masked]",
+        )
+        self.assertEqual(
+            preview["data"]["result"]["rows"][0]["api_key"],
+            "[masked]",
+        )
+        self.assertEqual(
             schema["primaryArrayPath"],
             "result.rows",
         )
@@ -63,6 +73,13 @@ class DerivedSchemaTest(unittest.TestCase):
         )
         self.assertNotIn(
             "result.rows.email",
+            {
+                field["path"]
+                for field in schema["fields"]
+            },
+        )
+        self.assertNotIn(
+            "result.rows.apiKey",
             {
                 field["path"]
                 for field in schema["fields"]

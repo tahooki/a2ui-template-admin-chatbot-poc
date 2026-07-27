@@ -6,6 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from .ai_planner import AIPlanner, ProxyAIPlanner
+from .config import settings
 from .contracts import PresentationMode
 from .derived_schema import (
     build_derived_schema,
@@ -34,6 +35,21 @@ def proxy_payload(data: dict[str, Any], *, turn_id: str, branch: str | None = No
     }
     if branch:
         payload["branch"] = branch
+    return payload
+
+
+def _public_error(
+    message: str,
+    exc: Exception,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"message": message}
+    if settings.expose_error_details:
+        payload.update(
+            {
+                "details": str(exc),
+                "errorType": exc.__class__.__name__,
+            }
+        )
     return payload
 
 
@@ -73,6 +89,7 @@ async def stream_chat_turn(
     history: list[dict[str, Any]] | None = None,
     *,
     presentation_mode: PresentationMode = "a2ui",
+    upstream_authorization: str | None = None,
     main_agent_client: MainAgentClient | None = None,
     ai_planner: AIPlanner | None = None,
     store: SelectionStore = selection_store,
@@ -110,10 +127,17 @@ async def stream_chat_turn(
             ),
         )
 
+        stream_options: dict[str, Any] = {
+            "message": message,
+            "history": history,
+            "presentation_mode": presentation_mode,
+        }
+        if upstream_authorization:
+            stream_options["authorization"] = (
+                upstream_authorization
+            )
         async for event, data in main_client.stream_chat(
-            message=message,
-            history=history,
-            presentation_mode=presentation_mode,
+            **stream_options,
         ):
             log_flow(
                 "02_main_agent_event_received",
@@ -416,11 +440,10 @@ async def stream_chat_turn(
         yield sse_event(
             "error",
             proxy_payload(
-                {
-                    "message": "A2UI Proxy Agent가 요청을 처리하지 못했습니다.",
-                    "details": str(exc),
-                    "errorType": exc.__class__.__name__,
-                },
+                _public_error(
+                    "A2UI Proxy Agent가 요청을 처리하지 못했습니다.",
+                    exc,
+                ),
                 turn_id=turn_id,
                 branch="error",
             ),
@@ -439,10 +462,12 @@ async def stream_display_selection(
     store: SelectionStore = selection_store,
 ) -> AsyncIterator[str]:
     turn_id = f"proxy-selection-{uuid4()}"
+    claimed = False
     try:
-        context = store.get(selection_id)
+        context = store.claim(selection_id)
         if not context:
             raise ValueError("선택 정보가 만료되었거나 존재하지 않습니다. 데이터를 다시 조회해 주세요.")
+        claimed = True
         if template_id not in context.allowed_template_ids:
             raise ValueError("선택할 수 없는 템플릿입니다.")
         planner = ai_planner or ProxyAIPlanner()
@@ -533,7 +558,6 @@ async def stream_display_selection(
             },
         )
         surface = build_surface(
-            query=context.query,
             api_id=context.api_id,
             data=context.data,
             metadata=context.metadata,
@@ -549,6 +573,7 @@ async def stream_display_selection(
             result=surface,
         )
         store.delete(selection_id)
+        claimed = False
         yield sse_event(
             "surface",
             proxy_payload(
@@ -571,6 +596,8 @@ async def stream_display_selection(
             ),
         )
     except Exception as exc:
+        if claimed:
+            store.release(selection_id)
         log_flow(
             "99_display_selection_flow_failed",
             turn_id=turn_id,
@@ -588,11 +615,10 @@ async def stream_display_selection(
         yield sse_event(
             "error",
             proxy_payload(
-                {
-                    "message": "선택한 A2UI 화면을 생성하지 못했습니다.",
-                    "details": str(exc),
-                    "errorType": exc.__class__.__name__,
-                },
+                _public_error(
+                    "선택한 A2UI 화면을 생성하지 못했습니다.",
+                    exc,
+                ),
                 turn_id=turn_id,
                 branch="error",
             ),

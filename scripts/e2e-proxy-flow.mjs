@@ -1,4 +1,4 @@
-const baseUrl = process.env.A2UI_E2E_BASE_URL || "http://localhost:3001";
+const proxyAgentUrl = (process.env.A2UI_E2E_PROXY_AGENT_URL || "http://localhost:8200").replace(/\/+$/, "");
 
 function expect(condition, message) {
   if (!condition) throw new Error(message);
@@ -30,8 +30,8 @@ async function readSse(response) {
 }
 
 async function main() {
-  console.log(`[info] proxy flow E2E base=${baseUrl}`);
-  const chatEvents = await readSse(await fetch(`${baseUrl}/api/chat`, {
+  console.log(`[info] direct Proxy flow E2E base=${proxyAgentUrl}`);
+  const chatEvents = await readSse(await fetch(`${proxyAgentUrl}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message: "work-items API 데이터를 보여줘" }),
@@ -48,7 +48,7 @@ async function main() {
   expect(Array.isArray(displayOptions?.options) && displayOptions.options.length > 0, "display_options must include options");
   const selected = displayOptions.options.find((option) => option.recommended) ?? displayOptions.options[0];
 
-  const selectionEvents = await readSse(await fetch(`${baseUrl}/api/chat/display-selection`, {
+  const selectionEvents = await readSse(await fetch(`${proxyAgentUrl}/display-selection/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -60,7 +60,7 @@ async function main() {
   expect(surface?.templateId === selected.templateId, "selected Surface must match the chosen template");
   expect(selectionEvents.some((item) => item.event === "done" && item.data.mode === "render_surface"), "selection stream must complete with render_surface");
 
-  const textEvents = await readSse(await fetch(`${baseUrl}/api/chat`, {
+  const textEvents = await readSse(await fetch(`${proxyAgentUrl}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

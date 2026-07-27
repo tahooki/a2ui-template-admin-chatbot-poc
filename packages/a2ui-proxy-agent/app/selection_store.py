@@ -18,10 +18,26 @@ class SelectionContext:
     expires_at: float
 
 
+class SelectionBusyError(ValueError):
+    pass
+
+
 class SelectionStore:
-    def __init__(self, ttl_seconds: float | None = None) -> None:
+    def __init__(
+        self,
+        ttl_seconds: float | None = None,
+        max_entries: int | None = None,
+    ) -> None:
         self.ttl_seconds = settings.selection_ttl_seconds if ttl_seconds is None else ttl_seconds
+        self.max_entries = (
+            settings.selection_max_entries
+            if max_entries is None
+            else max_entries
+        )
+        if self.max_entries < 1:
+            raise ValueError("max_entries must be at least 1")
         self._items: dict[str, SelectionContext] = {}
+        self._in_flight: set[str] = set()
 
     def put(
         self,
@@ -34,6 +50,7 @@ class SelectionStore:
         planning: dict[str, Any] | None = None,
     ) -> SelectionContext:
         self._delete_expired()
+        self._evict_if_full()
         selection_id = f"selection-{uuid4()}"
         context = SelectionContext(
             selection_id=selection_id,
@@ -52,14 +69,48 @@ class SelectionStore:
         self._delete_expired()
         return self._items.get(selection_id)
 
+    def claim(self, selection_id: str) -> SelectionContext | None:
+        self._delete_expired()
+        context = self._items.get(selection_id)
+        if context is None:
+            return None
+        if selection_id in self._in_flight:
+            raise SelectionBusyError(
+                "선택한 화면을 이미 생성하고 있습니다."
+            )
+        self._in_flight.add(selection_id)
+        return context
+
+    def release(self, selection_id: str) -> None:
+        self._in_flight.discard(selection_id)
+
     def delete(self, selection_id: str) -> None:
+        self._in_flight.discard(selection_id)
         self._items.pop(selection_id, None)
+
+    def _evict_if_full(self) -> None:
+        if len(self._items) < self.max_entries:
+            return
+        evictable = [
+            context
+            for key, context in self._items.items()
+            if key not in self._in_flight
+        ]
+        if not evictable:
+            raise RuntimeError(
+                "선택 저장소가 처리 중인 요청으로 가득 찼습니다."
+            )
+        oldest = min(
+            evictable,
+            key=lambda context: context.expires_at,
+        )
+        self.delete(oldest.selection_id)
 
     def _delete_expired(self) -> None:
         now = monotonic()
         expired = [key for key, value in self._items.items() if value.expires_at <= now]
         for key in expired:
-            self._items.pop(key, None)
+            self.delete(key)
 
 
 selection_store = SelectionStore()

@@ -37,4 +37,4 @@ If the Main Agent is unavailable, the Proxy Agent streams an `error` event inste
 
 Main Agent dataset selection is rule-based for demos. Check `/health` for `intentRouter: "regex"` and `businessDataSource: "local"`, then confirm its chat stream emits an intent state with `source: "regex"` followed by a `data_result` event.
 
-The Next app is still needed when using the repository's browser Chatbot UI because it serves the frontend and `/api/chat` facade. It is not a business-data dependency of the Main Agent.
+The Next app is still needed when using the repository's browser Chatbot UI because it serves the frontend. The browser calls the A2UI Proxy Agent directly; there is no Next `/api/chat` facade. The Next app is not a business-data dependency of the Main Agent.

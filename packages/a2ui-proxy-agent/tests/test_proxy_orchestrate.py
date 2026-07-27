@@ -1,7 +1,9 @@
 import json
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
+from app.config import settings
 from app.derived_schema import (
     build_derived_schema,
     build_sample_data_preview,
@@ -22,9 +24,18 @@ class FakeMainAgentClient:
     def __init__(self, with_data: bool = True) -> None:
         self.with_data = with_data
         self.presentation_modes: list[str] = []
+        self.authorizations: list[str | None] = []
 
-    async def stream_chat(self, *, message, history=None, presentation_mode="a2ui"):
+    async def stream_chat(
+        self,
+        *,
+        message,
+        history=None,
+        presentation_mode="a2ui",
+        authorization=None,
+    ):
         self.presentation_modes.append(presentation_mode)
+        self.authorizations.append(authorization)
         yield "state", {"status": "intent", "label": "equipment-status"}
         yield "text", {"text": "장비 상태 데이터를 조회했습니다."}
         if self.with_data:
@@ -168,9 +179,13 @@ class FakeAIPlanner:
         }
 
 
+class FailingMappingPlanner(FakeAIPlanner):
+    async def map_fields(self, **_kwargs):
+        raise RuntimeError("private upstream detail")
+
+
 def planning_fixture(
     data: dict,
-    ai_planner: FakeAIPlanner,
 ) -> dict:
     preview = build_sample_data_preview(
         data,
@@ -401,6 +416,24 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(done["mode"], "text")
         self.assertEqual(done["presentationMode"], "text")
 
+    async def test_forwards_authorization_to_main_agent(self) -> None:
+        main_agent = FakeMainAgentClient(with_data=False)
+        chunks = [
+            chunk
+            async for chunk in stream_chat_turn(
+                "장비 상태 보여줘",
+                upstream_authorization="Bearer browser-token",
+                main_agent_client=main_agent,
+                ai_planner=FakeAIPlanner(),
+            )
+        ]
+
+        self.assertTrue(chunks)
+        self.assertEqual(
+            main_agent.authorizations,
+            ["Bearer browser-token"],
+        )
+
     async def test_text_mode_preserves_main_agent_error_completion(self) -> None:
         chunks = [
             chunk
@@ -457,7 +490,6 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
                     allowed_template_ids=list(STATIC_TEMPLATE_IDS),
                     planning=planning_fixture(
                         data,
-                        ai_planner,
                     ),
                 )
                 chunks = [
@@ -520,6 +552,54 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
         events = [parse_sse_chunk(chunk) for chunk in chunks]
         self.assertIn("error", [event for event, _data in events])
         self.assertNotIn("surface", [event for event, _data in events])
+
+    async def test_mapping_failure_hides_details_and_releases_claim(
+        self,
+    ) -> None:
+        store = SelectionStore(ttl_seconds=30)
+        data = {
+            "items": [
+                {
+                    "name": "장비 1",
+                    "status": "RUNNING",
+                }
+            ]
+        }
+        context = store.put(
+            query="장비 상태 보여줘",
+            api_id="equipment-status",
+            data=data,
+            metadata={},
+            allowed_template_ids=list(STATIC_TEMPLATE_IDS),
+            planning=planning_fixture(data),
+        )
+        with (
+            patch(
+                "app.orchestrate.settings",
+                replace(settings, expose_error_details=False),
+            ),
+            patch("app.orchestrate.logger.exception"),
+        ):
+            chunks = [
+                chunk
+                async for chunk in stream_display_selection(
+                    context.selection_id,
+                    "matrix.table",
+                    ai_planner=FailingMappingPlanner(),
+                    store=store,
+                )
+            ]
+        events = [parse_sse_chunk(chunk) for chunk in chunks]
+        error = next(
+            data for event, data in events if event == "error"
+        )
+        self.assertNotIn("details", error)
+        self.assertNotIn("errorType", error)
+        self.assertNotIn("private upstream detail", json.dumps(error))
+        self.assertEqual(
+            store.claim(context.selection_id),
+            context,
+        )
 
 
 if __name__ == "__main__":

@@ -5,17 +5,19 @@ This project is a local A2UI admin/chatbot proof of concept.
 Runtime flow:
 
 ```text
-Chat UI
-  -> Next /api/chat
+Chat UI (browser)
   -> A2UI Proxy Agent(:8200)
   -> Main Agent(:8000)
   -> business API data_result
   -> A2UI Proxy Agent
-  -> A2A A2UI Agent / template candidates
+  -> Proxy-owned AI planner / three static template candidates
   -> user display selection
   -> selected A2UI Surface
   -> browser renderer
 ```
+
+The Next app serves the Chat UI only. It does not provide a chat BFF; the
+browser calls the Proxy Agent's SSE endpoints directly.
 
 ## Getting Started
 
@@ -69,6 +71,23 @@ OPENAI_BASE_URL=https://사내-llm-gateway.example.com/v1
 
 Local service URLs default to `http://localhost:3001` for Next/A2A, `http://localhost:8000` for the Main Agent, and `http://localhost:8200` for the A2UI Proxy Agent. You only need URL env overrides if you change those ports.
 
+When the browser must reach a Proxy Agent at another address, set the public
+URL before starting or building the Next app:
+
+```bash
+NEXT_PUBLIC_A2UI_PROXY_AGENT_URL=https://a2ui-proxy.example.com
+```
+
+Next.js embeds this value into the browser bundle at build time. The Proxy
+must allow the Chat UI origin through CORS and must use HTTPS when the Chat UI
+is served over HTTPS.
+
+Configure the Proxy server with the same browser origin:
+
+```bash
+A2UI_PROXY_ALLOWED_ORIGINS=https://chatbot.example.com
+```
+
 The Next equipment API routes work without equipment-source env variables. They serve local fixture data by default:
 
 ```text
@@ -80,7 +99,7 @@ GET http://localhost:3001/api/equipment-status-large-rows
 
 To proxy status/catalog to an external equipment source instead, set `A2UI_EQUIPMENT_STATUS_API_URL` and `A2UI_EQUIPMENT_CATALOG_API_URL`. If those env values point at a local source such as `localhost:8100` and that source is not running, the routes fall back to the local fixtures.
 
-The Main Agent and Next-hosted A2UI planner expect an OpenAI-compatible chat completions endpoint:
+The Main Agent and Proxy-owned A2UI planner expect an OpenAI-compatible chat completions endpoint:
 
 ```text
 POST {OPENAI_BASE_URL}/chat/completions
@@ -112,7 +131,12 @@ Check the Proxy Agent:
 curl http://localhost:8200/health
 ```
 
-The response should include `mainAgentUrl`, `a2aUrl`, and `selectionTtlSeconds`.
+The response should include `selectionTtlSeconds`, `selectionMaxEntries`,
+`aiConfigured`, and `templateIds`. Readiness can be checked separately:
+
+```bash
+curl http://localhost:8200/ready
+```
 
 ## Proxy Agent Responsibilities
 
@@ -122,11 +146,17 @@ The Main Agent no longer calls A2UI directly. For a data request it emits:
 state -> text -> data_result -> done
 ```
 
-`data_result` contains the raw business data and source integrity metadata. The Proxy Agent keeps that event server-side, sends the data to the A2UI Agent, and exposes only `display_options` to the browser. After the user chooses a template, the Proxy returns the selected `surface` event.
+`data_result` contains the raw business data and source integrity metadata. The
+Proxy Agent keeps that event server-side, runs its AI planner against three
+static templates, and exposes only `display_options` to the browser. After the
+user chooses a template, the Proxy returns the selected `surface` event.
 
-Chat requests also accept `presentationMode: "a2ui" | "text"` and default to `a2ui`. In `text` mode the Main Agent returns a bounded, masked data summary and the Proxy does not call the A2UI Agent. See `docs/20260721_external-chatbot-a2ui-text-toggle-guide.md` for the external chatbot integration steps.
+Chat requests also accept `presentationMode: "a2ui" | "text"` and default to
+`a2ui`. In `text` mode the Main Agent returns a bounded, masked data summary
+and the Proxy does not run the A2UI planner. See
+`src/features/a2ui-chat-kit/README.md` for the direct browser integration.
 
-For local development the selection context is stored in Proxy Agent memory for five minutes. Restarting the Proxy invalidates pending choices.
+For local development the selection context is stored in Proxy Agent memory for five minutes. Restarting the Proxy invalidates pending choices. Run one Proxy worker unless a shared selection store or sticky routing is added.
 
 Check the Next app:
 

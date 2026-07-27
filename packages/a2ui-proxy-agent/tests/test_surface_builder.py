@@ -86,7 +86,7 @@ class SurfaceBuilderTest(unittest.TestCase):
                     expected_path,
                 )
                 self.assertEqual(
-                    normalized.canonical_data["items"],
+                    normalized.rows,
                     [{"name": "A"}],
                 )
                 self.assertEqual(normalized.row_count, 1)
@@ -153,7 +153,6 @@ class SurfaceBuilderTest(unittest.TestCase):
             with self.subTest(template_id=template_id):
                 surface = build_surface(
                     template_id=template_id,
-                    query="장비를 보여줘",
                     api_id="equipment-status",
                     data=self.data,
                     derived_schema=self.schema,
@@ -203,7 +202,6 @@ class SurfaceBuilderTest(unittest.TestCase):
 
         table = build_surface(
             template_id="matrix.table",
-            query="장비를 보여줘",
             api_id="equipment-status",
             data=self.data,
             derived_schema=self.schema,
@@ -236,7 +234,6 @@ class SurfaceBuilderTest(unittest.TestCase):
         )
         surface = build_surface(
             template_id="collection.cardGrid",
-            query="카드로 보여줘",
             api_id="work-items",
             data=data,
             derived_schema=schema,
@@ -260,11 +257,57 @@ class SurfaceBuilderTest(unittest.TestCase):
         self.assertEqual(mapping["title"], "items[].title")
         self.assertNotIn("image", mapping)
 
+    def test_surface_sends_only_template_max_items(self) -> None:
+        data = {
+            "items": [
+                {
+                    "name": f"장비 {index}",
+                    "status": "RUNNING",
+                }
+                for index in range(30)
+            ]
+        }
+        preview = build_sample_data_preview(data)
+        schema = build_derived_schema(
+            data,
+            sample_data_preview=preview,
+        )
+        surface = build_surface(
+            template_id="collection.list",
+            api_id="equipment-status",
+            data=data,
+            derived_schema=schema,
+            ai_recommendation=recommendation(
+                "collection.list"
+            ),
+            ai_mapping={
+                "selectedTemplateId": "collection.list",
+                "reason": "목록 필드 매핑",
+                "titleSourcePath": "items.name",
+                "contentSourcePath": None,
+                "imageSourcePath": None,
+                "categorySourcePath": None,
+                "statusSourcePath": "items.status",
+                "fieldSourcePaths": [],
+            },
+        )
+        self.assertEqual(
+            len(surface["payload"]["data"]["items"]),
+            8,
+        )
+        self.assertEqual(
+            surface["payload"]["data"]["total"],
+            30,
+        )
+        self.assertEqual(
+            surface["meta"]["returnedRowCount"],
+            8,
+        )
+
     def test_rejects_unknown_template(self) -> None:
         with self.assertRaises(SurfaceBuildError):
             build_surface(
                 template_id="record.detail",
-                query="상세",
                 api_id="equipment-status",
                 data=self.data,
                 derived_schema=self.schema,

@@ -24,7 +24,6 @@ class NormalizedData:
     rows: list[DataRow]
     row_count: int
     source_array_path: str
-    canonical_data: dict[str, Any]
 
 
 def _object_rows(value: Any) -> list[DataRow] | None:
@@ -112,7 +111,6 @@ def normalize_data(
         rows=rows,
         row_count=len(rows),
         source_array_path=source_array_path,
-        canonical_data={"items": rows, "total": len(rows)},
     )
 
 
@@ -391,7 +389,6 @@ def _public_schema_summary(
 def build_surface(
     *,
     template_id: str,
-    query: str,
     api_id: str,
     data: Any,
     derived_schema: dict[str, Any],
@@ -420,7 +417,7 @@ def build_surface(
     )
     canonical_rows, field_mapping, schema_mappings = (
         _canonicalize_rows(
-            rows=normalized.rows,
+            rows=normalized.rows[: template.max_items],
             primary_array_path=primary_array_path,
             template_id=template_id,
             ai_mapping=ai_mapping,
@@ -479,6 +476,7 @@ def build_surface(
             "strategy": "proxy_ai_schema_planner",
             "sourceArrayPath": normalized.source_array_path,
             "sourceRowCount": normalized.row_count,
+            "returnedRowCount": len(canonical_rows),
             "sourceDataHash": source_metadata.get(
                 "sourceDataHash"
             ),

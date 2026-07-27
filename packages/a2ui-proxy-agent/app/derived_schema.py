@@ -2,11 +2,8 @@ import json
 import re
 from typing import Any
 
+from .security import SENSITIVE_KEY_RE
 
-SENSITIVE_KEY_RE = re.compile(
-    r"(secret|token|password|authorization|cookie|phone|email)",
-    re.IGNORECASE,
-)
 
 
 def _row_value_at_path(row: dict[str, Any], path: tuple[str, ...]) -> Any:

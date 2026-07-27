@@ -1,17 +1,39 @@
 import json
 import logging
-import re
 from typing import Any
 
 from .config import settings
+from .security import is_sensitive_key
 
 
 logger = logging.getLogger("uvicorn.error")
 
-_SENSITIVE_KEY_RE = re.compile(
-    r"(secret|token|password|authorization|cookie|phone|email|api[_-]?key)",
-    re.IGNORECASE,
-)
+_SUMMARY_KEYS = {
+    "aiConfigured",
+    "apiId",
+    "branch",
+    "candidateCount",
+    "contentType",
+    "errorType",
+    "event",
+    "fieldCount",
+    "finishReason",
+    "mode",
+    "model",
+    "presentationMode",
+    "recommendedTemplateId",
+    "sampleSize",
+    "schemaName",
+    "selectedTemplateId",
+    "selectionId",
+    "shape",
+    "sourceRowCount",
+    "sourceToolName",
+    "sourceToolResultId",
+    "status",
+    "statusCode",
+    "templateId",
+}
 
 
 def redact_flow_value(
@@ -25,7 +47,7 @@ def redact_flow_value(
         return {
             str(key): (
                 "[masked]"
-                if _SENSITIVE_KEY_RE.search(str(key))
+                if is_sensitive_key(key)
                 else redact_flow_value(
                     child,
                     depth=depth + 1,
@@ -44,6 +66,42 @@ def redact_flow_value(
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return repr(value)
+
+
+def summarize_flow_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        summary = {
+            str(key): (
+                "[masked]"
+                if is_sensitive_key(key)
+                else child[:200]
+                if isinstance(child, str)
+                else child
+            )
+            for key, child in value.items()
+            if str(key) in _SUMMARY_KEYS
+            and (
+                is_sensitive_key(key)
+                or isinstance(child, (str, int, float, bool))
+                or child is None
+            )
+        }
+        if summary:
+            return summary
+        return {
+            "type": "object",
+            "keyCount": len(value),
+        }
+    if isinstance(value, (list, tuple)):
+        return {
+            "type": "array",
+            "itemCount": len(value),
+        }
+    if value is None:
+        return None
+    return {
+        "type": type(value).__name__,
+    }
 
 
 def flow_json(
@@ -88,9 +146,17 @@ def log_flow(
     if details:
         payload["details"] = details
     if previous_result is not None:
-        payload["previousResult"] = previous_result
+        payload["previousResult"] = (
+            previous_result
+            if settings.flow_log_include_payloads
+            else summarize_flow_value(previous_result)
+        )
     if result is not None:
-        payload["result"] = result
+        payload["result"] = (
+            result
+            if settings.flow_log_include_payloads
+            else summarize_flow_value(result)
+        )
     logger.info(
         "[a2ui-proxy-agent][flow] %s",
         flow_json(payload),

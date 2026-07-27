@@ -15,8 +15,6 @@ a2ui-chat-kit/
 ├─ a2ui-surface-renderer.tsx    # 10개 A2UI viewType Renderer
 ├─ a2ui-chat-kit.module.css     # Kit 전용 스타일
 ├─ sample-surface.ts            # Agent 없이 Renderer를 확인하는 fixture
-├─ server/
-│  └─ sse-proxy.ts              # BFF에서 사용하는 Web 표준 SSE 중계 헬퍼
 └─ index.ts                     # 공개 export
 ```
 
@@ -118,9 +116,15 @@ import { A2UIDisplaySelection, A2UISurfaceRenderer } from "./a2ui-chat-kit";
 ## 6. 표시 방식 선택 요청
 
 ```ts
-const response = await fetch("/api/chat/display-selection", {
+const proxyAgentUrl =
+  process.env.NEXT_PUBLIC_A2UI_PROXY_AGENT_URL ?? "http://localhost:8200";
+
+const response = await fetch(`${proxyAgentUrl}/display-selection/stream`, {
   method: "POST",
-  headers: { "Content-Type": "application/json" },
+  headers: {
+    Accept: "text/event-stream",
+    "Content-Type": "application/json",
+  },
   body: JSON.stringify({ selectionId, templateId }),
 });
 
@@ -133,35 +137,33 @@ await consumeA2UISse(response, ({ event, data }) => {
 
 선택 요청 중에는 `displaySelection.status`를 `loading`, 완료 후에는 `completed`, 실패 시에는 `error`로 변경한다.
 
-## 7. BFF에서 Proxy Agent 중계
+## 7. 브라우저에서 Proxy Agent 직접 호출
 
-브라우저가 Proxy Agent를 직접 호출하지 않도록 기존 챗봇 BFF에 두 엔드포인트를 둔다.
+별도 BFF 없이 브라우저가 Proxy Agent의 두 SSE 엔드포인트를 직접 호출한다.
 
 ```text
-POST /api/chat
+Chatbot browser
   -> A2UI Proxy Agent POST /chat/stream
-
-POST /api/chat/display-selection
   -> A2UI Proxy Agent POST /display-selection/stream
+  -> Main Agent POST /chat/stream
 ```
 
-Next.js Route Handler 예시:
+최초 채팅 요청:
 
 ```ts
-import { forwardA2UISse } from "./a2ui-chat-kit/server/sse-proxy";
-
-export async function POST(request: Request) {
-  const body = await request.json();
-  return forwardA2UISse({
-    url: `${process.env.A2UI_PROXY_AGENT_URL}/chat/stream`,
-    body,
-    connectErrorMessage: "A2UI Proxy Agent에 연결할 수 없습니다.",
-    upstreamErrorMessage: "A2UI Proxy Agent 응답을 받을 수 없습니다.",
-  });
-}
+const response = await fetch(`${proxyAgentUrl}/chat/stream`, {
+  method: "POST",
+  headers: {
+    Accept: "text/event-stream",
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({ message, history, presentationMode }),
+});
 ```
 
-선택 API는 URL만 `/display-selection/stream`으로 바꾸고 `{ selectionId, templateId }`를 전달한다. 인증 헤더가 필요하면 `forwardA2UISse`의 `headers`에 서버에서 추가한다.
+Next.js에서 `NEXT_PUBLIC_A2UI_PROXY_AGENT_URL`은 빌드 시 브라우저
+번들에 포함된다. 운영 빌드 전에 실제 HTTPS Proxy 주소로 설정해야 한다.
+Proxy Agent는 Chatbot origin을 CORS로 허용해야 한다.
 
 ## 8. Proxy SSE 계약
 
@@ -192,13 +194,16 @@ Kit은 `A2UIPresentationMode` 타입을 제공한다. 채팅 요청에 `presenta
 ```tsx
 const [presentationMode, setPresentationMode] = useState<A2UIPresentationMode>("a2ui");
 
-await fetch("/api/chat", {
+await fetch(`${proxyAgentUrl}/chat/stream`, {
   method: "POST",
-  headers: { "Content-Type": "application/json" },
+  headers: {
+    Accept: "text/event-stream",
+    "Content-Type": "application/json",
+  },
   body: JSON.stringify({ message, history, presentationMode }),
 });
 ```
 
-`text` 모드는 프론트에서 Surface만 숨기는 기능이 아니다. Proxy와 Main Agent가 해당 값을 받아 A2UI Agent 호출을 생략하고 조회 결과를 텍스트로 반환해야 한다. 전체 서버 계약과 외부 챗봇 적용 순서는 `../../../docs/20260721_external-chatbot-a2ui-text-toggle-guide.md`를 참고한다.
+`text` 모드는 프론트에서 Surface만 숨기는 기능이 아니다. Proxy와 Main Agent가 해당 값을 받아 A2UI 플래너 실행을 생략하고 조회 결과를 텍스트로 반환해야 한다. Proxy 서버 계약은 `../../../packages/a2ui-proxy-agent/README.md`를 참고한다.
 
-현재 POC에서 Kit 사용 예시는 `../a2ui-chat/chatbot-panel.tsx`, BFF 사용 예시는 `../../app/api/chat/route.ts`와 `../../app/api/chat/display-selection/route.ts`를 참고한다.
+현재 POC의 Proxy 직접 호출 예시는 `../a2ui-chat/chatbot-panel.tsx`를 참고한다.

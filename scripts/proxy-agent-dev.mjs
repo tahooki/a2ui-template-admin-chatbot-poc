@@ -29,7 +29,7 @@ const child = spawn(
   python.command,
   [...python.prefixArgs, runnerPath, "--reload"],
   {
-    cwd: proxyAgentDir,
+    cwd: root,
     env: process.env,
     stdio: "inherit",
     shell: false,

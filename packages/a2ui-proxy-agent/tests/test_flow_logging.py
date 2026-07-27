@@ -1,6 +1,10 @@
 import unittest
 
-from app.flow_logging import flow_json, redact_flow_value
+from app.flow_logging import (
+    flow_json,
+    redact_flow_value,
+    summarize_flow_value,
+)
 
 
 class FlowLoggingTest(unittest.TestCase):
@@ -48,6 +52,25 @@ class FlowLoggingTest(unittest.TestCase):
         )
         self.assertIn("<truncated", serialized)
         self.assertLess(len(serialized), 160)
+
+    def test_default_summary_omits_request_and_data_payloads(
+        self,
+    ) -> None:
+        summary = summarize_flow_value(
+            {
+                "rawRequestBody": '{"apiKey":"secret"}',
+                "data": {"name": "장비 1"},
+                "apiId": "equipment-status",
+                "templateId": "matrix.table",
+            }
+        )
+        self.assertEqual(
+            summary,
+            {
+                "apiId": "equipment-status",
+                "templateId": "matrix.table",
+            },
+        )
 
 
 if __name__ == "__main__":
