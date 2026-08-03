@@ -21,6 +21,9 @@ def _read_env_file(path: Path) -> dict[str, str]:
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 _LOCAL_ENV = _read_env_file(_PACKAGE_ROOT / ".env.local")
+_DEFAULT_MOCK_DATA_FILE = str(
+    _PACKAGE_ROOT / "mock-data" / "work-items.json"
+)
 
 
 def _env(name: str, default: str = "") -> str:
@@ -57,10 +60,18 @@ def _csv_env(name: str, default: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Settings:
+    main_agent_mode: str = _env(
+        "MAIN_AGENT_MODE",
+        "mock",
+    ).strip().lower()
     main_agent_url: str = _env("MAIN_AGENT_URL", "http://localhost:8000")
     main_agent_timeout_seconds: float = _float_env("MAIN_AGENT_TIMEOUT_SECONDS", 45)
     main_agent_bearer_token: str = _env("MAIN_AGENT_BEARER_TOKEN")
     forward_authorization: bool = _bool_env("A2UI_FORWARD_AUTHORIZATION")
+    mock_main_agent_data_file: str = _env(
+        "MOCK_MAIN_AGENT_DATA_FILE",
+        _DEFAULT_MOCK_DATA_FILE,
+    )
     selection_ttl_seconds: float = _float_env("A2UI_SELECTION_TTL_SECONDS", 300)
     selection_max_entries: int = _int_env("A2UI_SELECTION_MAX_ENTRIES", 100)
     openai_api_key: str = _env("OPENAI_API_KEY")

@@ -7,8 +7,9 @@ Runtime flow:
 ```text
 Chat UI (browser)
   -> A2UI Proxy Agent(:8200)
-  -> Main Agent(:8000)
-  -> business API data_result
+  -> work-items JSON (mock mode, no Main Agent)
+     or Main Agent(:8000) (remote mode)
+  -> internal data_result
   -> A2UI Proxy Agent
   -> Proxy-owned AI planner / three static template candidates
   -> user display selection
@@ -58,6 +59,19 @@ A2UI Proxy Agent:      http://localhost:8200
 ```
 
 Open [http://localhost:3001](http://localhost:3001) in the browser.
+
+To run the work-items mock without calling Main Agent, set these values and
+start only the web and Proxy processes:
+
+```env
+MAIN_AGENT_MODE=mock
+MOCK_MAIN_AGENT_DATA_FILE=mock-data/work-items.json
+```
+
+```bash
+npm run web:dev
+npm run proxy-agent:dev
+```
 
 ## Internal LLM Setup
 
@@ -131,8 +145,9 @@ Check the Proxy Agent:
 curl http://localhost:8200/health
 ```
 
-The response should include `selectionTtlSeconds`, `selectionMaxEntries`,
-`aiConfigured`, and `templateIds`. Readiness can be checked separately:
+The response should include `mainAgentMode`, `selectionTtlSeconds`,
+`selectionMaxEntries`, `aiConfigured`, and `templateIds`. Readiness can be
+checked separately:
 
 ```bash
 curl http://localhost:8200/ready
@@ -140,16 +155,19 @@ curl http://localhost:8200/ready
 
 ## Proxy Agent Responsibilities
 
-The Main Agent no longer calls A2UI directly. For a data request it emits:
+In remote mode, the Main Agent no longer calls A2UI directly. For a data
+request it emits:
 
 ```text
 state -> text -> data_result -> done
 ```
 
-`data_result` contains the raw business data and source integrity metadata. The
-Proxy Agent keeps that event server-side, runs its AI planner against three
-static templates, and exposes only `display_options` to the browser. After the
-user chooses a template, the Proxy returns the selected `surface` event.
+In mock mode, the Proxy creates the same internal `data_result` from the single
+replaceable `packages/a2ui-proxy-agent/mock-data/work-items.json` file and does
+not call Main Agent. In both modes the Proxy keeps raw data server-side, runs
+its AI planner against three static templates, and exposes only
+`display_options` to the browser. After the user chooses a template, the Proxy
+returns the selected `surface` event.
 
 Chat requests also accept `presentationMode: "a2ui" | "text"` and default to
 `a2ui`. In `text` mode the Main Agent returns a bounded, masked data summary

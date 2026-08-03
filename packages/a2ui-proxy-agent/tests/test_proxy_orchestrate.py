@@ -159,19 +159,28 @@ class FakeAIPlanner:
                 "sampleDataPreview": sample_data_preview,
             }
         )
+        work_items = api_id == "work-items"
         return {
             "selectedTemplateId": template_id,
             "reason": "AI가 선택 템플릿 슬롯에 필드를 매핑했습니다.",
-            "titleSourcePath": "items.name",
+            "titleSourcePath": (
+                "items.title" if work_items else "items.name"
+            ),
             "contentSourcePath": "items.description",
             "imageSourcePath": None,
-            "categorySourcePath": "items.location",
+            "categorySourcePath": (
+                "items.lane" if work_items else "items.location"
+            ),
             "statusSourcePath": "items.status",
             "fieldSourcePaths": (
                 [
                     "items.id",
                     "items.status",
-                    "items.location",
+                    (
+                        "items.priority"
+                        if work_items
+                        else "items.location"
+                    ),
                 ]
                 if template_id == "matrix.table"
                 else []
@@ -343,7 +352,62 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(ai_planner.recommend_calls), 1)
         self.assertNotIn("장비 1", "".join(chunks))
         self.assertNotIn("hash-1", "".join(chunks))
-        self.assertIsNotNone(store.get(options_event["selectionId"]))
+        self.assertIsNotNone(
+            store.get(options_event["selectionId"])
+        )
+
+    async def test_mock_mode_reaches_existing_ai_planner_without_remote_call(
+        self,
+    ) -> None:
+        store = SelectionStore(ttl_seconds=30)
+        ai_planner = FakeAIPlanner()
+        with patch(
+            "app.main_agent_client.settings",
+            replace(settings, main_agent_mode="mock"),
+        ):
+            chunks = [
+                chunk
+                async for chunk in stream_chat_turn(
+                    "워크 아이템을 표로 보여줘",
+                    ai_planner=ai_planner,
+                    store=store,
+                )
+            ]
+
+        events = [parse_sse_chunk(chunk) for chunk in chunks]
+        event_names = [event for event, _data in events]
+        self.assertIn("display_options", event_names)
+        self.assertNotIn("data_result", event_names)
+        self.assertEqual(len(ai_planner.recommend_calls), 1)
+        self.assertEqual(
+            ai_planner.recommend_calls[0]["apiId"],
+            "work-items",
+        )
+        options_event = next(
+            data for event, data in events
+            if event == "display_options"
+        )
+        selection_chunks = [
+            chunk
+            async for chunk in stream_display_selection(
+                options_event["selectionId"],
+                "matrix.table",
+                ai_planner=ai_planner,
+                store=store,
+            )
+        ]
+        selection_events = [
+            parse_sse_chunk(chunk)
+            for chunk in selection_chunks
+        ]
+        surface = next(
+            data for event, data in selection_events
+            if event == "surface"
+        )
+        self.assertEqual(
+            surface["surface"]["payload"]["data"]["items"][0]["title"],
+            "관리자 챗봇 접근 권한 검토",
+        )
 
     async def test_explicit_display_query_controls_recommendation(self) -> None:
         ai_planner = FakeAIPlanner()

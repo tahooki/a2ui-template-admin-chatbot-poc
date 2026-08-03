@@ -145,7 +145,8 @@ await consumeA2UISse(response, ({ event, data }) => {
 Chatbot browser
   -> A2UI Proxy Agent POST /chat/stream
   -> A2UI Proxy Agent POST /display-selection/stream
-  -> Main Agent POST /chat/stream
+  -> work-items JSON (mock mode)
+     or Main Agent POST /chat/stream (remote mode)
 ```
 
 최초 채팅 요청:
@@ -204,6 +205,6 @@ await fetch(`${proxyAgentUrl}/chat/stream`, {
 });
 ```
 
-`text` 모드는 프론트에서 Surface만 숨기는 기능이 아니다. Proxy와 Main Agent가 해당 값을 받아 A2UI 플래너 실행을 생략하고 조회 결과를 텍스트로 반환해야 한다. Proxy 서버 계약은 `../../../packages/a2ui-proxy-agent/README.md`를 참고한다.
+`text` 모드는 프론트에서 Surface만 숨기는 기능이 아니다. Proxy가 해당 값을 받아 A2UI 플래너 실행을 생략하고 조회 결과를 텍스트로 반환한다. 목 모드에서는 로컬 work-items JSON 요약을 사용하고, 원격 모드에서는 Main Agent 응답을 사용한다. Proxy 서버 계약은 `../../../packages/a2ui-proxy-agent/README.md`를 참고한다.
 
 현재 POC의 Proxy 직접 호출 예시는 `../a2ui-chat/chatbot-panel.tsx`를 참고한다.

@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -22,6 +23,27 @@ class ApiTest(unittest.TestCase):
         self.assertNotIn("mainAgentUrl", body)
         self.assertNotIn("openaiModel", body)
         self.assertIn("selectionMaxEntries", body)
+        self.assertEqual(
+            body["mainAgentMode"],
+            settings.main_agent_mode,
+        )
+
+    def test_ready_accepts_valid_mock_data_file(self) -> None:
+        configured = replace(
+            settings,
+            main_agent_mode="mock",
+            openai_api_key="test-key",
+        )
+        with (
+            patch("app.main.settings", configured),
+            patch(
+                "app.main_agent_client.settings",
+                configured,
+            ),
+        ):
+            response = self.client.get("/ready")
+
+        self.assertEqual(response.status_code, 200)
 
     def test_cors_allows_configured_chatbot_origin(self) -> None:
         origin = settings.allowed_origins[0]

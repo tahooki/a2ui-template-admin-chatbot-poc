@@ -13,7 +13,10 @@ from .derived_schema import (
     build_sample_data_preview,
 )
 from .flow_logging import log_flow
-from .main_agent_client import MainAgentClient
+from .main_agent_client import (
+    MainAgentStreamClient,
+    create_main_agent_client,
+)
 from .selection_store import SelectionStore, selection_store
 from .static_templates import STATIC_TEMPLATE_BY_ID
 from .surface_builder import SurfaceBuildError, build_surface
@@ -90,17 +93,25 @@ async def stream_chat_turn(
     *,
     presentation_mode: PresentationMode = "a2ui",
     upstream_authorization: str | None = None,
-    main_agent_client: MainAgentClient | None = None,
+    main_agent_client: MainAgentStreamClient | None = None,
     ai_planner: AIPlanner | None = None,
     store: SelectionStore = selection_store,
 ) -> AsyncIterator[str]:
     turn_id = f"proxy-turn-{uuid4()}"
-    main_client = main_agent_client or MainAgentClient()
+    main_client = main_agent_client
+    source_mode = "custom"
     planner = ai_planner or ProxyAIPlanner()
     data_result: dict[str, Any] | None = None
     main_done: dict[str, Any] | None = None
 
     try:
+        if main_client is None:
+            main_client = create_main_agent_client()
+        source_mode = getattr(
+            main_client,
+            "source_mode",
+            "custom",
+        )
         log_flow(
             "01_before_main_agent_call",
             turn_id=turn_id,
@@ -108,6 +119,7 @@ async def stream_chat_turn(
                 "message": message,
                 "history": history or [],
                 "presentationMode": presentation_mode,
+                "mainAgentMode": source_mode,
                 "mainAgentUrl": getattr(
                     main_client,
                     "server_url",
@@ -120,7 +132,12 @@ async def stream_chat_turn(
             proxy_payload(
                 {
                     "status": "proxy_main_agent_call",
-                    "label": "Main Agent 호출",
+                    "label": (
+                        "Main Agent 목 응답 로드"
+                        if source_mode == "mock"
+                        else "Main Agent 호출"
+                    ),
+                    "sourceMode": source_mode,
                     "presentationMode": presentation_mode,
                 },
                 turn_id=turn_id,

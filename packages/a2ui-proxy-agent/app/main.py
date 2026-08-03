@@ -8,6 +8,9 @@ from fastapi.responses import StreamingResponse
 from .config import settings
 from .contracts import ChatRequest, DisplaySelectionRequest
 from .flow_logging import log_flow
+from .main_agent_client import (
+    validate_main_agent_configuration,
+)
 from .orchestrate import stream_chat_turn, stream_display_selection
 from .static_templates import STATIC_TEMPLATE_IDS, STATIC_TEMPLATE_VERSION
 
@@ -38,6 +41,7 @@ async def health() -> dict[str, Any]:
     return {
         "ok": True,
         "name": "a2ui-proxy-agent",
+        "mainAgentMode": settings.main_agent_mode,
         "selectionTtlSeconds": settings.selection_ttl_seconds,
         "selectionMaxEntries": settings.selection_max_entries,
         "templateMode": "proxy-ai",
@@ -55,6 +59,13 @@ async def ready() -> dict[str, Any]:
             status_code=503,
             detail="OPENAI_API_KEY is not configured",
         )
+    try:
+        validate_main_agent_configuration()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Main Agent source is not ready",
+        ) from exc
     return {
         "ready": True,
         "name": "a2ui-proxy-agent",

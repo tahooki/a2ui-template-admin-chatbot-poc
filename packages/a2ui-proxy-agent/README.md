@@ -1,9 +1,11 @@
 # A2UI Proxy Agent
 
-The Proxy Agent sits between the Chatbot and Main Agent.
+The Proxy Agent accepts browser chat requests and can use either one
+replaceable mock JSON file or a remote Main Agent as its data source.
 
 ```text
-Chatbot -> A2UI Proxy Agent -> Main Agent -> business data
+Chatbot -> A2UI Proxy Agent -> work-items JSON (mock mode)
+                    or -> Main Agent (remote mode)
                     |
                     +-> derived schema
                     +-> OpenAI template comparison
@@ -11,7 +13,8 @@ Chatbot -> A2UI Proxy Agent -> Main Agent -> business data
                     +-> OpenAI field mapping -> selected Surface
 ```
 
-It relays Main Agent text events, keeps `data_result` server-side, and exposes exactly three display options:
+It converts either source into the same internal `data_result`, keeps that raw
+data server-side, and exposes exactly three display options:
 
 - `collection.list`
 - `collection.cardGrid`
@@ -37,14 +40,68 @@ python3 run.py
 2. installs `requirements.txt` when dependencies have not been installed or the file changed;
 3. starts Uvicorn on `0.0.0.0:8200`.
 
-Set the Main Agent address and the OpenAI key used by the Proxy-owned A2UI planner:
+The included `.env.example` runs without a Main Agent. Set the OpenAI key used
+by the Proxy-owned A2UI planner:
 
 ```env
-MAIN_AGENT_URL=http://main-agent-host:8000
+MAIN_AGENT_MODE=mock
+MOCK_MAIN_AGENT_DATA_FILE=mock-data/work-items.json
 OPENAI_API_KEY=...
 ```
 
-The Main Agent must expose `POST /chat/stream` as an SSE endpoint. Redis, MCP, the template Admin, and the A2A server are not required by this Proxy.
+In mock mode the Proxy reads `mock-data/work-items.json` for every chat
+request. It does not call a Main Agent. Redis, MCP, the template Admin, and the
+A2A server are not required.
+
+## Replace the work-items JSON
+
+Only one mock scenario is supported: `work-items`. Replace the configured JSON
+file while keeping this contract:
+
+```json
+{
+  "apiId": "work-items",
+  "sourceToolName": "mock_work_items",
+  "data": {
+    "items": [
+      {
+        "id": "WORK-001",
+        "title": "Example work item",
+        "description": "Example description",
+        "status": "queued",
+        "priority": "high"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "pageSize": 1
+  },
+  "metadata": {
+    "sourceRowCount": 1
+  }
+}
+```
+
+The Proxy reloads the file on the next request, so replacing valid JSON does
+not require a restart. The file must be UTF-8 JSON, no larger than 5 MiB, and
+must contain `apiId`, `data`, and a non-empty `data.items` array for an A2UI
+surface. The Proxy creates the request query, mock result ID, row count, and
+SHA-256 data hash at runtime.
+
+For containers, mount the file outside the image and use an absolute path:
+
+```env
+MOCK_MAIN_AGENT_DATA_FILE=/data/a2ui/work-items.json
+```
+
+To restore the real upstream flow, use:
+
+```env
+MAIN_AGENT_MODE=remote
+MAIN_AGENT_URL=http://main-agent-host:8000
+```
+
+The remote Main Agent must expose `POST /chat/stream` as an SSE endpoint.
 
 The browser calls this service directly. For a deployed Chatbot, set the exact
 browser origin:
@@ -54,14 +111,16 @@ A2UI_PROXY_ALLOWED_ORIGINS=https://chatbot.example.com
 ```
 
 Do not treat CORS as authentication. Put the Proxy behind an API gateway that
-validates the user's access token and limits request rates. When the Main Agent
-accepts the same user token, set `A2UI_FORWARD_AUTHORIZATION=true`. When it
-uses one service credential instead, set `MAIN_AGENT_BEARER_TOKEN`.
+validates the user's access token and limits request rates. Remote mode can
+forward the user token with `A2UI_FORWARD_AUTHORIZATION=true`, or use the
+service credential in `MAIN_AGENT_BEARER_TOKEN`.
 
 Available runtime settings:
 
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
+| `MAIN_AGENT_MODE` | `mock` | `mock` reads the work-items JSON; `remote` calls Main Agent |
+| `MOCK_MAIN_AGENT_DATA_FILE` | `mock-data/work-items.json` | Replaceable work-items JSON path |
 | `MAIN_AGENT_URL` | `http://localhost:8000` | Main Agent base URL |
 | `MAIN_AGENT_TIMEOUT_SECONDS` | `45` | Main Agent response timeout |
 | `MAIN_AGENT_BEARER_TOKEN` | none | Optional service credential for Main Agent |
@@ -96,6 +155,7 @@ The repository-level `npm run proxy-agent:dev` command delegates to this same st
 
 - Chat messages and each history item are limited to 8,000 characters.
 - A request may include at most 30 history items.
+- Mock JSON files are limited to 5 MiB and reloaded for every request.
 - Pending selections are bounded by `A2UI_SELECTION_MAX_ENTRIES`.
 - Only one field-mapping operation may use a selection at a time.
 - The returned Surface includes at most the selected template's `maxItems`;
@@ -106,9 +166,10 @@ The repository-level `npm run proxy-agent:dev` command delegates to this same st
 
 ## Health checks
 
-`GET /health` is a liveness and configuration summary that does not expose
-internal service addresses. `GET /ready` returns `503` until `OPENAI_API_KEY`
-is configured.
+`GET /health` is a liveness and configuration summary that includes
+`mainAgentMode` but does not expose internal service addresses. `GET /ready`
+returns `503` until `OPENAI_API_KEY` is configured and the selected Main Agent
+source is valid. In mock mode that includes reading and validating the JSON.
 
 ## Flow logs
 

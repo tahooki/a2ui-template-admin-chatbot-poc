@@ -1,0 +1,119 @@
+{
+  "apiId": "work-items",
+  "sourceToolName": "mock_work_items",
+  "data": {
+    "items": [
+      {
+        "id": "WORK-001",
+        "title": "관리자 챗봇 접근 권한 검토",
+        "description": "운영 관리자 역할별 메뉴와 데이터 접근 범위를 검토합니다.",
+        "status": "in_progress",
+        "priority": "high",
+        "assignee": "김도윤",
+        "lane": "Security",
+        "progress": 65,
+        "startAt": "2026-08-01T09:00:00Z",
+        "dueAt": "2026-08-06T18:00:00Z",
+        "updatedAt": "2026-08-03T02:20:00Z"
+      },
+      {
+        "id": "WORK-002",
+        "title": "워크 아이템 검색 조건 정리",
+        "description": "상태, 담당자, 우선순위 검색 조건과 기본 정렬 순서를 정의합니다.",
+        "status": "review",
+        "priority": "medium",
+        "assignee": "Mina Park",
+        "lane": "Product",
+        "progress": 90,
+        "startAt": "2026-07-29T09:00:00Z",
+        "dueAt": "2026-08-04T18:00:00Z",
+        "updatedAt": "2026-08-03T01:10:00Z"
+      },
+      {
+        "id": "WORK-003",
+        "title": "Proxy Agent 배포 설정 확인",
+        "description": "CORS, OpenAI 키, 헬스 체크와 단일 워커 설정을 확인합니다.",
+        "status": "queued",
+        "priority": "urgent",
+        "assignee": "Ari Kim",
+        "lane": "Platform",
+        "progress": 20,
+        "startAt": "2026-08-04T09:00:00Z",
+        "dueAt": "2026-08-05T18:00:00Z",
+        "updatedAt": "2026-08-02T23:40:00Z"
+      },
+      {
+        "id": "WORK-004",
+        "title": "A2UI 테이블 필드 매핑 검증",
+        "description": "목 JSON의 제목, 상태, 담당자, 일정 필드가 올바르게 연결되는지 확인합니다.",
+        "status": "in_progress",
+        "priority": "high",
+        "assignee": "Jules Lee",
+        "lane": "QA",
+        "progress": 55,
+        "startAt": "2026-08-02T09:00:00Z",
+        "dueAt": "2026-08-07T18:00:00Z",
+        "updatedAt": "2026-08-03T03:05:00Z"
+      },
+      {
+        "id": "WORK-005",
+        "title": "오류 메시지 문구 개선",
+        "description": "잘못된 JSON과 LLM 호출 실패 시 사용자 안내 문구를 정리합니다.",
+        "status": "blocked",
+        "priority": "medium",
+        "assignee": "Noah Choi",
+        "lane": "UX",
+        "progress": 35,
+        "startAt": "2026-07-31T09:00:00Z",
+        "dueAt": "2026-08-08T18:00:00Z",
+        "updatedAt": "2026-08-02T22:15:00Z"
+      },
+      {
+        "id": "WORK-006",
+        "title": "운영 로그 민감정보 점검",
+        "description": "토큰, 이메일, API 키가 Proxy 로그에 남지 않는지 확인합니다.",
+        "status": "done",
+        "priority": "high",
+        "assignee": "김도윤",
+        "lane": "Security",
+        "progress": 100,
+        "startAt": "2026-07-28T09:00:00Z",
+        "dueAt": "2026-08-01T18:00:00Z",
+        "updatedAt": "2026-08-01T08:30:00Z"
+      },
+      {
+        "id": "WORK-007",
+        "title": "표시 방식 선택 UI 확인",
+        "description": "목록, 카드, 테이블 선택 후 Surface가 정상 표시되는지 테스트합니다.",
+        "status": "review",
+        "priority": "low",
+        "assignee": "Mina Park",
+        "lane": "Frontend",
+        "progress": 85,
+        "startAt": "2026-08-01T09:00:00Z",
+        "dueAt": "2026-08-09T18:00:00Z",
+        "updatedAt": "2026-08-03T00:35:00Z"
+      },
+      {
+        "id": "WORK-008",
+        "title": "서버 전달 문서 갱신",
+        "description": "Main Agent 없이 목 JSON을 사용하는 실행 방법과 교체 절차를 문서화합니다.",
+        "status": "queued",
+        "priority": "medium",
+        "assignee": "Ari Kim",
+        "lane": "Documentation",
+        "progress": 10,
+        "startAt": "2026-08-05T09:00:00Z",
+        "dueAt": "2026-08-10T18:00:00Z",
+        "updatedAt": "2026-08-02T21:00:00Z"
+      }
+    ],
+    "total": 8,
+    "page": 1,
+    "pageSize": 8
+  },
+  "metadata": {
+    "sourceRowCount": 8,
+    "fixtureVersion": "2026-08-03"
+  }
+}
