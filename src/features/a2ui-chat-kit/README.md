@@ -179,7 +179,7 @@ Proxy Agent는 Chatbot origin을 CORS로 허용해야 한다.
 
 최초 질문에서 원본 업무 데이터는 브라우저로 전달되지 않는다. Proxy Agent가 `selectionId`와 함께 데이터를 임시 보관하고, 사용자가 선택한 뒤 완성된 `surface`만 브라우저에 반환한다.
 
-목 모드에서는 Proxy LLM이 먼저 `intent`와 `shouldUseA2UI`를 결정한다. 일반 대화는 A2UI 토글이 켜져 있어도 `text`와 `done`만 반환한다. 워크 아이템 의도이면서 요청의 `presentationMode`가 `a2ui`일 때만 `display_options` 단계로 진행한다.
+목 모드에서는 Proxy가 `intent`와 `shouldUseA2UI`를 결정한다. 현재 메시지의 명확한 데이터 요청이 이전 대화 기록보다 우선하며, 해당 요청에 포함된 최신 `presentationMode`로 A2UI 사용 여부를 정한다. 따라서 일반 대화나 텍스트 요약 뒤에 토글을 켜도 새 데이터 요청은 `display_options` 단계로 진행한다. 일반 대화는 A2UI 토글이 켜져 있어도 `text`와 `done`만 반환한다.
 
 ## 9. 이식 확인 순서
 
@@ -207,6 +207,6 @@ await fetch(`${proxyAgentUrl}/chat/stream`, {
 });
 ```
 
-`text` 모드는 프론트에서 Surface만 숨기는 기능이 아니다. Proxy가 해당 값을 받아 A2UI 플래너 실행을 생략하고 조회 결과를 텍스트로 반환한다. 목 모드에서는 로컬 work-items JSON 요약을 사용하고, 원격 모드에서는 Main Agent 응답을 사용한다. Proxy 서버 계약은 `../../../packages/a2ui-proxy-agent/README.md`를 참고한다.
+`text` 모드는 프론트에서 Surface만 숨기는 기능이 아니다. Proxy가 해당 값을 받아 A2UI 템플릿 선택과 필드 매핑을 생략한다. 목 모드에서는 로컬 work-items JSON의 제한·마스킹된 미리보기를 Proxy LLM이 요약하고, 원격 모드에서는 Main Agent 응답을 사용한다. Proxy 서버 계약은 `../../../packages/a2ui-proxy-agent/README.md`를 참고한다.
 
 현재 POC의 Proxy 직접 호출 예시는 `../a2ui-chat/chatbot-panel.tsx`를 참고한다.

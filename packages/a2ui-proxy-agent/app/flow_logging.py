@@ -23,6 +23,7 @@ _SUMMARY_KEYS = {
     "model",
     "presentationMode",
     "recommendedTemplateId",
+    "responseLength",
     "sampleSize",
     "schemaName",
     "selectedTemplateId",

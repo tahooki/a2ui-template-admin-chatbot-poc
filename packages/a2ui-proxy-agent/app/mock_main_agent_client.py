@@ -180,31 +180,6 @@ class MockMainAgentClient:
             },
             branch="data",
         )
-        yield "text", _trace_payload(
-            turn_id,
-            {
-                "text": (
-                    "워크 아이템 목 데이터를 불러왔습니다. "
-                    f"총 {row_count}건입니다."
-                )
-            },
-            branch="data",
-        )
-
-        if presentation_mode == "text":
-            yield "done", _trace_payload(
-                turn_id,
-                {
-                    "mode": "text",
-                    "presentationMode": "text",
-                    "apiId": payload.apiId,
-                    "sourceToolName": payload.sourceToolName,
-                    "sourceToolResultId": result_id,
-                },
-                branch="data",
-            )
-            return
-
         yield "data_result", _trace_payload(
             turn_id,
             {
@@ -219,6 +194,19 @@ class MockMainAgentClient:
             },
             branch="data",
         )
+        if presentation_mode == "text":
+            yield "done", _trace_payload(
+                turn_id,
+                {
+                    "mode": "data_result",
+                    "presentationMode": "text",
+                    "apiId": payload.apiId,
+                    "sourceToolName": payload.sourceToolName,
+                    "sourceToolResultId": result_id,
+                },
+                branch="data",
+            )
+            return
         yield "done", _trace_payload(
             turn_id,
             {

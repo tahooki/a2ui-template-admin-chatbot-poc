@@ -31,10 +31,67 @@ async function readSse(response) {
 
 async function main() {
   console.log(`[info] direct Proxy flow E2E base=${proxyAgentUrl}`);
+  const generalEvents = await readSse(await fetch(`${proxyAgentUrl}/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message: "안녕, 오늘 기분 어때?",
+      presentationMode: "text",
+    }),
+  }));
+  const generalText = generalEvents
+    .filter((item) => item.event === "text")
+    .map((item) => item.data.text)
+    .join("");
+  expect(generalText.length > 0, "general conversation must return text");
+  expect(
+    !generalEvents.some((item) => item.event === "display_options"),
+    "general conversation must not enter A2UI",
+  );
+
+  const textEvents = await readSse(await fetch(`${proxyAgentUrl}/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message: "워크 아이템 목록을 요약해줘",
+      presentationMode: "text",
+      history: [
+        { role: "user", content: "안녕, 오늘 기분 어때?" },
+        { role: "assistant", content: generalText },
+      ],
+    }),
+  }));
+  const textEventNames = textEvents.map((item) => item.event);
+  const summaryText = textEvents
+    .filter((item) => item.event === "text")
+    .map((item) => item.data.text)
+    .join("");
+  expect(summaryText.includes("워크 아이템"), "text mode must identify the work-items list");
+  expect(
+    summaryText !== "워크 아이템 목 데이터를 불러왔습니다. 총 8건입니다.",
+    "text mode must return an LLM summary instead of the old fixed message",
+  );
+  expect(!textEventNames.includes("data_result"), "text mode must not expose data_result");
+  expect(!textEventNames.includes("display_options"), "text mode must not include display_options");
+  expect(!textEventNames.includes("surface"), "text mode must not include a Surface");
+  expect(
+    textEvents.some((item) => item.event === "done" && item.data.mode === "text"),
+    "text mode must complete without A2UI",
+  );
+
   const chatEvents = await readSse(await fetch(`${proxyAgentUrl}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: "work-items API 데이터를 보여줘" }),
+    body: JSON.stringify({
+      message: "워크 아이템을 표로 보여줘",
+      presentationMode: "a2ui",
+      history: [
+        { role: "user", content: "안녕, 오늘 기분 어때?" },
+        { role: "assistant", content: generalText },
+        { role: "user", content: "워크 아이템 목록을 요약해줘" },
+        { role: "assistant", content: summaryText },
+      ],
+    }),
   }));
 
   const eventNames = chatEvents.map((item) => item.event);
@@ -59,26 +116,9 @@ async function main() {
   const surface = selectionEvents.find((item) => item.event === "surface")?.data;
   expect(surface?.templateId === selected.templateId, "selected Surface must match the chosen template");
   expect(selectionEvents.some((item) => item.event === "done" && item.data.mode === "render_surface"), "selection stream must complete with render_surface");
-
-  const textEvents = await readSse(await fetch(`${proxyAgentUrl}/chat/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message: "work-items API 데이터를 요약해줘",
-      presentationMode: "text",
-    }),
-  }));
-  const textEventNames = textEvents.map((item) => item.event);
-  expect(textEventNames.includes("text"), "text mode must include text");
-  expect(!textEventNames.includes("data_result"), "text mode must not expose data_result");
-  expect(!textEventNames.includes("display_options"), "text mode must not include display_options");
-  expect(!textEventNames.includes("surface"), "text mode must not include a Surface");
-  expect(
-    textEvents.some((item) => item.event === "done" && item.data.mode === "text"),
-    "text mode must complete without A2UI",
+  console.log(
+    `[ok] general -> text summary -> A2UI rendered template=${selected.templateId}`,
   );
-
-  console.log(`[ok] Proxy rendered template=${selected.templateId} and kept text mode free of A2UI events`);
 }
 
 main().catch((error) => {

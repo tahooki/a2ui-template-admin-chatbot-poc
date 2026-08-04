@@ -7,7 +7,8 @@ replaceable mock JSON file or a remote Main Agent as its data source.
 Chatbot -> A2UI Proxy Agent -> work-items JSON (mock mode)
                     or -> Main Agent (remote mode)
                     |
-                    +-> OpenAI intent routing / general chat
+                    +-> current-request routing / OpenAI general chat
+                    +-> OpenAI data summary (text mode)
                     +-> derived schema
                     +-> OpenAI template comparison
                     +-> display options
@@ -23,19 +24,23 @@ data server-side, and exposes exactly three display options:
 
 The Proxy creates a bounded and masked data preview plus a derived schema, then calls an OpenAI-compatible Chat Completions endpoint. The prompt includes the required JSON schema, and the Proxy validates every response before using it. After chat routing, the template-selection AI stage evaluates all three template contracts and recommends one. After the user selects any option, the field-mapping AI stage maps exact source paths to that template's slots. The Proxy validates the mapping, converts only the visible source rows into the selected template schema, and returns the Surface directly.
 
-In mock mode, a chat-routing AI step runs before the work-items JSON is read.
-It returns `intent`, `shouldUseA2UI`, `reason`, and `responseText`:
+In mock mode, chat routing runs before the work-items JSON is read and returns
+`intent`, `shouldUseA2UI`, `reason`, and `responseText`. Clear data wording in
+the current message is handled deterministically so older general or text-mode
+history cannot cancel the new request. Ambiguous and general conversation is
+handled by the LLM:
 
 - General conversation returns the LLM's `responseText` and never enters the
   A2UI planner, even when `presentationMode` is `a2ui`.
 - A work-items request reads the mock JSON. It enters the A2UI planner only
   when `presentationMode` is `a2ui` and `shouldUseA2UI` is `true`.
-- A work-items request in `text` mode returns the mock-data summary without
-  template selection or field mapping.
+- A work-items request in `text` mode sends a bounded and masked data preview
+  to the Proxy LLM and returns its Korean summary without template selection
+  or field mapping. The old fixed "data loaded" message is not user-facing.
 
-The Proxy validates that `shouldUseA2UI` is true exactly for a work-items
-request in `a2ui` presentation mode. An inconsistent AI routing result is
-retried and rejected rather than silently entering the wrong flow.
+The Proxy derives `shouldUseA2UI` from the resolved intent and the current
+request's `presentationMode`. History may clarify a short follow-up such as
+"표로 보여줘", but it cannot override an explicit current data request.
 
 The AI planner is part of this Python Proxy process. It does not call an MCP server, A2A Agent, template Admin, or a separate surface-planner server. A missing or failed OpenAI configuration is returned as an error; the Proxy does not silently replace the main AI behavior with field-name heuristics.
 
@@ -196,6 +201,8 @@ Every A2UI request writes ordered flow logs to the Proxy server output. Each lin
 02_proxy_chat_routing_completed     # mock mode
 01_before_main_agent_call
 02_main_agent_event_received
+03_before_ai_text_summary          # mock text mode
+04_ai_text_summary_completed       # mock text mode
 03_before_schema_derivation
 04_schema_derived
 05_before_ai_template_selection

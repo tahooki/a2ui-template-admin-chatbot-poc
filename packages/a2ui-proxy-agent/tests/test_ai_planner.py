@@ -6,9 +6,11 @@ import httpx
 from app.ai_planner import (
     AIPlannerError,
     ProxyAIPlanner,
+    explicit_data_route_reason,
     validate_chat_route,
     validate_mapping,
     validate_recommendation,
+    validate_text_summary,
 )
 from app.derived_schema import (
     build_derived_schema,
@@ -64,6 +66,62 @@ def recommendation_fixture() -> dict:
 
 
 class AIPlannerValidationTest(unittest.TestCase):
+    def test_explicit_current_data_request_beats_history(self) -> None:
+        history = [
+            {"role": "user", "content": "안녕"},
+            {"role": "assistant", "content": "반가워요."},
+        ]
+        self.assertIsNotNone(
+            explicit_data_route_reason(
+                "워크 아이템을 표로 보여줘",
+                history,
+            )
+        )
+        self.assertIsNotNone(
+            explicit_data_route_reason(
+                "장비 목록을 보고 싶어",
+                history,
+            )
+        )
+        self.assertIsNone(
+            explicit_data_route_reason(
+                "워크 아이템이 뭐야?",
+                history,
+            )
+        )
+        self.assertIsNone(
+            explicit_data_route_reason(
+                "워크 아이템이 무엇인지 알려줘",
+                history,
+            )
+        )
+
+    def test_display_follow_up_uses_prior_user_data_request(self) -> None:
+        self.assertIsNotNone(
+            explicit_data_route_reason(
+                "표로 보여줘",
+                [
+                    {
+                        "role": "user",
+                        "content": "워크 아이템을 요약해줘",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "워크 아이템 목록입니다.",
+                    },
+                ],
+            )
+        )
+        self.assertIsNone(
+            explicit_data_route_reason(
+                "표로 보여줘",
+                [
+                    {"role": "user", "content": "오늘 기분 어때?"},
+                    {"role": "assistant", "content": "좋아요."},
+                ],
+            )
+        )
+
     def test_chat_route_must_match_presentation_mode(self) -> None:
         general = {
             "intent": "general",
@@ -89,6 +147,15 @@ class AIPlannerValidationTest(unittest.TestCase):
                 invalid,
                 presentation_mode="text",
             )
+
+    def test_text_summary_must_have_response_text(self) -> None:
+        result = {"responseText": "워크 아이템 목록입니다."}
+        self.assertEqual(
+            validate_text_summary(result),
+            result,
+        )
+        with self.assertRaises(AIPlannerError):
+            validate_text_summary({"responseText": ""})
 
     def test_recommendation_requires_all_three_candidates(self) -> None:
         result = recommendation_fixture()
@@ -209,7 +276,21 @@ class ProxyAIPlannerTest(unittest.IsolatedAsyncioTestCase):
             )
             work_items = await planner.route_chat(
                 message="워크 아이템을 표로 보여줘",
-                history=[],
+                history=[
+                    {"role": "user", "content": "안녕"},
+                    {
+                        "role": "assistant",
+                        "content": "무엇을 도와드릴까요?",
+                    },
+                    {
+                        "role": "user",
+                        "content": "워크 아이템을 요약해줘",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "워크 아이템 목록은 총 8건입니다.",
+                    },
+                ],
                 presentation_mode="a2ui",
             )
             work_items_text = await planner.route_chat(
@@ -217,13 +298,22 @@ class ProxyAIPlannerTest(unittest.IsolatedAsyncioTestCase):
                 history=[],
                 presentation_mode="text",
             )
+            equipment = await planner.route_chat(
+                message="장비 목록을 보고 싶어",
+                history=[
+                    {"role": "user", "content": "안녕"},
+                    {"role": "assistant", "content": "반가워요."},
+                ],
+                presentation_mode="a2ui",
+            )
 
         self.assertEqual(general["intent"], "general")
         self.assertFalse(general["shouldUseA2UI"])
         self.assertEqual(work_items["intent"], "work-items")
         self.assertTrue(work_items["shouldUseA2UI"])
         self.assertFalse(work_items_text["shouldUseA2UI"])
-        self.assertEqual(len(requests), 3)
+        self.assertTrue(equipment["shouldUseA2UI"])
+        self.assertEqual(len(requests), 1)
         self.assertTrue(
             all(request["max_tokens"] == 800 for request in requests)
         )
@@ -232,6 +322,62 @@ class ProxyAIPlannerTest(unittest.IsolatedAsyncioTestCase):
                 "response_format" not in request
                 for request in requests
             )
+        )
+
+    async def test_summarizes_data_for_text_mode(self) -> None:
+        _schema, preview = schema_fixture()
+        requests: list[dict] = []
+
+        async def handler(
+            request: httpx.Request,
+        ) -> httpx.Response:
+            requests.append(json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "responseText": (
+                                            "장비 상태 목록은 총 2건이며, "
+                                            "가동 1건과 정지 1건입니다."
+                                        )
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            },
+                        }
+                    ]
+                },
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            planner = ProxyAIPlanner(
+                api_key="test-key",
+                base_url="https://openai.test/v1",
+                client=client,
+            )
+            summary = await planner.summarize_data(
+                query="장비 상태를 요약해줘",
+                api_id="equipment-status",
+                sample_data_preview=preview,
+            )
+
+        self.assertIn("총 2건", summary["responseText"])
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]["max_tokens"], 1200)
+        self.assertNotIn("response_format", requests[0])
+        prompt = json.loads(
+            requests[0]["messages"][1]["content"]
+        )
+        self.assertEqual(
+            prompt["outputJsonSchema"]["required"],
+            ["responseText"],
         )
 
     async def test_missing_api_key_fails_without_static_fallback(

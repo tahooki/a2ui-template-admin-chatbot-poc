@@ -91,6 +91,7 @@ class FakeFailingMainAgentClient:
 class FakeAIPlanner:
     def __init__(self) -> None:
         self.route_calls: list[dict] = []
+        self.summary_calls: list[dict] = []
         self.recommend_calls: list[dict] = []
         self.mapping_calls: list[dict] = []
 
@@ -135,6 +136,27 @@ class FakeAIPlanner:
                 if not work_items
                 else ""
             ),
+        }
+
+    async def summarize_data(
+        self,
+        *,
+        query,
+        api_id,
+        sample_data_preview,
+    ):
+        self.summary_calls.append(
+            {
+                "query": query,
+                "apiId": api_id,
+                "sampleDataPreview": sample_data_preview,
+            }
+        )
+        return {
+            "responseText": (
+                "워크 아이템 목록입니다. 총 8건이며, 진행 중·검토·대기 "
+                "항목과 완료 및 차단 항목이 포함되어 있습니다."
+            )
         }
 
     async def recommend(
@@ -422,6 +444,13 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
         event_names = [event for event, _data in events]
         self.assertIn("display_options", event_names)
         self.assertNotIn("data_result", event_names)
+        visible_text = "".join(
+            data.get("text", "")
+            for event, data in events
+            if event == "text"
+        )
+        self.assertIn("표시 방식을 선택", visible_text)
+        self.assertNotIn("목 데이터를 불러왔습니다", visible_text)
         self.assertEqual(len(ai_planner.recommend_calls), 1)
         self.assertEqual(
             ai_planner.recommend_calls[0]["apiId"],
@@ -508,7 +537,15 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("text", event_names)
         self.assertNotIn("display_options", event_names)
         self.assertEqual(len(ai_planner.route_calls), 1)
+        self.assertEqual(len(ai_planner.summary_calls), 1)
         self.assertEqual(len(ai_planner.recommend_calls), 0)
+        visible_text = "".join(
+            data.get("text", "")
+            for event, data in events
+            if event == "text"
+        )
+        self.assertIn("워크 아이템 목록입니다", visible_text)
+        self.assertNotIn("목 데이터를 불러왔습니다", visible_text)
         done = next(
             data for event, data in events if event == "done"
         )

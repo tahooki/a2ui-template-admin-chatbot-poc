@@ -305,6 +305,78 @@ async def stream_chat_turn(
             if isinstance(main_done, dict) and main_done.get("mode") == "error":
                 yield sse_event("done", main_done)
                 return
+            if source_mode == "mock":
+                if not data_result:
+                    raise RuntimeError(
+                        "Mock Main Agent did not return data_result for text mode."
+                    )
+                api_id = data_result.get("apiId")
+                raw_data = data_result.get("data")
+                query = (
+                    data_result.get("query")
+                    if isinstance(data_result.get("query"), str)
+                    else message
+                )
+                if not isinstance(api_id, str) or raw_data is None:
+                    raise RuntimeError(
+                        "Main Agent data_result requires apiId and data."
+                    )
+                sample_data_preview = build_sample_data_preview(
+                    raw_data,
+                    source_id=api_id,
+                )
+                log_flow(
+                    "03_before_ai_text_summary",
+                    turn_id=turn_id,
+                    previous_result={
+                        "query": query,
+                        "apiId": api_id,
+                        "sampleDataPreview": sample_data_preview,
+                    },
+                )
+                yield sse_event(
+                    "state",
+                    proxy_payload(
+                        {
+                            "status": "proxy_ai_text_summary",
+                            "label": "AI가 워크 아이템 목록 요약",
+                            "apiId": api_id,
+                            "sourceRowCount": sample_data_preview.get(
+                                "rowCount"
+                            ),
+                            "presentationMode": "text",
+                        },
+                        turn_id=turn_id,
+                        branch="data",
+                    ),
+                )
+                summary = await planner.summarize_data(
+                    query=query,
+                    api_id=api_id,
+                    sample_data_preview=sample_data_preview,
+                )
+                log_flow(
+                    "04_ai_text_summary_completed",
+                    turn_id=turn_id,
+                    result={
+                        "apiId": api_id,
+                        "responseLength": len(
+                            summary["responseText"]
+                        ),
+                    },
+                )
+                yield sse_event(
+                    "text",
+                    proxy_payload(
+                        {
+                            "text": summary["responseText"],
+                            "intent": "work-items",
+                            "shouldUseA2UI": False,
+                        },
+                        turn_id=turn_id,
+                        branch="data",
+                    ),
+                )
             branch = (
                 main_done.get("branch")
                 if isinstance(main_done, dict) and isinstance(main_done.get("branch"), str)
@@ -317,6 +389,11 @@ async def stream_chat_turn(
                         "mode": "text",
                         "branch": branch,
                         "presentationMode": "text",
+                        "intent": (
+                            chat_route.get("intent")
+                            if chat_route
+                            else None
+                        ),
                         "shouldUseA2UI": (
                             chat_route.get("shouldUseA2UI")
                             if chat_route
@@ -536,6 +613,22 @@ async def stream_chat_turn(
                 branch="matched",
             ),
         )
+        if source_mode == "mock":
+            yield sse_event(
+                "text",
+                proxy_payload(
+                    {
+                        "text": (
+                            f"워크 아이템 {derived_schema['rowCount']}건을 "
+                            "찾았습니다. 표시 방식을 선택해 주세요."
+                        ),
+                        "intent": "work-items",
+                        "shouldUseA2UI": True,
+                    },
+                    turn_id=turn_id,
+                    branch="matched",
+                ),
+            )
         yield sse_event(
             "display_options",
             proxy_payload(

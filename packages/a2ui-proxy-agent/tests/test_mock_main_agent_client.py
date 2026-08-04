@@ -69,7 +69,7 @@ class MockMainAgentClientTest(
         event_names = [event for event, _data in events]
         self.assertEqual(
             event_names,
-            ["state", "state", "text", "data_result", "done"],
+            ["state", "state", "data_result", "done"],
         )
         data_result = next(
             data for event, data in events
@@ -131,7 +131,7 @@ class MockMainAgentClientTest(
             after["metadata"]["sourceDataHash"],
         )
 
-    async def test_text_mode_does_not_emit_data_result(
+    async def test_text_mode_returns_data_for_proxy_summary(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -149,9 +149,9 @@ class MockMainAgentClientTest(
                 )
             ]
 
-        self.assertIn("text", events)
+        self.assertNotIn("text", events)
         self.assertIn("done", events)
-        self.assertNotIn("data_result", events)
+        self.assertIn("data_result", events)
 
     async def test_factory_selects_mock_client(self) -> None:
         with patch(
