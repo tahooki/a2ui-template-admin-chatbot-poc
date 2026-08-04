@@ -90,8 +90,52 @@ class FakeFailingMainAgentClient:
 
 class FakeAIPlanner:
     def __init__(self) -> None:
+        self.route_calls: list[dict] = []
         self.recommend_calls: list[dict] = []
         self.mapping_calls: list[dict] = []
+
+    async def route_chat(
+        self,
+        *,
+        message,
+        history=None,
+        presentation_mode="a2ui",
+    ):
+        self.route_calls.append(
+            {
+                "message": message,
+                "history": history,
+                "presentationMode": presentation_mode,
+            }
+        )
+        work_items = any(
+            keyword in message.casefold()
+            for keyword in (
+                "워크 아이템",
+                "work item",
+                "work-item",
+                "작업 항목",
+                "태스크",
+            )
+        )
+        return {
+            "intent": (
+                "work-items" if work_items else "general"
+            ),
+            "shouldUseA2UI": (
+                work_items and presentation_mode == "a2ui"
+            ),
+            "reason": (
+                "워크 아이템 데이터 요청입니다."
+                if work_items
+                else "일반 대화 요청입니다."
+            ),
+            "responseText": (
+                "안녕하세요! 무엇을 도와드릴까요?"
+                if not work_items
+                else ""
+            ),
+        }
 
     async def recommend(
         self,
@@ -408,6 +452,68 @@ class ProxyOrchestrateTest(unittest.IsolatedAsyncioTestCase):
             surface["surface"]["payload"]["data"]["items"][0]["title"],
             "관리자 챗봇 접근 권한 검토",
         )
+
+    async def test_mock_mode_general_chat_skips_a2ui_even_when_enabled(
+        self,
+    ) -> None:
+        ai_planner = FakeAIPlanner()
+        with patch(
+            "app.main_agent_client.settings",
+            replace(settings, main_agent_mode="mock"),
+        ):
+            chunks = [
+                chunk
+                async for chunk in stream_chat_turn(
+                    "안녕, 오늘 기분 어때?",
+                    presentation_mode="a2ui",
+                    ai_planner=ai_planner,
+                    store=SelectionStore(ttl_seconds=30),
+                )
+            ]
+
+        events = [parse_sse_chunk(chunk) for chunk in chunks]
+        event_names = [event for event, _data in events]
+        self.assertIn("text", event_names)
+        self.assertNotIn("display_options", event_names)
+        self.assertNotIn("data_result", event_names)
+        self.assertEqual(len(ai_planner.route_calls), 1)
+        self.assertEqual(len(ai_planner.recommend_calls), 0)
+        done = next(
+            data for event, data in events if event == "done"
+        )
+        self.assertEqual(done["mode"], "text")
+        self.assertEqual(done["intent"], "general")
+        self.assertFalse(done["shouldUseA2UI"])
+
+    async def test_mock_work_items_text_mode_skips_a2ui_planner(
+        self,
+    ) -> None:
+        ai_planner = FakeAIPlanner()
+        with patch(
+            "app.main_agent_client.settings",
+            replace(settings, main_agent_mode="mock"),
+        ):
+            chunks = [
+                chunk
+                async for chunk in stream_chat_turn(
+                    "워크 아이템을 알려줘",
+                    presentation_mode="text",
+                    ai_planner=ai_planner,
+                    store=SelectionStore(ttl_seconds=30),
+                )
+            ]
+
+        events = [parse_sse_chunk(chunk) for chunk in chunks]
+        event_names = [event for event, _data in events]
+        self.assertIn("text", event_names)
+        self.assertNotIn("display_options", event_names)
+        self.assertEqual(len(ai_planner.route_calls), 1)
+        self.assertEqual(len(ai_planner.recommend_calls), 0)
+        done = next(
+            data for event, data in events if event == "done"
+        )
+        self.assertEqual(done["mode"], "text")
+        self.assertFalse(done["shouldUseA2UI"])
 
     async def test_explicit_display_query_controls_recommendation(self) -> None:
         ai_planner = FakeAIPlanner()

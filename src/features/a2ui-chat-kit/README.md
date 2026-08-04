@@ -179,6 +179,8 @@ Proxy Agent는 Chatbot origin을 CORS로 허용해야 한다.
 
 최초 질문에서 원본 업무 데이터는 브라우저로 전달되지 않는다. Proxy Agent가 `selectionId`와 함께 데이터를 임시 보관하고, 사용자가 선택한 뒤 완성된 `surface`만 브라우저에 반환한다.
 
+목 모드에서는 Proxy LLM이 먼저 `intent`와 `shouldUseA2UI`를 결정한다. 일반 대화는 A2UI 토글이 켜져 있어도 `text`와 `done`만 반환한다. 워크 아이템 의도이면서 요청의 `presentationMode`가 `a2ui`일 때만 `display_options` 단계로 진행한다.
+
 ## 9. 이식 확인 순서
 
 1. `SAMPLE_A2UI_SURFACE`로 Renderer 단독 출력 확인

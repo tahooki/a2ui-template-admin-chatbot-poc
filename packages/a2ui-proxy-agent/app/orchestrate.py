@@ -103,6 +103,7 @@ async def stream_chat_turn(
     planner = ai_planner or ProxyAIPlanner()
     data_result: dict[str, Any] | None = None
     main_done: dict[str, Any] | None = None
+    chat_route: dict[str, Any] | None = None
 
     try:
         if main_client is None:
@@ -112,6 +113,97 @@ async def stream_chat_turn(
             "source_mode",
             "custom",
         )
+        if source_mode == "mock":
+            log_flow(
+                "01_before_proxy_chat_routing",
+                turn_id=turn_id,
+                previous_result={
+                    "message": message,
+                    "history": history or [],
+                    "presentationMode": presentation_mode,
+                },
+            )
+            yield sse_event(
+                "state",
+                proxy_payload(
+                    {
+                        "status": "proxy_chat_routing",
+                        "label": "일반 대화와 A2UI 요청 분류",
+                        "presentationMode": presentation_mode,
+                    },
+                    turn_id=turn_id,
+                ),
+            )
+            chat_route = await planner.route_chat(
+                message=message,
+                history=history,
+                presentation_mode=presentation_mode,
+            )
+            log_flow(
+                "02_proxy_chat_routing_completed",
+                turn_id=turn_id,
+                result={
+                    "intent": chat_route["intent"],
+                    "shouldUseA2UI": chat_route[
+                        "shouldUseA2UI"
+                    ],
+                    "reason": chat_route["reason"],
+                },
+            )
+            branch = (
+                "data"
+                if chat_route["intent"] == "work-items"
+                else "general"
+            )
+            yield sse_event(
+                "state",
+                proxy_payload(
+                    {
+                        "status": "proxy_chat_routed",
+                        "label": (
+                            "워크 아이템 요청"
+                            if branch == "data"
+                            else "일반 대화"
+                        ),
+                        "intent": chat_route["intent"],
+                        "shouldUseA2UI": chat_route[
+                            "shouldUseA2UI"
+                        ],
+                        "reason": chat_route["reason"],
+                    },
+                    turn_id=turn_id,
+                    branch=branch,
+                ),
+            )
+            if chat_route["intent"] == "general":
+                yield sse_event(
+                    "text",
+                    proxy_payload(
+                        {
+                            "text": chat_route[
+                                "responseText"
+                            ].strip(),
+                            "intent": "general",
+                            "shouldUseA2UI": False,
+                        },
+                        turn_id=turn_id,
+                        branch="general",
+                    ),
+                )
+                yield sse_event(
+                    "done",
+                    proxy_payload(
+                        {
+                            "mode": "text",
+                            "intent": "general",
+                            "shouldUseA2UI": False,
+                            "presentationMode": presentation_mode,
+                        },
+                        turn_id=turn_id,
+                        branch="general",
+                    ),
+                )
+                return
         log_flow(
             "01_before_main_agent_call",
             turn_id=turn_id,
@@ -139,6 +231,16 @@ async def stream_chat_turn(
                     ),
                     "sourceMode": source_mode,
                     "presentationMode": presentation_mode,
+                    "intent": (
+                        chat_route.get("intent")
+                        if chat_route
+                        else None
+                    ),
+                    "shouldUseA2UI": (
+                        chat_route.get("shouldUseA2UI")
+                        if chat_route
+                        else None
+                    ),
                 },
                 turn_id=turn_id,
             ),
@@ -215,6 +317,11 @@ async def stream_chat_turn(
                         "mode": "text",
                         "branch": branch,
                         "presentationMode": "text",
+                        "shouldUseA2UI": (
+                            chat_route.get("shouldUseA2UI")
+                            if chat_route
+                            else False
+                        ),
                     },
                     turn_id=turn_id,
                     branch=branch,
@@ -410,6 +517,16 @@ async def stream_chat_turn(
                     "mode": "display_options",
                     "strategy": "proxy_ai_schema_planner",
                     "candidateCount": len(options),
+                    "intent": (
+                        chat_route.get("intent")
+                        if chat_route
+                        else None
+                    ),
+                    "shouldUseA2UI": (
+                        chat_route.get("shouldUseA2UI")
+                        if chat_route
+                        else True
+                    ),
                     "recommendedTemplateId": recommendation[
                         "selectedTemplateId"
                     ],
@@ -426,6 +543,16 @@ async def stream_chat_turn(
                     "selectionId": context.selection_id,
                     "message": "어떤 방식으로 보시겠습니까?",
                     "options": options,
+                    "intent": (
+                        chat_route.get("intent")
+                        if chat_route
+                        else None
+                    ),
+                    "shouldUseA2UI": (
+                        chat_route.get("shouldUseA2UI")
+                        if chat_route
+                        else True
+                    ),
                 },
                 turn_id=turn_id,
                 branch="matched",
@@ -439,6 +566,16 @@ async def stream_chat_turn(
                     "branch": "matched",
                     "selectionId": context.selection_id,
                     "candidateCount": len(options),
+                    "intent": (
+                        chat_route.get("intent")
+                        if chat_route
+                        else None
+                    ),
+                    "shouldUseA2UI": (
+                        chat_route.get("shouldUseA2UI")
+                        if chat_route
+                        else True
+                    ),
                 },
                 turn_id=turn_id,
                 branch="matched",

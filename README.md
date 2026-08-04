@@ -17,6 +17,12 @@ Chat UI (browser)
   -> browser renderer
 ```
 
+In mock mode the Proxy LLM first returns `intent` and `shouldUseA2UI`.
+General conversation returns a normal text response without reading the mock
+JSON. Only a work-items intent with `presentationMode: "a2ui"` enters template
+selection and field mapping. A work-items request in `text` mode returns a
+text summary instead.
+
 The Next app serves the Chat UI only. It does not provide a chat BFF; the
 browser calls the Proxy Agent's SSE endpoints directly.
 
@@ -164,10 +170,12 @@ state -> text -> data_result -> done
 
 In mock mode, the Proxy creates the same internal `data_result` from the single
 replaceable `packages/a2ui-proxy-agent/mock-data/work-items.json` file and does
-not call Main Agent. In both modes the Proxy keeps raw data server-side, runs
-its AI planner against three static templates, and exposes only
-`display_options` to the browser. After the user chooses a template, the Proxy
-returns the selected `surface` event.
+not call Main Agent. Before reading that file, the Proxy LLM separates general
+conversation from work-items data requests. General conversation returns text;
+only a work-items request in A2UI mode continues to the three static templates.
+The Proxy keeps raw data server-side and exposes only `display_options` to the
+browser. After the user chooses a template, the Proxy returns the selected
+`surface` event.
 
 Chat requests also accept `presentationMode: "a2ui" | "text"` and default to
 `a2ui`. In `text` mode the Main Agent returns a bounded, masked data summary

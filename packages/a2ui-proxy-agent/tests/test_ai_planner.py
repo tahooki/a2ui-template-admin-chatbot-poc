@@ -6,6 +6,7 @@ import httpx
 from app.ai_planner import (
     AIPlannerError,
     ProxyAIPlanner,
+    validate_chat_route,
     validate_mapping,
     validate_recommendation,
 )
@@ -63,6 +64,32 @@ def recommendation_fixture() -> dict:
 
 
 class AIPlannerValidationTest(unittest.TestCase):
+    def test_chat_route_must_match_presentation_mode(self) -> None:
+        general = {
+            "intent": "general",
+            "shouldUseA2UI": False,
+            "reason": "일반 대화입니다.",
+            "responseText": "안녕하세요!",
+        }
+        self.assertEqual(
+            validate_chat_route(
+                general,
+                presentation_mode="a2ui",
+            ),
+            general,
+        )
+        invalid = {
+            "intent": "work-items",
+            "shouldUseA2UI": True,
+            "reason": "워크 아이템 요청입니다.",
+            "responseText": "",
+        }
+        with self.assertRaises(AIPlannerError):
+            validate_chat_route(
+                invalid,
+                presentation_mode="text",
+            )
+
     def test_recommendation_requires_all_three_candidates(self) -> None:
         result = recommendation_fixture()
         self.assertEqual(
@@ -117,6 +144,96 @@ class AIPlannerValidationTest(unittest.TestCase):
 
 
 class ProxyAIPlannerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_routes_general_and_work_item_messages(
+        self,
+    ) -> None:
+        requests: list[dict] = []
+
+        async def handler(
+            request: httpx.Request,
+        ) -> httpx.Response:
+            payload = json.loads(request.content)
+            requests.append(payload)
+            prompt = json.loads(
+                payload["messages"][1]["content"]
+            )
+            work_items = "워크 아이템" in prompt["message"]
+            result = {
+                "intent": (
+                    "work-items" if work_items else "general"
+                ),
+                "shouldUseA2UI": (
+                    work_items
+                    and prompt["presentationMode"] == "a2ui"
+                ),
+                "reason": (
+                    "워크 아이템 요청입니다."
+                    if work_items
+                    else "일반 대화입니다."
+                ),
+                "responseText": (
+                    "안녕하세요! 무엇을 도와드릴까요?"
+                    if not work_items
+                    else ""
+                ),
+            }
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "content": json.dumps(
+                                    result,
+                                    ensure_ascii=False,
+                                )
+                            },
+                        }
+                    ]
+                },
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            planner = ProxyAIPlanner(
+                api_key="test-key",
+                base_url="https://openai.test/v1",
+                client=client,
+            )
+            general = await planner.route_chat(
+                message="안녕",
+                history=[],
+                presentation_mode="a2ui",
+            )
+            work_items = await planner.route_chat(
+                message="워크 아이템을 표로 보여줘",
+                history=[],
+                presentation_mode="a2ui",
+            )
+            work_items_text = await planner.route_chat(
+                message="워크 아이템을 알려줘",
+                history=[],
+                presentation_mode="text",
+            )
+
+        self.assertEqual(general["intent"], "general")
+        self.assertFalse(general["shouldUseA2UI"])
+        self.assertEqual(work_items["intent"], "work-items")
+        self.assertTrue(work_items["shouldUseA2UI"])
+        self.assertFalse(work_items_text["shouldUseA2UI"])
+        self.assertEqual(len(requests), 3)
+        self.assertTrue(
+            all(request["max_tokens"] == 800 for request in requests)
+        )
+        self.assertTrue(
+            all(
+                "response_format" not in request
+                for request in requests
+            )
+        )
+
     async def test_missing_api_key_fails_without_static_fallback(
         self,
     ) -> None:
